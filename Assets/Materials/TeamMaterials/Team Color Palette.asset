@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2d2524ec0d1747e2ad4f77dfe77c5a19, type: 3}
+  m_Name: Team Color Palette
+  m_EditorClassIdentifier: 
+  TeamMaterials:
+  - {fileID: 2100000, guid: 641d94a1950d0eb4bb8c2427cdc6ca8b, type: 2}
+  - {fileID: 2100000, guid: 99dee9164ccbdf04f86347c7e8affc1f, type: 2}
+  - {fileID: 2100000, guid: 04f0946f173bb524f9567304f858eb06, type: 2}
+  - {fileID: 2100000, guid: e8137fc38005bf04d84bef2743304626, type: 2}
+  - {fileID: 2100000, guid: 618ac22b42853d64fa3f9e7f02d91002, type: 2}
+  - {fileID: 2100000, guid: afe7fae7751170f43973b4dceb1eac9b, type: 2}
+  - {fileID: 2100000, guid: ddf90baa606cd4148a217e49657dfc02, type: 2}
+  NeutralMaterial: {fileID: 2100000, guid: 0608988dfdfe5ae449031a16dbbc2906, type: 2}

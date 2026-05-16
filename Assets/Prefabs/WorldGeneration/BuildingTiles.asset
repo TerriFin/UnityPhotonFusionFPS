@@ -1,0 +1,30 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 82f7c42950667c04bad306337e0ac785, type: 3}
+  m_Name: BuildingTiles
+  m_EditorClassIdentifier: 
+  Buildings:
+  - {fileID: 5002413889968914682, guid: 72575bfd4bb5a464c82c25a7c28b400c, type: 3}
+  - {fileID: 2884826201255445069, guid: 61799cfd8a273614f935bfc4ab2eeab1, type: 3}
+  - {fileID: 1293540903470830706, guid: 58495ea71c9fb0d4daaad538ffa397af, type: 3}
+  - {fileID: 4380325354218150581, guid: 6aa90c6765d798e4f987b0fb31d2564e, type: 3}
+  - {fileID: 1179593797872800188, guid: 200e0d00766e8cc409ebd00ae64739d2, type: 3}
+  - {fileID: 6868029710257318400, guid: 1b15aca02b3bff54a858af129a659e71, type: 3}
+  - {fileID: 5002413889968914682, guid: 25e7041ec61b8be4b86fb41d9cb52b35, type: 3}
+  - {fileID: 5002413889968914682, guid: b3b99e3b76d53de4b9a874db93ba8083, type: 3}
+  - {fileID: 6868029710257318400, guid: 800307f8dd2b98f44ada23967c22356b, type: 3}
+  - {fileID: 1179593797872800188, guid: b16037b1459554d47b9333dafcaadfa2, type: 3}
+  - {fileID: 4380325354218150581, guid: 310aed57a31433a4793ec27a04f01934, type: 3}
+  - {fileID: 4380325354218150581, guid: d5bb6eb13c55522429ba3271b42b8a35, type: 3}
+  - {fileID: 1179593797872800188, guid: 4d90b8f012724e34ba141f3c16842bfc, type: 3}
+  - {fileID: 1179593797872800188, guid: 623ba3a0761c23943898cd1ded6f8934, type: 3}
+  - {fileID: 6868029710257318400, guid: cb38723b3ff3ae545a496bf66720ed47, type: 3}

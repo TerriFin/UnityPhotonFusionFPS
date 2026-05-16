@@ -1,0 +1,166 @@
+# Survivor Combat Movement AI
+
+## Goal
+
+`SurvivorCombatMovementAI` is a combat behavior component that moves an unpossessed survivor while it is fighting another survivor.
+
+It is not a top-level AI mode. `SurvivorCombatAI` owns combat activation, target choice, combat settings, and handoff back to non-combat AI. `SurvivorCombatMovementAI` owns only tactical movement suggestions: dynamic cover, ally spacing, and preferred weapon range.
+
+## Relationship To Combat AI
+
+The intended combat structure is:
+
+```text
+SurvivorCombatAI
+-> chooses enemy target
+-> checks SurvivorCombatAISettings
+-> asks SurvivorCombatMovementAI for movement when movement is enabled
+-> asks SurvivorAIShooting for aim/fire
+-> merges movement and shooting into normal NetworkedInput
+```
+
+`SurvivorCombatMovementAI` should be assigned to the survivor prefab so its tuning values are visible in the Inspector. If missing, `SurvivorCombatAI` may add it at runtime as a fallback.
+
+## First-Pass Behavior
+
+Against enemy survivors, combat movement tries to balance three goals:
+
+1. Seek cover while exposing as little as possible.
+2. Spread away from nearby allied survivors.
+3. Stay inside the preferred distance range for the selected weapon.
+
+The behavior is intentionally imperfect. The player should still get better results by manually controlling survivors, and the AI should be cheap enough to run for many survivors.
+
+## Dynamic Cover Detection
+
+The first version does not require explicit cover marker objects.
+
+Instead, the component samples a configurable number of candidate points around the survivor:
+
+1. Create candidate offsets around the survivor.
+2. Project each candidate to reachable NavMesh using `CharacterNavigator` / `NavMesh`.
+3. Reject unreachable candidates.
+4. Reject candidates where the survivor would not have line of fire to the enemy.
+5. Score each remaining candidate using partial cover, ally spacing, preferred range, and movement cost.
+6. Move toward the highest-scoring candidate if it is meaningfully better than standing still.
+
+Cover scoring should use the same broad blocker concept as vision, but full cover is not useful yet because the survivor has no crouch, lean, or peek pose. A candidate must have a clear center line of fire to the enemy. It receives partial cover score when nearby side probes are blocked by `CharacterSensor.VisionBlockers`, which means the survivor is near an edge while still able to shoot.
+
+This is rough cover, not peeking. Until a real peek/crouch system exists, the movement AI should prefer edge-adjacent firing positions instead of positions that fully hide the survivor and break their own shot.
+
+## Performance Controls
+
+The behavior must be configurable so stress tests can make it cheaper.
+
+Inspector tunables:
+
+```text
+ReevaluateInterval
+CandidateCount
+SearchRadius
+NavMeshSampleDistance
+StoppingDistance
+MinimumMoveDistance
+DestinationRefreshDistance
+DirectFallbackDistance
+RequireCandidateLineOfFire
+PartialCoverProbeOffset
+RequiredScoreImprovement
+CoverWeight
+AllySpacingWeight
+PreferredRangeWeight
+MoveCostWeight
+AllySpacingRadius
+```
+
+Guidelines:
+
+- `ReevaluateInterval` controls how often expensive candidate scoring runs. Higher is cheaper but less reactive.
+- `CandidateCount` controls how many points are tested per reevaluation. Lower is cheaper and dumber.
+- `SearchRadius` controls how far the AI is willing to reposition in one tactical move.
+- `NavMeshSampleDistance` controls how far candidates may snap to nearby reachable ground.
+- `StoppingDistance` controls how close the survivor gets to the chosen combat movement point.
+- `MinimumMoveDistance` prevents tiny jittery repositioning.
+- `DestinationRefreshDistance` prevents resetting the navigator for nearly identical destinations.
+- `DirectFallbackDistance` allows a short direct move if path steering fails near the combat destination.
+- `RequireCandidateLineOfFire` rejects full-cover candidates where the survivor could not shoot from the chosen point.
+- `PartialCoverProbeOffset` controls how far to check beside a clear firing point for nearby blocking geometry.
+- `RequiredScoreImprovement` prevents moving unless the new point is clearly better than the current position.
+
+Good cheap defaults should be modest, for example about `8-12` candidates every `0.75-1.25s`.
+
+Current implementation state:
+
+- Combat movement only runs while the survivor has a direct enemy with line of fire.
+- It uses `CharacterNavigator` and `NavMesh.CalculatePath` for candidate reachability.
+- Candidate search state is local to state authority and is not networked.
+- If combat movement is disabled with K, the survivor still uses `SurvivorAIShooting` but stops tactical repositioning.
+- Candidates that fully block the survivor's own shot are rejected by default.
+- Combat movement is suppressed while a player movement order is still being fulfilled. Follow movement, unreached move orders, and first-time travel into an assigned defend area keep their ordered movement direction. Combat aim/fire may still merge into that movement, but tactical cover/range/spacing movement resumes only after the move destination is reached or the assigned area has been entered once.
+
+## Preferred Weapon Ranges
+
+Each weapon type should have a minimum and maximum preferred combat range.
+
+Suggested first-pass defaults:
+
+```text
+Pistol: 6m - 18m
+Shotgun: 3m - 10m
+Rifle: 10m - 28m
+```
+
+The ranges intentionally overlap so enemies do not enter a silly chase loop where one survivor constantly tries to close distance while another constantly tries to back away.
+
+Preferred range scoring:
+
+- If too close, prefer candidate points farther from the enemy.
+- If too far, prefer candidate points closer to the enemy.
+- If inside range, avoid moving only for range reasons.
+
+## Ally Spacing
+
+The movement behavior should discourage clumping.
+
+For each candidate point, nearby same-team survivors add a spacing penalty. The penalty is strongest when the candidate is very close to an ally and fades out by `AllySpacingRadius`.
+
+This should help when several survivors respond to the same alert from behind a corner. They may still travel along the same route, but once they reach the fight they should try to occupy different nearby positions.
+
+## Input Merging
+
+Combat movement emits only movement intent.
+
+`SurvivorCombatAI` merges it with shooting:
+
+- Movement comes from `SurvivorCombatMovementAI`.
+- Look/fire/buttons come from `SurvivorAIShooting`.
+- If both want look rotation, shooting aim wins while there is a direct line-of-fire target.
+- If no movement setting is enabled, combat AI stands ground and only uses shooting input.
+
+## Network Model
+
+Combat movement runs only on state authority.
+
+Do not network:
+
+- candidate points,
+- selected cover destination,
+- cover scores,
+- nearby ally lists,
+- path corners,
+- timing state.
+
+The authoritative result is normal movement, rotation, and firing through existing survivor replication.
+
+## Future Expansion
+
+Later versions can add:
+
+- explicit cover marker support,
+- peeking positions,
+- crouching or stance changes,
+- suppressive movement,
+- squad role spacing,
+- separate zombie combat movement.
+
+For now, keep it rough, cheap, and understandable.
