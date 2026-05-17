@@ -2,15 +2,17 @@
 
 ## Context
 
-Building placement is the second world-generation pass after the road grid has been generated.
+Building placement runs after height generation and road generation.
 
-The road generator decides which grid cells are roads. The building placer consumes that road grid and fills the remaining empty cells with building footprints. This should stay separate from `RoadGridGenerator` so road generation, building placement, special districts, and future interior logic can evolve independently.
+The height generator decides cell elevation and ledges. The road generator decides which valid cells are roads. The building placer consumes that combined road/height grid and fills the remaining empty cells with building footprints. This should stay separate from `RoadGridGenerator` so height generation, road generation, building placement, special districts, and future interior logic can evolve independently.
 
 The first implementation does not need final building art. It can use placeholder block prefabs to validate placement quality.
 
 ## Goals
 
 - Place buildings only in cells that are not roads.
+- Never place buildings on ledge cells or height-change road cells.
+- Keep first-version building footprints on a single flat height level.
 - Support `1x1`, `1x2`, `2x1`, and `2x2` footprints for the first version.
 - Place complex buildings near roads.
 - Place simple blocking buildings at map edges and in leftover/backfill spaces.
@@ -86,8 +88,11 @@ Conceptually:
 WorldGridCell
 {
     Vector2Int Position;
+    int HeightLevel;
     bool IsRoad;
     bool IsBoundaryExit;
+    bool IsLedge;
+    bool IsHeightChangeRoad;
     RoadEnvironment Environment;
 }
 ```
@@ -95,11 +100,25 @@ WorldGridCell
 The building placer should not care which road tile prefab was chosen. It only needs to know:
 
 - which cells are occupied by roads,
+- which cells are occupied by ledges or height-change roads,
 - which cells are empty,
+- which height level each empty cell occupies,
 - where roads are adjacent to an empty plot,
 - which environment/district each cell belongs to.
 
 For the first version, `RoadEnvironment.Normal` is the only environment.
+
+Height generation is documented separately in `Docs/WorldGenerationHeightMap.md`.
+
+For the first height implementation:
+
+- ledge cells are always blocked for buildings,
+- height-change road cells are road cells and blocked for buildings,
+- a building footprint must occupy one height level,
+- road-side requirements should only count roads on compatible adjacent height,
+- a road on the far side of a ledge does not count as adjacent to the building,
+- buildings never bridge height gaps,
+- building side requirements may require a neighboring ledge that goes up or down relative to the building footprint.
 
 ## Unity Configuration
 
@@ -139,11 +158,17 @@ public enum BuildingSideRequirement
 {
     Any,
     RequiresRoad,
-    RequiresNoRoad
+    RequiresNoRoad,
+    RequiresLedgeDown,
+    RequiresLedgeUp
 }
 ```
 
-First version only needs `Any` and `RequiresRoad`, but `RequiresNoRoad` is useful later for backs of buildings that should not face roads.
+`RequiresLedgeDown` means this side must face an adjacent ledge where the building side is on the higher elevation and the ledge drops away from it. This supports buildings such as balconies, overlooks, cliffside storefronts, and parks that intentionally face a drop.
+
+`RequiresLedgeUp` means this side must face an adjacent ledge where the building side is on the lower elevation and the ledge rises away from it. This supports buildings that are meant to sit at the base of a ledge.
+
+`RequiresNoRoad` is useful for backs of buildings that should not face roads. It does not forbid ledges unless a later explicit `RequiresNoLedge` rule is added.
 
 ### BuildingDefinition
 
@@ -248,7 +273,7 @@ FillRemainingEmptyCellsWithBlockingBuildings: true
 
 This value should not guarantee exact surface area percentages. It is a placement preference, not a strict quota.
 
-The building pass uses the assigned `RoadGridGenerator.Seed + SeedOffset` for its own random stream. Map size and the base seed live on `RoadGridGenerator`, not in either settings asset, because both road and building generation share them.
+The building pass uses the shared world seed plus `SeedOffset` for its own random stream. After height generation is implemented, the shared map size and base seed live on `HeightMapGenerator`. If no height generator exists, the building pass can keep using the road generator's flat-map fallback values.
 
 ## Gameplay Spawns
 
@@ -335,8 +360,12 @@ Create a building occupancy grid from the generated road grid.
 
 ```text
 Road cells = blocked
+Ledge cells = blocked
+Height-change road cells = blocked
 Empty cells = buildable
 ```
+
+Each buildable cell also stores its `HeightLevel`.
 
 ### 2. Place Edge Blocking Structures
 
@@ -359,12 +388,13 @@ For each candidate origin and building definition:
 
 1. Check the footprint is in bounds.
 2. Check every footprint cell is empty.
-3. Check the environment matches.
-4. Expand all four rotations into placement candidates.
-5. Rotate the effective footprint and side road requirements for that candidate.
-6. Check side road requirements.
-7. Check repeat cooldown distance against the source `BuildingDefinition`.
-8. If valid, add it to the candidate pool.
+3. Check every footprint cell has the same `HeightLevel`.
+4. Check the environment matches.
+5. Expand all four rotations into placement candidates.
+6. Rotate the effective footprint and side requirements for that candidate.
+7. Check side requirements.
+8. Check repeat cooldown distance against the source `BuildingDefinition`.
+9. If valid, add it to the candidate pool.
 
 Side requirements are evaluated along the whole side of the footprint.
 
@@ -441,7 +471,32 @@ Rules:
 
 This guarantees there are no unintended walkable voids behind buildings.
 
-### 7. Instantiate Buildings
+### 7. Replace Dead-End Ledge Cells
+
+After all buildings are placed, scan ledge cells for adjacency to simple blocking buildings.
+
+A ledge whose across-side neighbor is occupied by a `SimpleBlocking` building is a dead-end: you can walk along the ledge but the area beyond is sealed off, creating a "tunnel that leads to nowhere" or a visually awkward ledge that only one side can ever reach. To handle this, the generator:
+
+The pass runs in two phases against the live grid:
+
+**Phase 1 — non-boundary ledges.** Iterate every cell where `IsLedge == true` and `IsHeightChangeRoad == false` and the cell is not a boundary ledge. Height-change ramps still carry `IsLedge=true` because the road generator promotes the ledge in place rather than clearing the flag, so this guard is what prevents the pass from accidentally replacing a ramp with a blocker. For each:
+- **Straight ledges:** check only the high-side and low-side neighbors (the two cells perpendicular to the ledge's run direction, derived from `WorldHeightCell.HighDirection`). Flag for replacement if **either** is a `SimpleBlocking` building in the current grid. The run-direction neighbors are other ledges in the same band and are intentionally ignored, which is what makes this phase non-cascading among itself: the perpendicular cells are always high- or low-side cells, never other ledges.
+- **Corner shapes (not generated by the current pass):** fall back to "any of the four cardinal neighbors is a blocker".
+
+**Phase 2 — boundary ledges.** Iterate the remaining boundary ledges. Phase 1 has already finished, so any non-boundary ledges that needed replacing are now blockers in the grid, and the boundary ledge correctly sees its inward neighbor as walled off if that neighbor was a dead-end interior ledge. For each boundary ledge:
+- Count the immediate cardinal neighbors that are `SimpleBlocking` buildings. Out-of-bounds and ramps (`IsHeightChangeRoad`) do not count.
+- Replace when this count is **more than two**. The map-edge fill always seals up to two cardinal sides of a boundary ledge with blockers, so the `> 2` threshold means a third immediate neighbor must also be a blocker before the ledge is considered fully sealed in. Do not look past adjacent cells: only immediate neighbors are inspected.
+
+When a ledge is flagged for replacement, the generator:
+1. Picks a `1x1` simple blocker from `BuildingSet` (preferring one without a `RequiresRoad` side, since the replacement is interior fill, not an edge facade).
+2. Replaces the ledge cell with that blocker: clears `IsLedge`, sets `Building`/`BuildingOrigin`, and adds a new `PlacedBuilding` to the placement list.
+3. Calls `HeightMapGenerator.SuppressLedgeAt(position)` so the previously instantiated ledge prefab is destroyed before the navmesh rebuild.
+
+The replacement blocker reuses the ledge cell's existing `HeightLevel` (which is the low side). The chosen blocker prefab will sit at that height like any other simple blocker. If a high-side blocker triggered the replacement, the replacement still sits at the low height — this is intentional, simpler, and good enough for sealing the unreachable area.
+
+If no `SimpleBlocking` `1x1` definition exists in the building set, the cleanup pass is a no-op and a fallback is not synthesized.
+
+### 8. Instantiate Buildings
 
 Instantiate one prefab per placed building.
 
@@ -547,6 +602,50 @@ y = origin.y .. origin.y + height - 1
 
 If a required-road side goes out of bounds, it fails unless that side is later explicitly allowed to face an exit/boundary.
 
+When height data exists, required-road sides should only count roads on the compatible adjacent height. A normal building entrance should not face a road one level above or below.
+
+Different-height roads are separated from the building by ledge cells. If a building side faces a ledge, the building is adjacent to the ledge cell, not to the road cell beyond that ledge. Therefore a road on the opposite side of a ledge never satisfies `RequiresRoad`; the building must use `RequiresLedgeDown` or `RequiresLedgeUp` instead.
+
+Ledge side requirements are evaluated along the whole side of the footprint, similar to road requirements:
+
+```text
+RequiresLedgeDown:
+    every checked side cell must face a ledge cell,
+    the building footprint cell is on the ledge's high side,
+    the opposite side of the ledge is lower.
+
+RequiresLedgeUp:
+    every checked side cell must face a ledge cell,
+    the building footprint cell is on the ledge's low side,
+    the opposite side of the ledge is higher.
+```
+
+For large buildings, every cell along the required side should satisfy the ledge requirement unless the building definition later adds partial-side markers.
+
+## Height Requirements
+
+The first height-aware building placement remains simple:
+
+```text
+one building footprint = one flat height level
+```
+
+Rules:
+
+- Reject any footprint containing more than one `HeightLevel`.
+- Reject any footprint containing a ledge cell.
+- Reject any footprint containing a height-change road cell.
+- Allow building sides to require adjacent ledges, but never allow the building footprint itself to occupy the ledge.
+- Instantiate complex buildings at the generated footprint center with:
+
+```csharp
+worldY = HeightLevel * HeightLevelWorldUnits
+```
+
+- Simple blocking buildings keep their authored Y offset relative to that height level. Their X/Z still comes from the footprint center.
+
+Buildings placed by the building generator do not bridge height gaps. Any traversal or structure that connects two height layers belongs to the height/ledge system, such as special ledge tiles, stairs, ramps, or ledge-built structures.
+
 ## Future Special Environments
 
 Building definitions should carry `RoadEnvironment`.
@@ -584,7 +683,7 @@ The same validity rules still work:
 
 - footprint in bounds,
 - cells empty,
-- side road requirements,
+- side requirements,
 - environment match,
 - repeat cooldown.
 
@@ -593,7 +692,7 @@ Large special buildings may later add extra rules:
 - must be near a main road,
 - must be inside a special district,
 - requires road on two opposite sides,
-- requires elevation difference,
+- requires a ledge going up/down on one or more sides,
 - requires a minimum empty buffer.
 
 ## Future Interiors And Navigation
@@ -619,16 +718,17 @@ Simple blocking buildings should normally remain non-enterable and act as solid 
 3. Add `BuildingSet` ScriptableObject that stores building definition components.
 4. Add `BuildingPlacementSettings` ScriptableObject.
 5. Add `BuildingPlacementGenerator` component or integrate it as a separate component beside `RoadGridGenerator`.
-6. Expose generated road occupancy from `RoadGridGenerator` in a small read-only data shape.
-7. Copy road occupancy into a building occupancy grid.
+6. Expose generated road/height occupancy from `RoadGridGenerator` in a small read-only data shape.
+7. Copy road, ledge, height-change road, and height-level data into a building occupancy grid.
 8. Place edge simple blockers.
 9. Generate valid complex building candidates from road adjacency, side requirements, and all four rotations.
 10. Prioritize exact empty plots.
 11. Place larger complex buildings according to `LargeBuildingPreference`.
 12. Place smaller complex buildings.
 13. Fill remaining empty cells with simple blockers.
-14. Instantiate building prefabs under a generated building root.
-15. Add gizmos for complex buildings, simple blockers, and rejected/empty cells.
+14. Replace dead-end ledge cells (ledges with a simple-blocking neighbor) with simple blocker buildings and suppress the corresponding ledge prefab on the height generator.
+15. Instantiate building prefabs under a generated building root.
+16. Add gizmos for complex buildings, simple blockers, and rejected/empty cells.
 
 ## First Version Acceptance Criteria
 

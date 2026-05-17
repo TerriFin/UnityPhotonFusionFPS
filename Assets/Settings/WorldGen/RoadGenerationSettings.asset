@@ -23,4 +23,4 @@ MonoBehaviour:
   RequireDiagonalSpaceForStubRoads: 1
   MinConnectingRoadLength: 5
   MaxPathAttempts: 200
-  NormalRoadTiles: {fileID: 11400000, guid: 84fecd68a06eab94bb71907caf18be39, type: 2}
+  RoadTiles: {fileID: 11400000, guid: 84fecd68a06eab94bb71907caf18be39, type: 2}

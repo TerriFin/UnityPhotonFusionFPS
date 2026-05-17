@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 17ec6456e73b09e4d894dd63f65912ae, type: 3}
+  m_Name: HeightGenerationSettings
+  m_EditorClassIdentifier: 
+  HeightLayerCount: 4
+  MinCellsBetweenHeightChanges: 2
+  MinUsableRegionWidth: 3
+  MinUsableRegionHeight: 3
+  MinUsableRegionArea: 9
+  SmoothingPasses: 1
+  RegionBalance: 0.5
+  MaxGenerationAttempts: 100
+  DefaultLedgeRepeatCooldownDistance: 2
+  MinRoadReplaceableLedgesPerHeightRegion: 3
+  LedgeTiles: {fileID: 11400000, guid: 9259fe944509b0843933aaf32f0c2114, type: 2}

@@ -2,14 +2,18 @@
 
 ## Context
 
-The first world-generation goal is to build a sensible city road grid from modular road tiles. Buildings, interiors, special districts, loot, zombies, and multi-level city logic come later.
+The road-grid pass builds a sensible city road network from modular road tiles. It now runs after the optional height-map pass and before building placement.
 
-The current target is one height level and two tile families:
+The flat-map fallback still uses one height level and two tile families:
 
 - **Normal road tiles** - straight, corner, T intersection, 4-way intersection.
 - **Exit/boundary road tiles** - road tiles on the edge of the map that visually imply roads leading outside the arena or blocked by boundary walls.
 
-The generator should be configurable enough that future systems can add tile variations, special environments such as military quarantine zones, building placement, and road elevation without replacing the whole architecture.
+When `HeightMapGenerator` is present, road generation consumes its height snapshot. When no height map exists, every cell is treated as height `0`, matching the current behavior.
+
+Height generation is documented separately in `Docs/WorldGenerationHeightMap.md`.
+
+The generator should be configurable enough that future systems can add tile variations, special environments such as military quarantine zones, building placement, and additional elevation traversal without replacing the whole architecture.
 
 ## Core Approach
 
@@ -42,8 +46,11 @@ Each cell stores:
 ```csharp
 RoadCell
 {
+    int HeightLevel;
     bool IsRoad;
     bool IsBoundaryExit;
+    bool IsLedge;
+    bool IsHeightChangeRoad;
     RoadSocket North;
     RoadSocket East;
     RoadSocket South;
@@ -67,6 +74,8 @@ Closed
 Road
 Exit
 ```
+
+If generated height data is available, normal road cells also carry their height level. A ledge cell can become a road only if it is replaced by a straight height-change road tile.
 
 For normal internal road cells, sockets are only `Closed` or `Road`. Edge cells may have one outward `Exit` socket.
 
@@ -148,7 +157,7 @@ The implementation applies `RepeatCooldown` during tile collapse. If every match
 
 ### RoadGridGenerator Run Settings
 
-Run-specific values live on the scene `RoadGridGenerator` component:
+Run-specific values currently live on the scene `RoadGridGenerator` component:
 
 ```csharp
 RoadGridGenerator
@@ -162,7 +171,17 @@ RoadGridGenerator
 }
 ```
 
-These values are shared by the road and building passes. Keeping them on the scene component makes it possible to adjust map size and seed from the same Inspector object used to regenerate the world.
+After height generation is implemented, shared run-specific values should move to the scene `HeightMapGenerator` component:
+
+```text
+Width
+Height
+Seed
+RandomizeSeedOnGenerate
+TileSize
+```
+
+`RoadGridGenerator` should keep fallback values for editor/testing compatibility when no height generator is assigned, but the normal pipeline should read map size, tile size, seed, and height data from the generated height snapshot.
 
 Suggested defaults:
 
@@ -174,9 +193,11 @@ RandomizeSeedOnGenerate: false
 TileSize: 20
 ```
 
-During a networked match, `Gameplay` owns the authoritative `WorldSeed`. The state authority initializes it once from the scene `RoadGridGenerator` settings:
+During a networked match, `Gameplay` owns the authoritative `WorldSeed`. The state authority initializes it once from the first world generator in the pipeline:
 
-- If `RandomizeSeedOnGenerate` is disabled, the host's configured `Seed` becomes the networked `WorldSeed`.
+- When `HeightMapGenerator` exists, it provides the configured seed/randomize setting.
+- When no height generator exists, `RoadGridGenerator` provides the flat-map fallback seed/randomize setting.
+- If `RandomizeSeedOnGenerate` is disabled, the configured `Seed` becomes the networked `WorldSeed`.
 - If `RandomizeSeedOnGenerate` is enabled, the host derives `WorldSeed` from the Photon Fusion session name and map size.
 
 At runtime, `RoadGridGenerator.GenerateOnStart` waits for the `Gameplay` network object to become valid and expose a non-zero networked `WorldSeed` before generating.
@@ -186,6 +207,8 @@ If a client already generated a local skirmish map before joining a host, `RoadG
 After generating during play mode, `RoadGridGenerator` waits one frame before reporting `IsGenerationComplete`. This gives Unity time to destroy any old editor/generated road root so `Gameplay` does not pick stale road-exit spawn points from the previous map.
 
 Outside a running Fusion session, such as editor preview generation, `RandomizeSeedOnGenerate` still uses a local random seed.
+
+Road generation then uses the height snapshot seed, or the flat fallback seed, so all peers produce the same road and building layout.
 
 ### RoadGenerationSettings
 
@@ -205,7 +228,7 @@ RoadGenerationSettings
     bool RequireDiagonalSpaceForStubRoads;
     int MinConnectingRoadLength;
     int MaxPathAttempts;
-    RoadTileSet NormalRoadTiles;
+    RoadTileSet RoadTiles;
 }
 ```
 
@@ -224,6 +247,15 @@ RequireDiagonalSpaceForStubRoads: false
 MinConnectingRoadLength: 4
 MaxPathAttempts: 200
 ```
+
+Height-change ramps live in the same `RoadTiles` set as normal road tiles. Each `RoadTileDefinition` carries an `IsHeightChangeRamp` flag — `cell.IsHeightChangeRoad` is matched against this flag, so the generator picks ramps for height-change cells and normal tiles for flat cells. The ramp's default authoring orientation is:
+
+```text
+South = lower elevation
+North = higher elevation
+```
+
+Ramp rotation is constrained to `(int)cell.HighDirection` rather than left to socket matching, because a ramp's N/S sockets are symmetric and would otherwise allow the tile to spawn flipped 180 degrees.
 
 For tiny maps, the generator should clamp requests rather than fail loudly. A `3x3` map cannot satisfy the same constraints as a larger city grid.
 
@@ -262,6 +294,7 @@ This is the first WFC/collapse point: the road graph determines the required soc
 Base North/East/South/West sockets
 Environment = Normal
 IsBoundaryTile
+IsHeightChangeRamp
 Weight
 RepeatCooldown
 ```
@@ -279,9 +312,9 @@ Create > SimpleFPS > World Generation > Road Tile Set
 Create > SimpleFPS > World Generation > Road Generation Settings
 ```
 
-7. Assign the tile set to `NormalRoadTiles`.
+7. Assign the tile set to `RoadTiles`.
 8. Add `RoadGridGenerator` to an empty GameObject in the scene.
-9. Assign the settings asset, then set `Width`, `Height`, and `Seed` on the `RoadGridGenerator` component.
+9. Assign the settings asset. For flat fallback generation, set `Width`, `Height`, and `Seed` on the `RoadGridGenerator` component. With height generation enabled, set shared map size and seed on `HeightMapGenerator` instead.
 10. Use the component context menu:
 
 ```text
@@ -293,12 +326,36 @@ The generator creates a child object named `Generated Road Grid` and places all 
 
 ## Generation Pipeline
 
+### 0. Read Height Snapshot
+
+Before road cells are chosen, read the optional `WorldHeightSnapshot` from `HeightMapGenerator`.
+
+If no height snapshot exists:
+
+```text
+HeightLevel = 0
+IsLedge = false
+```
+
+for every road grid cell.
+
+If a height snapshot exists:
+
+- same-height cells can connect normally,
+- non-road ledge cells block road/building placement,
+- different-height roads cannot be directly adjacent; a ledge cell must sit between the two levels,
+- a `1x1` straight road-replaceable ledge cell can be replaced by a height-change road tile,
+- normal roads are placed at `HeightLevel * HeightLevelWorldUnits`.
+
 ### 1. Initialize Empty Grid
 
 Start with all cells empty.
 
 ```text
 IsRoad = false
+HeightLevel = height snapshot level, or 0 if flat
+IsLedge = height snapshot ledge flag, or false if flat
+IsHeightChangeRoad = false
 All sockets = Closed
 Environment = Normal
 ```
@@ -358,6 +415,15 @@ The path cost should punish:
 - overusing intersections,
 - too many sharp zigzags.
 
+When height data exists, path cost should also account for elevation:
+
+- Same-height movement is cheapest.
+- Crossing a straight ledge is allowed only if the ledge is a `1x1` road-replaceable ledge that can become a height-change road.
+- A height-change road must connect low side and high side; it cannot be a stub itself.
+- Crossing corners/inner/outer ledges is not allowed in the first version.
+- Crossing larger ledge structures is not allowed through the road generator.
+- Crossing a ledge should have extra cost so roads do not zigzag up/down unnecessarily.
+
 ### 4. Add Optional Extra Roads
 
 After all exits are connected, optionally add roads based on `ExtraRoadDensity`.
@@ -396,12 +462,22 @@ Road tile sets should include dead-end definitions with exactly one `Road` socke
 After road cells are chosen, calculate sockets from neighbors:
 
 ```text
-If north neighbor is road: North = Road
+If north neighbor is road at compatible height: North = Road
 If east neighbor is road: East = Road
 ...
 If this is boundary exit: outward side = Exit
 Otherwise missing neighbor = Closed
 ```
+
+For height-change road cells:
+
+```text
+low-side socket = Road
+high-side socket = Road
+side sockets = Closed
+```
+
+The height-change road tile is still matched as a straight road tile, but it uses the height-change road tile set and its rotation is derived from the low/high sides.
 
 This makes tile selection deterministic and easy to inspect.
 
@@ -414,7 +490,21 @@ For each road cell:
 3. Filter by environment.
 4. Apply weight/repeat cooldown.
 5. Choose one.
-6. Instantiate it at the grid world position.
+6. Instantiate it at the grid world position and cell height.
+
+For normal road cells:
+
+```csharp
+worldY = HeightLevel * HeightLevelWorldUnits
+```
+
+For height-change road cells:
+
+```csharp
+worldY = LowerHeightLevel * HeightLevelWorldUnits
+```
+
+When a ledge cell becomes a height-change road, the road generator should suppress or remove the ledge prefab placed by the height generator for that cell.
 
 Empty cells stay empty for now. Building placement will fill them later.
 
@@ -525,33 +615,22 @@ Building WFC can then run on empty cells and use road adjacency as constraints:
 
 Do not mix building placement into the first road generator.
 
-## Future Elevation
+## Height Map Integration
 
-The first version is one height level.
+Height generation is now documented as its own first pass in `Docs/WorldGenerationHeightMap.md`.
 
-To prepare for elevation later, keep grid coordinates as:
+Road generation should treat the height map as an input constraint:
 
-```csharp
-Vector3Int CellPosition;
-```
+- Roads on the same height connect normally.
+- Roads on different heights can connect only through a straight height-change road tile placed on a ledge cell.
+- Different-height road cells cannot be adjacent without a ledge/ramp cell between them.
+- The height-change road tile replaces an existing `1x1` straight road-replaceable ledge cell from the height pass.
+- Larger ledge structures are never replaced by roads.
+- The height-change road tile cannot be a stub/dead-end; it must connect both low and high sides.
+- Road exits can later be constrained by height, but the first version can allow exits on any valid generated height unless configured otherwise.
+- If height generation is missing or has one layer, road generation stays flat.
 
-even if `y = 0` for now.
-
-Future road sockets can become:
-
-```csharp
-North, East, South, West, Up, Down
-```
-
-or the horizontal sockets can include slope metadata:
-
-```csharp
-RoadSocket RoadLevel
-RoadSocket RoadRampUp
-RoadSocket RoadRampDown
-```
-
-Slope tiles should be required when connecting roads at different heights. Special buildings that connect levels should later declare which road heights they connect to.
+Special structures that connect height levels belong to the height/ledge system, not ordinary road generation or ordinary building placement.
 
 ## First Implementation Plan
 
@@ -559,7 +638,7 @@ Slope tiles should be required when connecting roads at different heights. Speci
 2. `RoadTileDefinition` is a prefab-root component that stores base sockets, environment, boundary flag, weight, and repeat cooldown.
 3. `RoadTileSet` stores the list of available road tile definition components.
 4. `RoadGenerationSettings` stores road-specific exit count, spacing settings, local density limits, density behavior, and tile set.
-5. `RoadGridGenerator` owns run-specific map size, seed, generation, and prefab instantiation.
+5. `RoadGridGenerator` currently owns run-specific map size, seed, generation, and prefab instantiation. After height generation is implemented, shared run-specific values move to `HeightMapGenerator`, and `RoadGridGenerator` keeps fallback values for flat/editor generation.
 6. Empty grid initialization is implemented.
 7. Exit placement uses randomized candidate selection with same-edge spacing and graceful count reduction.
 8. Exit connection uses randomized A* toward the existing connected road network.
@@ -568,6 +647,14 @@ Slope tiles should be required when connecting roads at different heights. Speci
 11. Tile collapse expands all four rotations from each road definition, matches rotated sockets, and uses weighted seeded selection.
 12. Generated prefabs are parented under a generated map root.
 13. Gizmos draw road and exit cells after generation.
+
+Height-map integration adds these road-specific implementation steps:
+
+1. Read `WorldHeightSnapshot` before exit placement.
+2. Treat ledge cells as blocked unless selected as a height-change road.
+3. Allow paths to cross only `1x1` straight road-replaceable ledge cells using a height-change road tile.
+4. Place normal road tiles at their cell height.
+5. Place height-change road tiles at the lower height and rotate them to connect low/high sides.
 
 ## Debug Tools
 
@@ -594,4 +681,5 @@ These are important because procedural generation bugs are hard to reason about 
 - Can regenerate with a seed.
 - Does not yet place buildings.
 - Does not yet place special environments.
-- Does not yet handle elevation.
+- Flat generation still works when no height map is present.
+- With a height map, roads respect ledge cells and use height-change road tiles for valid single-level transitions.

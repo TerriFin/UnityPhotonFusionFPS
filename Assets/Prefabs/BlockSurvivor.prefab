@@ -1289,7 +1289,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   DefaultFollowStoppingDistance: 2
   DefaultMoveStoppingDistance: 1.25
-  DirectFallbackDistance: 4
+  DirectFallbackDistance: 1
   MaxYawDegreesPerTick: 8
   IdleLookRotationIntervalMin: 6
   IdleLookRotationIntervalMax: 10
@@ -1407,6 +1407,9 @@ MonoBehaviour:
   DestinationRefreshDistance: 0.75
   DirectFallbackDistance: 0.75
   RequiredScoreImprovement: 0.25
+  InitialReevaluationStaggerMax: 0.75
+  ReevaluateIntervalJitter: 0.25
+  MaxCachedAllies: 16
   RequireCandidateLineOfFire: 1
   PartialCoverProbeOffset: 0.6
   TargetLossBlacklistDuration: 4

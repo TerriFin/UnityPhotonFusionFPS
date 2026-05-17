@@ -53,6 +53,7 @@ MonoBehaviour:
   West: 0
   Environment: 0
   IsBoundaryTile: 0
+  IsHeightChangeRamp: 0
   Weight: 1
   RepeatCooldown: 0
 --- !u!1 &673355545608923279
@@ -457,6 +458,7 @@ MonoBehaviour:
   West: 0
   Environment: 0
   IsBoundaryTile: 0
+  IsHeightChangeRamp: 0
   Weight: 1
   RepeatCooldown: 0
 --- !u!1 &3291629663654371449
@@ -470,7 +472,7 @@ GameObject:
   - component: {fileID: 4710261160372770700}
   - component: {fileID: 1911706294164367949}
   m_Layer: 0
-  m_Name: RoadElevationChange
+  m_Name: LedgeRoad
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -512,6 +514,7 @@ MonoBehaviour:
   West: 0
   Environment: 0
   IsBoundaryTile: 0
+  IsHeightChangeRamp: 1
   Weight: 1
   RepeatCooldown: 0
 --- !u!1 &3557356981825964356

@@ -25,6 +25,6 @@ namespace SimpleFPS
 		public int MinConnectingRoadLength = 4;
 		[Min(1)]
 		public int MaxPathAttempts = 200;
-		public RoadTileSet NormalRoadTiles;
+		public RoadTileSet RoadTiles;
 	}
 }

@@ -17,6 +17,7 @@ namespace SimpleFPS
 
 		[Header("Setup")]
 		public RoadGenerationSettings Settings;
+		public HeightMapGenerator HeightGenerator;
 		[Min(3)]
 		public int Width = 12;
 		[Min(3)]
@@ -27,6 +28,7 @@ namespace SimpleFPS
 		public string GeneratedRootName = "Generated Road Grid";
 		public bool GenerateOnStart;
 		public bool ClearBeforeGenerate = true;
+		public bool GenerateHeightMapIfMissing = true;
 
 		[Header("Debug")]
 		public bool DrawGizmos = true;
@@ -35,12 +37,28 @@ namespace SimpleFPS
 
 		private RoadCell[,] _lastGrid;
 		private Transform _generatedRoot;
+		private Vector3 _lastOrigin;
+		private float _lastTileSize;
+		private float _lastHeightLevelWorldUnits;
 		private int _actualExitCount;
 		private int _failedPathAttempts;
 		private int _lastAppliedNetworkedSeed;
 		private Coroutine _generationCompleteCoroutine;
 
 		public bool IsGenerationComplete { get; private set; }
+
+		private void Awake()
+		{
+			ResolveHeightGenerator();
+			if (HeightGenerator == null)
+				return;
+
+			Width = HeightGenerator.EffectiveWidth;
+			Height = HeightGenerator.EffectiveHeight;
+			Seed = HeightGenerator.Seed;
+			RandomizeSeedOnGenerate = HeightGenerator.RandomizeSeedOnGenerate;
+			TileSize = HeightGenerator.EffectiveTileSize;
+		}
 
 		private IEnumerator Start()
 		{
@@ -49,6 +67,7 @@ namespace SimpleFPS
 				if (Application.isPlaying)
 					yield return WaitForNetworkedWorldSeed();
 
+				yield return WaitForHeightMapIfNeeded();
 				Generate();
 			}
 		}
@@ -87,6 +106,8 @@ namespace SimpleFPS
 				return;
 			}
 
+			ResolveHeightGenerator();
+
 			if (ClearBeforeGenerate)
 				ClearGenerated();
 
@@ -102,7 +123,10 @@ namespace SimpleFPS
 					Debug.Log($"{nameof(RoadGridGenerator)} generated with seed {Seed}.", this);
 			}
 
-			GenerateGrid(out RoadCell[,] grid);
+			WorldHeightSnapshot heightSnapshot = GetHeightSnapshot();
+			ApplyHeightSnapshotRunValues(heightSnapshot);
+
+			GenerateGrid(heightSnapshot, out RoadCell[,] grid);
 			_lastGrid = grid;
 			InstantiateGrid(grid, new System.Random(Seed ^ 0x6A09E667));
 			ScheduleGenerationComplete();
@@ -151,18 +175,65 @@ namespace SimpleFPS
 				for (int y = 0; y < height; y++)
 				{
 					RoadCell cell = _lastGrid[x, y];
-					cells[x, y] = new WorldGridCell(cell.Position, cell.IsRoad, cell.IsBoundaryExit, cell.Environment);
+					cells[x, y] = new WorldGridCell(cell.Position, cell.HeightLevel, cell.IsRoad, cell.IsBoundaryExit, cell.IsLedge, cell.IsHeightChangeRoad, cell.Environment);
 				}
 			}
 
-			snapshot = new WorldGridSnapshot(cells, TileSize, transform.position);
+			snapshot = new WorldGridSnapshot(cells, _lastTileSize > 0f ? _lastTileSize : TileSize, _lastHeightLevelWorldUnits, _lastOrigin);
 			return true;
 		}
 
-		private void GenerateGrid(out RoadCell[,] grid)
+		private WorldHeightSnapshot GetHeightSnapshot()
 		{
-			int width = Mathf.Max(3, Width);
-			int height = Mathf.Max(3, Height);
+			ResolveHeightGenerator();
+			if (HeightGenerator == null)
+				return default;
+
+			if (HeightGenerator.TryGetHeightSnapshot(out WorldHeightSnapshot snapshot) && snapshot.IsValid)
+			{
+				if (Application.isPlaying && snapshot.Seed != Seed)
+				{
+					HeightGenerator.Generate();
+					if (HeightGenerator.TryGetHeightSnapshot(out snapshot) && snapshot.IsValid)
+						return snapshot;
+				}
+
+				return snapshot;
+			}
+
+			if (GenerateHeightMapIfMissing)
+			{
+				HeightGenerator.Generate();
+				if (HeightGenerator.TryGetHeightSnapshot(out snapshot) && snapshot.IsValid)
+					return snapshot;
+			}
+
+			return default;
+		}
+
+		private void ApplyHeightSnapshotRunValues(WorldHeightSnapshot heightSnapshot)
+		{
+			if (heightSnapshot.IsValid)
+			{
+				Width = heightSnapshot.Width;
+				Height = heightSnapshot.Height;
+				Seed = heightSnapshot.Seed;
+				TileSize = heightSnapshot.TileSize;
+				_lastOrigin = heightSnapshot.Origin;
+				_lastTileSize = heightSnapshot.TileSize;
+				_lastHeightLevelWorldUnits = heightSnapshot.HeightLevelWorldUnits;
+				return;
+			}
+
+			_lastOrigin = transform.position;
+			_lastTileSize = Mathf.Max(0.01f, TileSize);
+			_lastHeightLevelWorldUnits = 0f;
+		}
+
+		private void GenerateGrid(WorldHeightSnapshot heightSnapshot, out RoadCell[,] grid)
+		{
+			int width = heightSnapshot.IsValid ? heightSnapshot.Width : Mathf.Max(3, Width);
+			int height = heightSnapshot.IsValid ? heightSnapshot.Height : Mathf.Max(3, Height);
 			grid = new RoadCell[width, height];
 			var random = new System.Random(Seed);
 
@@ -170,11 +241,24 @@ namespace SimpleFPS
 			{
 				for (int y = 0; y < height; y++)
 				{
-					grid[x, y] = new RoadCell
+					Vector2Int position = new Vector2Int(x, y);
+					RoadCell cell = new RoadCell
 					{
-						Position = new Vector2Int(x, y),
+						Position = position,
 						Environment = RoadEnvironment.Normal,
 					};
+
+					if (heightSnapshot.IsValid && heightSnapshot.TryGetCell(position, out WorldHeightCell heightCell))
+					{
+						cell.HeightLevel = heightCell.HeightLevel;
+						cell.IsLedge = heightCell.IsLedge;
+						cell.CanBeHeightChangeRoad = heightCell.CanBeReplacedByHeightChangeRoad;
+						cell.HighDirection = heightCell.HighDirection;
+						cell.LowHeightLevel = heightCell.LowHeightLevel;
+						cell.HighHeightLevel = heightCell.HighHeightLevel;
+					}
+
+					grid[x, y] = cell;
 				}
 			}
 
@@ -334,6 +418,9 @@ namespace SimpleFPS
 						continue;
 
 					if (IsEdgeCell(width, height, next) && grid[next.x, next.y].IsRoad == false)
+						continue;
+
+					if (IsStepAllowed(grid, current.Position, next) == false)
 						continue;
 
 					float stepCost = GetPathStepCost(grid, current, next, direction, random);
@@ -582,6 +669,7 @@ namespace SimpleFPS
 						continue;
 
 					grid[x, y].IsRoad = false;
+					grid[x, y].IsHeightChangeRoad = false;
 				}
 			}
 		}
@@ -686,6 +774,9 @@ namespace SimpleFPS
 					if (grid[next.x, next.y].IsRoad && next != target)
 						continue;
 
+					if (IsStepAllowed(grid, current.Position, next) == false)
+						continue;
+
 					float stepCost = GetPathStepCost(grid, current, next, direction, random);
 					if (stepCost >= 1000f)
 						continue;
@@ -746,7 +837,10 @@ namespace SimpleFPS
 			if (IsInBounds(grid, neighbor) == false)
 				return RoadSocket.Closed;
 
-			return grid[neighbor.x, neighbor.y].IsRoad ? RoadSocket.Road : RoadSocket.Closed;
+			if (grid[neighbor.x, neighbor.y].IsRoad == false)
+				return RoadSocket.Closed;
+
+			return AreRoadCellsConnected(grid[x, y], grid[neighbor.x, neighbor.y], direction) ? RoadSocket.Road : RoadSocket.Closed;
 		}
 
 		private void InstantiateGrid(RoadCell[,] grid, System.Random random)
@@ -769,6 +863,8 @@ namespace SimpleFPS
 					RoadTileCandidate tile = ChooseTile(cell, recentPlacements, placementIndex, random);
 					Vector3 position = CellToWorld(cell.Position);
 					Quaternion rotation = tile.IsValid ? Quaternion.Euler(0f, tile.YRotationDegrees, 0f) : Quaternion.identity;
+					if (cell.IsHeightChangeRoad)
+						HeightGenerator?.SuppressLedgeAt(cell.Position);
 
 					GameObject instance;
 					if (tile.IsValid && tile.Definition.gameObject != null)
@@ -803,6 +899,24 @@ namespace SimpleFPS
 			buildingGenerator.Generate();
 		}
 
+		private IEnumerator WaitForHeightMapIfNeeded()
+		{
+			ResolveHeightGenerator();
+			if (HeightGenerator == null || HeightGenerator.GenerateOnStart == false)
+				yield break;
+
+			while (HeightGenerator.TryGetHeightSnapshot(out WorldHeightSnapshot snapshot) == false || snapshot.IsValid == false)
+				yield return null;
+		}
+
+		private void ResolveHeightGenerator()
+		{
+			if (HeightGenerator != null)
+				return;
+
+			HeightGenerator = GetComponent<HeightMapGenerator>() ?? FindObjectOfType<HeightMapGenerator>();
+		}
+
 		private void ScheduleGenerationComplete()
 		{
 			if (Application.isPlaying == false)
@@ -828,7 +942,7 @@ namespace SimpleFPS
 
 		private RoadTileCandidate ChooseTile(RoadCell cell, Dictionary<RoadTileDefinition, int> recentPlacements, int placementIndex, System.Random random)
 		{
-			RoadTileSet tileSet = Settings.NormalRoadTiles;
+			RoadTileSet tileSet = Settings.RoadTiles;
 			if (tileSet == null || tileSet.Tiles == null || tileSet.Tiles.Length == 0)
 				return default;
 
@@ -838,12 +952,17 @@ namespace SimpleFPS
 			for (int i = 0; i < tileSet.Tiles.Length; i++)
 			{
 				RoadTileDefinition tile = tileSet.Tiles[i];
-				if (tile == null)
+				if (tile == null || tile.IsHeightChangeRamp != cell.IsHeightChangeRoad)
 					continue;
 
 				for (int rotationSteps = 0; rotationSteps < 4; rotationSteps++)
 				{
 					if (tile.Matches(cell.North, cell.East, cell.South, cell.West, cell.Environment, rotationSteps) == false)
+						continue;
+
+					// Height-change ramps have authored orientation: high side North at rotationSteps 0.
+					// Sockets alone are symmetric, so without this constraint a ramp can spawn flipped 180 degrees.
+					if (cell.IsHeightChangeRoad && rotationSteps != (int)cell.HighDirection)
 						continue;
 
 					var candidate = new RoadTileCandidate(tile, rotationSteps);
@@ -886,11 +1005,19 @@ namespace SimpleFPS
 			if (IsInBounds(grid, position) == false)
 				return;
 
-			grid[position.x, position.y].IsRoad = true;
+			ref RoadCell cell = ref grid[position.x, position.y];
+			cell.IsRoad = true;
+			if (cell.IsLedge && cell.CanBeHeightChangeRoad)
+			{
+				cell.IsHeightChangeRoad = true;
+			}
 		}
 
 		private bool IsRoadPlacementAllowed(RoadCell[,] grid, Vector2Int position, PathNode previous)
 		{
+			if (grid[position.x, position.y].IsLedge && grid[position.x, position.y].CanBeHeightChangeRoad == false)
+				return false;
+
 			if (Settings.PreventSolidRoadBlocks == false || grid[position.x, position.y].IsRoad)
 				return true;
 
@@ -1019,11 +1146,58 @@ namespace SimpleFPS
 			for (int i = 0; i < DirectionOffsets.Length; i++)
 			{
 				Vector2Int neighbor = position + DirectionOffsets[i];
-				if (IsInBounds(grid, neighbor) && grid[neighbor.x, neighbor.y].IsRoad)
+				if (IsInBounds(grid, neighbor)
+				    && grid[neighbor.x, neighbor.y].IsRoad
+				    && AreRoadCellsConnected(grid[position.x, position.y], grid[neighbor.x, neighbor.y], (RoadDirection)i))
+				{
 					count++;
+				}
 			}
 
 			return count;
+		}
+
+		private bool IsStepAllowed(RoadCell[,] grid, Vector2Int from, Vector2Int to)
+		{
+			if (IsInBounds(grid, from) == false || IsInBounds(grid, to) == false)
+				return false;
+
+			int directionIndex = GetDirectionIndex(from, to);
+			if (directionIndex < 0)
+				return false;
+
+			RoadDirection direction = (RoadDirection)directionIndex;
+			RoadCell fromCell = grid[from.x, from.y];
+			RoadCell toCell = grid[to.x, to.y];
+			if (toCell.IsLedge && toCell.CanBeHeightChangeRoad == false && toCell.IsRoad == false)
+				return false;
+
+			return AreRoadCellsConnected(fromCell, toCell, direction);
+		}
+
+		private bool AreRoadCellsConnected(RoadCell from, RoadCell to, RoadDirection direction)
+		{
+			if (from.IsHeightChangeRoad)
+				return IsRampSideCompatible(from, direction, to);
+
+			if (to.IsHeightChangeRoad || (to.IsLedge && to.CanBeHeightChangeRoad))
+				return IsRampSideCompatible(to, GetOpposite(direction), from);
+
+			if (from.IsLedge && from.CanBeHeightChangeRoad)
+				return IsRampSideCompatible(from, direction, to);
+
+			return from.HeightLevel == to.HeightLevel && to.IsLedge == false;
+		}
+
+		private bool IsRampSideCompatible(RoadCell ramp, RoadDirection directionFromRampToNeighbor, RoadCell neighbor)
+		{
+			if (directionFromRampToNeighbor == ramp.HighDirection)
+				return neighbor.HeightLevel == ramp.HighHeightLevel && neighbor.IsLedge == false;
+
+			if (directionFromRampToNeighbor == GetOpposite(ramp.HighDirection))
+				return neighbor.HeightLevel == ramp.LowHeightLevel && neighbor.IsLedge == false;
+
+			return false;
 		}
 
 		private bool IsInBounds(RoadCell[,] grid, Vector2Int position)
@@ -1044,6 +1218,23 @@ namespace SimpleFPS
 		private Vector2Int GetOffset(RoadDirection direction)
 		{
 			return DirectionOffsets[(int)direction];
+		}
+
+		private int GetDirectionIndex(Vector2Int from, Vector2Int to)
+		{
+			Vector2Int delta = to - from;
+			for (int i = 0; i < DirectionOffsets.Length; i++)
+			{
+				if (DirectionOffsets[i] == delta)
+					return i;
+			}
+
+			return -1;
+		}
+
+		private RoadDirection GetOpposite(RoadDirection direction)
+		{
+			return (RoadDirection)(((int)direction + 2) % 4);
 		}
 
 		private void SetSocket(ref RoadCell cell, RoadDirection direction, RoadSocket socket)
@@ -1067,7 +1258,16 @@ namespace SimpleFPS
 
 		private Vector3 CellToWorld(Vector2Int cell)
 		{
-			return transform.position + new Vector3(cell.x * TileSize, 0f, cell.y * TileSize);
+			if (_lastGrid != null && IsInBounds(_lastGrid, cell))
+			{
+				RoadCell roadCell = _lastGrid[cell.x, cell.y];
+				float heightLevel = roadCell.IsHeightChangeRoad
+					? (roadCell.LowHeightLevel + roadCell.HighHeightLevel) * 0.5f
+					: roadCell.HeightLevel;
+				return _lastOrigin + new Vector3(cell.x * _lastTileSize, heightLevel * _lastHeightLevelWorldUnits, cell.y * _lastTileSize);
+			}
+
+			return _lastOrigin + new Vector3(cell.x * (_lastTileSize > 0f ? _lastTileSize : TileSize), 0f, cell.y * (_lastTileSize > 0f ? _lastTileSize : TileSize));
 		}
 
 		private void Shuffle<T>(List<T> list, System.Random random)
@@ -1141,9 +1341,16 @@ namespace SimpleFPS
 		private struct RoadCell
 		{
 			public Vector2Int Position;
+			public int HeightLevel;
 			public bool IsRoad;
 			public bool IsRequiredRoad;
 			public bool IsBoundaryExit;
+			public bool IsLedge;
+			public bool CanBeHeightChangeRoad;
+			public bool IsHeightChangeRoad;
+			public int LowHeightLevel;
+			public int HighHeightLevel;
+			public RoadDirection HighDirection;
 			public RoadDirection ExitDirection;
 			public RoadSocket North;
 			public RoadSocket East;

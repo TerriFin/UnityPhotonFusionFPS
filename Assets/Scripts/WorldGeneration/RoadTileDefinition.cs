@@ -10,6 +10,7 @@ namespace SimpleFPS
 		public RoadSocket West;
 		public RoadEnvironment Environment = RoadEnvironment.Normal;
 		public bool IsBoundaryTile;
+		public bool IsHeightChangeRamp;
 		[Min(1)]
 		public int Weight = 1;
 		[Min(0)]

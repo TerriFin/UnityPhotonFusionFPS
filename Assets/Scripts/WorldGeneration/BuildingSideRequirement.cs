@@ -5,5 +5,7 @@ namespace SimpleFPS
 		Any,
 		RequiresRoad,
 		RequiresNoRoad,
+		RequiresLedgeDown,
+		RequiresLedgeUp,
 	}
 }
