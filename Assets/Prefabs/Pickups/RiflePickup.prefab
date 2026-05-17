@@ -89,7 +89,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   Type: 2
   Radius: 0.5
-  Cooldown: 180
+  Cooldown: 60
   LayerMask:
     serializedVersion: 2
     m_Bits: 128

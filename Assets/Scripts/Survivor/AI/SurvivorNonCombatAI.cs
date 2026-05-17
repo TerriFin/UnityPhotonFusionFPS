@@ -727,6 +727,8 @@ namespace SimpleFPS
 						return true;
 				}
 
+				if (allowLostCombatInvestigation)
+					_combat.NotifyTargetLost();
 				if (allowLostCombatInvestigation && TryStartLostCombatInvestigation(enemy))
 					return false;
 
@@ -734,7 +736,10 @@ namespace SimpleFPS
 			}
 
 			if (allowLostCombatInvestigation)
+			{
+				_combat.NotifyTargetLost();
 				TryStartLostCombatInvestigation();
+			}
 			return false;
 		}
 

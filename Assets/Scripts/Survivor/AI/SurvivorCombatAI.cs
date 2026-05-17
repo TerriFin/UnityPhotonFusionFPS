@@ -51,6 +51,11 @@ namespace SimpleFPS
 			_movement?.ClearTask(_survivor != null ? _survivor.Navigator : null);
 		}
 
+		public void NotifyTargetLost()
+		{
+			_movement?.NotifyTargetLost(_survivor);
+		}
+
 		public bool TryGetDirectTarget(out KnownEnemyInfo enemy, out bool hasLineOfFire)
 		{
 			enemy = default;

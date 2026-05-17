@@ -56,7 +56,10 @@ Inspector tunables:
 
 ```text
 ReevaluateInterval
+InitialReevaluationStaggerMax
+ReevaluateIntervalJitter
 CandidateCount
+MaxCachedAllies
 SearchRadius
 NavMeshSampleDistance
 StoppingDistance
@@ -66,6 +69,9 @@ DirectFallbackDistance
 RequireCandidateLineOfFire
 PartialCoverProbeOffset
 RequiredScoreImprovement
+TargetLossBlacklistDuration
+TargetLossBlacklistRadius
+TargetLossRecentDestinationTime
 CoverWeight
 AllySpacingWeight
 PreferredRangeWeight
@@ -76,7 +82,10 @@ AllySpacingRadius
 Guidelines:
 
 - `ReevaluateInterval` controls how often expensive candidate scoring runs. Higher is cheaper but less reactive.
+- `InitialReevaluationStaggerMax` spreads first-time combat movement searches across a random delay, reducing spikes when many survivors enter combat together.
+- `ReevaluateIntervalJitter` adds a small random delay to repeated searches so survivors do not stay synchronized forever.
 - `CandidateCount` controls how many points are tested per reevaluation. Lower is cheaper and dumber.
+- `MaxCachedAllies` caps how many nearby allies are cached for spacing scores during one reevaluation.
 - `SearchRadius` controls how far the AI is willing to reposition in one tactical move.
 - `NavMeshSampleDistance` controls how far candidates may snap to nearby reachable ground.
 - `StoppingDistance` controls how close the survivor gets to the chosen combat movement point.
@@ -86,6 +95,9 @@ Guidelines:
 - `RequireCandidateLineOfFire` rejects full-cover candidates where the survivor could not shoot from the chosen point.
 - `PartialCoverProbeOffset` controls how far to check beside a clear firing point for nearby blocking geometry.
 - `RequiredScoreImprovement` prevents moving unless the new point is clearly better than the current position.
+- `TargetLossBlacklistDuration` controls how long a combat destination is avoided after it appears to make the survivor lose line of fire.
+- `TargetLossBlacklistRadius` controls how close future candidates can be to that temporarily bad destination before they are rejected.
+- `TargetLossRecentDestinationTime` controls how recently a destination must have been selected to be blamed for target loss even if the survivor has not fully arrived there yet.
 
 Good cheap defaults should be modest, for example about `8-12` candidates every `0.75-1.25s`.
 
@@ -94,8 +106,11 @@ Current implementation state:
 - Combat movement only runs while the survivor has a direct enemy with line of fire.
 - It uses `CharacterNavigator` and `NavMesh.CalculatePath` for candidate reachability.
 - Candidate search state is local to state authority and is not networked.
+- Reevaluations are staggered per survivor so large groups do not all run cover searches on the same simulation tick.
+- Nearby ally positions are cached once per reevaluation and reused for all candidate scores, instead of scanning every active survivor for every candidate.
 - If combat movement is disabled with K, the survivor still uses `SurvivorAIShooting` but stops tactical repositioning.
 - Candidates that fully block the survivor's own shot are rejected by default.
+- If a chosen combat destination appears to cause the survivor to lose its target, that destination is temporarily blacklisted. Lost-target investigation still starts immediately, but when combat resumes the movement AI avoids picking the same bad cover point again.
 - Combat movement is suppressed while a player movement order is still being fulfilled. Follow movement, unreached move orders, and first-time travel into an assigned defend area keep their ordered movement direction. Combat aim/fire may still merge into that movement, but tactical cover/range/spacing movement resumes only after the move destination is reached or the assigned area has been entered once.
 
 ## Preferred Weapon Ranges
