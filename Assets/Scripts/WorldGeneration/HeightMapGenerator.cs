@@ -14,6 +14,26 @@ namespace SimpleFPS
 			new Vector2Int(-1, 0),
 		};
 
+		private static readonly Vector2Int[] NeighborOffsets =
+		{
+			new Vector2Int(0, 1),
+			new Vector2Int(1, 1),
+			new Vector2Int(1, 0),
+			new Vector2Int(1, -1),
+			new Vector2Int(0, -1),
+			new Vector2Int(-1, -1),
+			new Vector2Int(-1, 0),
+			new Vector2Int(-1, 1),
+		};
+
+		private static readonly Vector2Int[] DiagonalOffsets =
+		{
+			new Vector2Int(1, 1),
+			new Vector2Int(1, -1),
+			new Vector2Int(-1, -1),
+			new Vector2Int(-1, 1),
+		};
+
 		[Header("Setup")]
 		public HeightGenerationSettings Settings;
 		[Min(3)]
@@ -175,6 +195,29 @@ namespace SimpleFPS
 				return heights;
 
 			var random = new System.Random(Seed);
+			int attempts = Mathf.Max(1, Settings.MaxGenerationAttempts);
+			for (int attempt = 0; attempt < attempts; attempt++)
+			{
+				int[,] candidate = GenerateOrganicHeightLevels(width, height, layerCount, random, attempt);
+				ApplySmoothing(candidate, layerCount);
+				CullUnusableRegions(candidate);
+				EnforceHeightDifferenceRule(candidate, layerCount);
+				EnforceMapEdgeHeightContinuity(candidate);
+				EnforceMinimumDistanceBetweenHeightChanges(candidate, layerCount);
+				CullUnusableRegions(candidate);
+				EnforceMapEdgeHeightContinuity(candidate);
+				EnforceHeightDifferenceRule(candidate, layerCount);
+
+				if (Settings.MinRoadReplaceableLedgesPerHeightRegion <= 0 || HasEnoughRoadReplaceableLedges(BuildHeightCells(candidate, false)))
+					return candidate;
+			}
+
+			return GenerateBandHeightLevels(width, height, layerCount, random);
+		}
+
+		private int[,] GenerateBandHeightLevels(int width, int height, int layerCount, System.Random random)
+		{
+			int[,] heights = new int[width, height];
 			bool splitAlongX = random.Next(2) == 0;
 			int length = splitAlongX ? width : height;
 			int minBand = Mathf.Max(
@@ -196,6 +239,520 @@ namespace SimpleFPS
 			}
 
 			return heights;
+		}
+
+		private int[,] GenerateOrganicHeightLevels(int width, int height, int layerCount, System.Random random, int attempt)
+		{
+			int[,] heights = new int[width, height];
+			List<HeightSeed> seeds = BuildHeightSeeds(width, height, layerCount, random);
+
+			for (int x = 0; x < width; x++)
+			{
+				for (int y = 0; y < height; y++)
+				{
+					float warpedX = x + (Hash01(x, y, Seed + attempt * 37) - 0.5f) * 1.75f;
+					float warpedY = y + (Hash01(x + 13, y - 7, Seed ^ (attempt * 7919)) - 0.5f) * 1.75f;
+					float bestScore = float.MaxValue;
+					int bestHeight = 0;
+
+					for (int i = 0; i < seeds.Count; i++)
+					{
+						HeightSeed seed = seeds[i];
+						float dx = warpedX - seed.Position.x;
+						float dy = warpedY - seed.Position.y;
+						float score = (dx * dx + dy * dy) * seed.Weight;
+						if (score >= bestScore)
+							continue;
+
+						bestScore = score;
+						bestHeight = seed.HeightLevel;
+					}
+
+					heights[x, y] = bestHeight;
+				}
+			}
+
+			return heights;
+		}
+
+		private List<HeightSeed> BuildHeightSeeds(int width, int height, int layerCount, System.Random random)
+		{
+			float balance = Mathf.Clamp01(Settings.RegionBalance);
+			int extraSeeds = Mathf.RoundToInt(Mathf.Lerp(layerCount * 3f, 1f, balance));
+			int seedCount = Mathf.Clamp(layerCount + extraSeeds, layerCount, Mathf.Min(width * height, layerCount * 4 + 4));
+			var seeds = new List<HeightSeed>(seedCount);
+
+			for (int level = 0; level < layerCount; level++)
+				seeds.Add(CreateHeightSeed(width, height, level, random));
+
+			for (int i = seeds.Count; i < seedCount; i++)
+				seeds.Add(CreateHeightSeed(width, height, random.Next(layerCount), random));
+
+			return seeds;
+		}
+
+		private HeightSeed CreateHeightSeed(int width, int height, int heightLevel, System.Random random)
+		{
+			return new HeightSeed(
+				new Vector2Int(random.Next(width), random.Next(height)),
+				heightLevel,
+				Mathf.Lerp(0.75f, 1.35f, (float)random.NextDouble()));
+		}
+
+		private void ApplySmoothing(int[,] heights, int layerCount)
+		{
+			int passes = Mathf.Max(0, Settings.SmoothingPasses);
+			for (int pass = 0; pass < passes; pass++)
+			{
+				int width = heights.GetLength(0);
+				int height = heights.GetLength(1);
+				int[,] next = (int[,])heights.Clone();
+
+				for (int x = 0; x < width; x++)
+				{
+					for (int y = 0; y < height; y++)
+					{
+						int[] counts = new int[layerCount];
+						for (int i = 0; i < NeighborOffsets.Length; i++)
+						{
+							Vector2Int neighbor = new Vector2Int(x, y) + NeighborOffsets[i];
+							if (IsInBounds(heights, neighbor))
+								counts[heights[neighbor.x, neighbor.y]]++;
+						}
+
+						int bestHeight = heights[x, y];
+						int bestCount = 0;
+						for (int level = 0; level < counts.Length; level++)
+						{
+							if (counts[level] > bestCount)
+							{
+								bestCount = counts[level];
+								bestHeight = level;
+							}
+						}
+
+						if (bestCount >= 5)
+							next[x, y] = bestHeight;
+					}
+				}
+
+				CopyHeights(next, heights);
+			}
+		}
+
+		private void CullUnusableRegions(int[,] heights)
+		{
+			int guard = heights.GetLength(0) * heights.GetLength(1);
+			while (guard-- > 0)
+			{
+				if (TryMergeSmallRegion(heights) == false)
+					return;
+			}
+		}
+
+		private bool TryMergeSmallRegion(int[,] heights)
+		{
+			int width = heights.GetLength(0);
+			int height = heights.GetLength(1);
+			bool[,] visited = new bool[width, height];
+
+			for (int x = 0; x < width; x++)
+			{
+				for (int y = 0; y < height; y++)
+				{
+					if (visited[x, y])
+						continue;
+
+					List<Vector2Int> region = CollectHeightRegion(heights, new Vector2Int(x, y), visited, out Vector2Int min, out Vector2Int max);
+					int regionWidth = max.x - min.x + 1;
+					int regionHeight = max.y - min.y + 1;
+					bool tooSmall = region.Count < Mathf.Max(1, Settings.MinUsableRegionArea)
+						|| regionWidth < Mathf.Max(1, Settings.MinUsableRegionWidth)
+						|| regionHeight < Mathf.Max(1, Settings.MinUsableRegionHeight);
+
+					if (tooSmall == false)
+						continue;
+
+					if (TryGetBestNeighborHeight(heights, region, out int replacementHeight) == false)
+						continue;
+
+					for (int i = 0; i < region.Count; i++)
+						heights[region[i].x, region[i].y] = replacementHeight;
+
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		private List<Vector2Int> CollectHeightRegion(int[,] heights, Vector2Int start, bool[,] visited, out Vector2Int min, out Vector2Int max)
+		{
+			int targetHeight = heights[start.x, start.y];
+			var region = new List<Vector2Int>();
+			var open = new Queue<Vector2Int>();
+			open.Enqueue(start);
+			visited[start.x, start.y] = true;
+			min = start;
+			max = start;
+
+			while (open.Count > 0)
+			{
+				Vector2Int current = open.Dequeue();
+				region.Add(current);
+				min = Vector2Int.Min(min, current);
+				max = Vector2Int.Max(max, current);
+
+				for (int i = 0; i < DirectionOffsets.Length; i++)
+				{
+					Vector2Int next = current + DirectionOffsets[i];
+					if (IsInBounds(heights, next) == false || visited[next.x, next.y] || heights[next.x, next.y] != targetHeight)
+						continue;
+
+					visited[next.x, next.y] = true;
+					open.Enqueue(next);
+				}
+			}
+
+			return region;
+		}
+
+		private bool TryGetBestNeighborHeight(int[,] heights, List<Vector2Int> region, out int replacementHeight)
+		{
+			var counts = new Dictionary<int, int>();
+			int currentHeight = heights[region[0].x, region[0].y];
+
+			for (int i = 0; i < region.Count; i++)
+			{
+				for (int direction = 0; direction < DirectionOffsets.Length; direction++)
+				{
+					Vector2Int neighbor = region[i] + DirectionOffsets[direction];
+					if (IsInBounds(heights, neighbor) == false || heights[neighbor.x, neighbor.y] == currentHeight)
+						continue;
+
+					int height = heights[neighbor.x, neighbor.y];
+					counts.TryGetValue(height, out int count);
+					counts[height] = count + 1;
+				}
+			}
+
+			replacementHeight = currentHeight;
+			int bestCount = 0;
+			foreach (KeyValuePair<int, int> pair in counts)
+			{
+				if (pair.Value > bestCount)
+				{
+					bestCount = pair.Value;
+					replacementHeight = pair.Key;
+				}
+			}
+
+			return bestCount > 0;
+		}
+
+		private void EnforceHeightDifferenceRule(int[,] heights, int layerCount)
+		{
+			int guard = heights.GetLength(0) * heights.GetLength(1) * Mathf.Max(1, layerCount);
+			bool changed;
+			do
+			{
+				changed = false;
+				for (int x = 0; x < heights.GetLength(0); x++)
+				{
+					for (int y = 0; y < heights.GetLength(1); y++)
+					{
+						for (int i = 0; i < NeighborOffsets.Length; i++)
+						{
+							Vector2Int neighbor = new Vector2Int(x, y) + NeighborOffsets[i];
+							if (IsInBounds(heights, neighbor) == false)
+								continue;
+
+							if (heights[x, y] > heights[neighbor.x, neighbor.y] + 1)
+							{
+								heights[x, y] = heights[neighbor.x, neighbor.y] + 1;
+								changed = true;
+							}
+						}
+					}
+				}
+
+				guard--;
+			}
+			while (changed && guard > 0);
+		}
+
+		private void EnforceMinimumDistanceBetweenHeightChanges(int[,] heights, int layerCount)
+		{
+			int minimumSpacing = Mathf.Max(0, Settings.MinCellsBetweenHeightChanges);
+			if (minimumSpacing <= 1)
+				return;
+
+			int guard = heights.GetLength(0) * heights.GetLength(1);
+			while (guard-- > 0)
+			{
+				if (TryResolveCloseHeightChanges(heights, minimumSpacing) == false)
+					return;
+
+				EnforceHeightDifferenceRule(heights, layerCount);
+			}
+		}
+
+		private bool TryResolveCloseHeightChanges(int[,] heights, int minimumSpacing)
+		{
+			return TryResolveCloseHeightChangesHorizontal(heights, minimumSpacing)
+				|| TryResolveCloseHeightChangesVertical(heights, minimumSpacing)
+				|| TryResolveCloseHeightChangesDiagonal(heights, minimumSpacing, new Vector2Int(1, 1))
+				|| TryResolveCloseHeightChangesDiagonal(heights, minimumSpacing, new Vector2Int(1, -1));
+		}
+
+		private void EnforceMapEdgeHeightContinuity(int[,] heights)
+		{
+			int width = heights.GetLength(0);
+			int height = heights.GetLength(1);
+			if (width < 3 || height < 3)
+				return;
+
+			for (int x = 0; x < width; x++)
+			{
+				heights[x, 0] = heights[x, 1];
+				heights[x, height - 1] = heights[x, height - 2];
+			}
+
+			for (int y = 0; y < height; y++)
+			{
+				heights[0, y] = heights[1, y];
+				heights[width - 1, y] = heights[width - 2, y];
+			}
+		}
+
+		private bool TryResolveCloseHeightChangesHorizontal(int[,] heights, int minimumSpacing)
+		{
+			int width = heights.GetLength(0);
+			int height = heights.GetLength(1);
+
+			for (int y = 0; y < height; y++)
+			{
+				int previousTransition = -1;
+				for (int x = 0; x < width - 1; x++)
+				{
+					if (heights[x, y] == heights[x + 1, y])
+						continue;
+
+					if (previousTransition >= 0 && x - previousTransition < minimumSpacing)
+					{
+						MergeHorizontalStrip(heights, y, previousTransition + 1, x);
+						return true;
+					}
+
+					previousTransition = x;
+				}
+			}
+
+			return false;
+		}
+
+		private bool TryResolveCloseHeightChangesVertical(int[,] heights, int minimumSpacing)
+		{
+			int width = heights.GetLength(0);
+			int height = heights.GetLength(1);
+
+			for (int x = 0; x < width; x++)
+			{
+				int previousTransition = -1;
+				for (int y = 0; y < height - 1; y++)
+				{
+					if (heights[x, y] == heights[x, y + 1])
+						continue;
+
+					if (previousTransition >= 0 && y - previousTransition < minimumSpacing)
+					{
+						MergeVerticalStrip(heights, x, previousTransition + 1, y);
+						return true;
+					}
+
+					previousTransition = y;
+				}
+			}
+
+			return false;
+		}
+
+		private bool TryResolveCloseHeightChangesDiagonal(int[,] heights, int minimumSpacing, Vector2Int direction)
+		{
+			int width = heights.GetLength(0);
+			int height = heights.GetLength(1);
+			var starts = new List<Vector2Int>();
+
+			if (direction.y > 0)
+			{
+				for (int x = 0; x < width; x++)
+					starts.Add(new Vector2Int(x, 0));
+
+				for (int y = 1; y < height; y++)
+					starts.Add(new Vector2Int(0, y));
+			}
+			else
+			{
+				for (int x = 0; x < width; x++)
+					starts.Add(new Vector2Int(x, height - 1));
+
+				for (int y = 0; y < height - 1; y++)
+					starts.Add(new Vector2Int(0, y));
+			}
+
+			for (int i = 0; i < starts.Count; i++)
+			{
+				if (TryResolveCloseHeightChangesOnLine(heights, starts[i], direction, minimumSpacing))
+					return true;
+			}
+
+			return false;
+		}
+
+		private bool TryResolveCloseHeightChangesOnLine(int[,] heights, Vector2Int start, Vector2Int direction, int minimumSpacing)
+		{
+			var line = new List<Vector2Int>();
+			for (Vector2Int current = start; IsInBounds(heights, current); current += direction)
+				line.Add(current);
+
+			int previousTransition = -1;
+			for (int i = 0; i < line.Count - 1; i++)
+			{
+				Vector2Int current = line[i];
+				Vector2Int next = line[i + 1];
+				if (heights[current.x, current.y] == heights[next.x, next.y])
+					continue;
+
+				if (previousTransition >= 0 && i - previousTransition < minimumSpacing)
+				{
+					MergeLineStrip(heights, line, previousTransition + 1, i);
+					return true;
+				}
+
+				previousTransition = i;
+			}
+
+			return false;
+		}
+
+		private void MergeHorizontalStrip(int[,] heights, int y, int startX, int endX)
+		{
+			int replacementHeight = ChooseHorizontalStripReplacementHeight(heights, y, startX, endX);
+			for (int x = startX; x <= endX; x++)
+				heights[x, y] = replacementHeight;
+		}
+
+		private void MergeVerticalStrip(int[,] heights, int x, int startY, int endY)
+		{
+			int replacementHeight = ChooseVerticalStripReplacementHeight(heights, x, startY, endY);
+			for (int y = startY; y <= endY; y++)
+				heights[x, y] = replacementHeight;
+		}
+
+		private void MergeLineStrip(int[,] heights, List<Vector2Int> line, int startIndex, int endIndex)
+		{
+			int replacementHeight = ChooseLineStripReplacementHeight(heights, line, startIndex, endIndex);
+			for (int i = startIndex; i <= endIndex; i++)
+				heights[line[i].x, line[i].y] = replacementHeight;
+		}
+
+		private int ChooseHorizontalStripReplacementHeight(int[,] heights, int y, int startX, int endX)
+		{
+			int width = heights.GetLength(0);
+			int leftHeight = startX > 0 ? heights[startX - 1, y] : heights[startX, y];
+			int rightHeight = endX < width - 1 ? heights[endX + 1, y] : heights[endX, y];
+			if (leftHeight == rightHeight)
+				return leftHeight;
+
+			int leftSupport = CountHeightSupport(heights, new Vector2Int(startX, y), new Vector2Int(endX, y), leftHeight);
+			int rightSupport = CountHeightSupport(heights, new Vector2Int(startX, y), new Vector2Int(endX, y), rightHeight);
+			return rightSupport > leftSupport ? rightHeight : leftHeight;
+		}
+
+		private int ChooseVerticalStripReplacementHeight(int[,] heights, int x, int startY, int endY)
+		{
+			int height = heights.GetLength(1);
+			int bottomHeight = startY > 0 ? heights[x, startY - 1] : heights[x, startY];
+			int topHeight = endY < height - 1 ? heights[x, endY + 1] : heights[x, endY];
+			if (bottomHeight == topHeight)
+				return bottomHeight;
+
+			int bottomSupport = CountHeightSupport(heights, new Vector2Int(x, startY), new Vector2Int(x, endY), bottomHeight);
+			int topSupport = CountHeightSupport(heights, new Vector2Int(x, startY), new Vector2Int(x, endY), topHeight);
+			return topSupport > bottomSupport ? topHeight : bottomHeight;
+		}
+
+		private int ChooseLineStripReplacementHeight(int[,] heights, List<Vector2Int> line, int startIndex, int endIndex)
+		{
+			int beforeHeight = startIndex > 0 ? heights[line[startIndex - 1].x, line[startIndex - 1].y] : heights[line[startIndex].x, line[startIndex].y];
+			int afterHeight = endIndex < line.Count - 1 ? heights[line[endIndex + 1].x, line[endIndex + 1].y] : heights[line[endIndex].x, line[endIndex].y];
+			if (beforeHeight == afterHeight)
+				return beforeHeight;
+
+			int beforeSupport = CountLineHeightSupport(heights, line, startIndex, endIndex, beforeHeight);
+			int afterSupport = CountLineHeightSupport(heights, line, startIndex, endIndex, afterHeight);
+			return afterSupport > beforeSupport ? afterHeight : beforeHeight;
+		}
+
+		private int CountLineHeightSupport(int[,] heights, List<Vector2Int> line, int startIndex, int endIndex, int heightLevel)
+		{
+			int support = 0;
+			for (int i = startIndex; i <= endIndex; i++)
+			{
+				Vector2Int position = line[i];
+				for (int direction = 0; direction < DirectionOffsets.Length; direction++)
+				{
+					Vector2Int neighbor = position + DirectionOffsets[direction];
+					if (IsInBounds(heights, neighbor) && heights[neighbor.x, neighbor.y] == heightLevel)
+						support++;
+				}
+			}
+
+			return support;
+		}
+
+		private int CountHeightSupport(int[,] heights, Vector2Int min, Vector2Int max, int heightLevel)
+		{
+			int support = 0;
+			for (int x = min.x; x <= max.x; x++)
+			{
+				for (int y = min.y; y <= max.y; y++)
+				{
+					for (int i = 0; i < DirectionOffsets.Length; i++)
+					{
+						Vector2Int neighbor = new Vector2Int(x, y) + DirectionOffsets[i];
+						if (IsInBounds(heights, neighbor) && heights[neighbor.x, neighbor.y] == heightLevel)
+							support++;
+					}
+				}
+			}
+
+			return support;
+		}
+
+		private void CopyHeights(int[,] source, int[,] target)
+		{
+			for (int x = 0; x < source.GetLength(0); x++)
+			{
+				for (int y = 0; y < source.GetLength(1); y++)
+				{
+					target[x, y] = source[x, y];
+				}
+			}
+		}
+
+		private float Hash01(int x, int y, int seed)
+		{
+			unchecked
+			{
+				int hash = seed;
+				hash = hash * 397 ^ x;
+				hash = hash * 397 ^ y;
+				hash ^= hash << 13;
+				hash ^= hash >> 17;
+				hash ^= hash << 5;
+				return (hash & 0x7fffffff) / (float)int.MaxValue;
+			}
 		}
 
 		private List<int> BuildHeightSequence(int layerCount, int length, int minBand, System.Random random)
@@ -270,7 +827,7 @@ namespace SimpleFPS
 			return boundaries.Length - 1;
 		}
 
-		private WorldHeightCell[,] BuildHeightCells(int[,] heights)
+		private WorldHeightCell[,] BuildHeightCells(int[,] heights, bool allowFlatFallback = true)
 		{
 			int width = heights.GetLength(0);
 			int height = heights.GetLength(1);
@@ -285,6 +842,16 @@ namespace SimpleFPS
 					bool isLedge = TryGetLedgeData(heights, position, out RoadDirection highDirection, out int highHeight);
 					bool isBoundary = isLedge && IsEdgeCell(width, height, position);
 					HeightTileShape shape = isLedge ? GetLedgeShape(heights, position, currentHeight) : HeightTileShape.Straight;
+					if (isBoundary && shape != HeightTileShape.Straight)
+					{
+						isLedge = false;
+						isBoundary = false;
+						shape = HeightTileShape.Straight;
+						highDirection = RoadDirection.North;
+						highHeight = currentHeight;
+					}
+
+					int rotationSteps = isLedge ? GetLedgeRotationSteps(heights, position, shape, highDirection, currentHeight) : 0;
 					bool replaceable = isLedge && isBoundary == false && shape == HeightTileShape.Straight && HasRoadReplaceableSides(heights, position, highDirection, currentHeight, highHeight);
 
 					cells[x, y] = new WorldHeightCell(
@@ -295,12 +862,13 @@ namespace SimpleFPS
 						replaceable,
 						shape,
 						highDirection,
+						rotationSteps,
 						currentHeight,
 						highHeight);
 				}
 			}
 
-			if (Settings.MinRoadReplaceableLedgesPerHeightRegion > 0 && HasEnoughRoadReplaceableLedges(cells) == false)
+			if (allowFlatFallback && Settings.MinRoadReplaceableLedgesPerHeightRegion > 0 && HasEnoughRoadReplaceableLedges(cells) == false)
 			{
 				Debug.LogWarning($"{nameof(HeightMapGenerator)} could not find enough road-replaceable ledges, so it fell back to a flat height map.", this);
 				return BuildFlatCells(width, height);
@@ -324,6 +892,7 @@ namespace SimpleFPS
 						false,
 						HeightTileShape.Straight,
 						RoadDirection.North,
+						0,
 						0,
 						0);
 				}
@@ -350,6 +919,21 @@ namespace SimpleFPS
 				}
 			}
 
+			for (int i = 0; i < DiagonalOffsets.Length; i++)
+			{
+				Vector2Int neighbor = position + DiagonalOffsets[i];
+				if (IsInBounds(heights, neighbor) == false)
+					continue;
+
+				int neighborHeight = heights[neighbor.x, neighbor.y];
+				if (neighborHeight > currentHeight)
+				{
+					highDirection = GetPrimaryDirection(DiagonalOffsets[i]);
+					highHeight = neighborHeight;
+					return true;
+				}
+			}
+
 			highDirection = RoadDirection.North;
 			highHeight = currentHeight;
 			return false;
@@ -365,7 +949,106 @@ namespace SimpleFPS
 					highNeighborCount++;
 			}
 
+			if (highNeighborCount == 0 && HasHigherDiagonalNeighbor(heights, position, currentHeight))
+				return HeightTileShape.OuterCorner;
+
 			return highNeighborCount <= 1 ? HeightTileShape.Straight : HeightTileShape.InnerCorner;
+		}
+
+		private int GetLedgeRotationSteps(int[,] heights, Vector2Int position, HeightTileShape shape, RoadDirection highDirection, int currentHeight)
+		{
+			if (shape == HeightTileShape.Straight)
+				return (int)highDirection;
+
+			if (shape == HeightTileShape.OuterCorner && TryGetOuterCornerRotationSteps(heights, position, currentHeight, out int outerRotationSteps))
+				return outerRotationSteps;
+
+			bool north = HasHigherNeighbor(heights, position, RoadDirection.North, currentHeight);
+			bool east = HasHigherNeighbor(heights, position, RoadDirection.East, currentHeight);
+			bool south = HasHigherNeighbor(heights, position, RoadDirection.South, currentHeight);
+			bool west = HasHigherNeighbor(heights, position, RoadDirection.West, currentHeight);
+
+			// Inner-corner prefab default orientation: high sides are North and East.
+			if (north && east)
+				return 0;
+			if (east && south)
+				return 1;
+			if (south && west)
+				return 2;
+			if (west && north)
+				return 3;
+
+			// Fallback for unusual opposite/three-sided cases. These should become rare after smoothing,
+			// but keeping the first high side deterministic is better than random rotation.
+			return (int)highDirection;
+		}
+
+		private bool TryGetOuterCornerRotationSteps(int[,] heights, Vector2Int position, int currentHeight, out int rotationSteps)
+		{
+			// Outer-corner prefab default orientation: higher elevation touches the North-East diagonal.
+			if (HasHigherDiagonalNeighbor(heights, position, new Vector2Int(1, 1), currentHeight))
+			{
+				rotationSteps = 0;
+				return true;
+			}
+
+			if (HasHigherDiagonalNeighbor(heights, position, new Vector2Int(1, -1), currentHeight))
+			{
+				rotationSteps = 1;
+				return true;
+			}
+
+			if (HasHigherDiagonalNeighbor(heights, position, new Vector2Int(-1, -1), currentHeight))
+			{
+				rotationSteps = 2;
+				return true;
+			}
+
+			if (HasHigherDiagonalNeighbor(heights, position, new Vector2Int(-1, 1), currentHeight))
+			{
+				rotationSteps = 3;
+				return true;
+			}
+
+			rotationSteps = 0;
+			return false;
+		}
+
+		private bool HasHigherNeighbor(int[,] heights, Vector2Int position, RoadDirection direction, int currentHeight)
+		{
+			Vector2Int neighbor = position + DirectionOffsets[(int)direction];
+			return IsInBounds(heights, neighbor) && heights[neighbor.x, neighbor.y] > currentHeight;
+		}
+
+		private bool HasHigherDiagonalNeighbor(int[,] heights, Vector2Int position, int currentHeight)
+		{
+			for (int i = 0; i < DiagonalOffsets.Length; i++)
+			{
+				if (HasHigherDiagonalNeighbor(heights, position, DiagonalOffsets[i], currentHeight))
+					return true;
+			}
+
+			return false;
+		}
+
+		private bool HasHigherDiagonalNeighbor(int[,] heights, Vector2Int position, Vector2Int offset, int currentHeight)
+		{
+			Vector2Int neighbor = position + offset;
+			return IsInBounds(heights, neighbor) && heights[neighbor.x, neighbor.y] > currentHeight;
+		}
+
+		private RoadDirection GetPrimaryDirection(Vector2Int diagonalOffset)
+		{
+			if (diagonalOffset.y > 0)
+				return RoadDirection.North;
+
+			if (diagonalOffset.x > 0)
+				return RoadDirection.East;
+
+			if (diagonalOffset.y < 0)
+				return RoadDirection.South;
+
+			return RoadDirection.West;
 		}
 
 		private bool HasRoadReplaceableSides(int[,] heights, Vector2Int position, RoadDirection highDirection, int lowHeight, int highHeight)
@@ -484,19 +1167,7 @@ namespace SimpleFPS
 
 		private static IEnumerable<int> GetAllowedRotationSteps(WorldHeightCell cell)
 		{
-			// Prefab default orientation: higher elevation faces North (rotationSteps 0).
-			// rotationSteps = (int)HighDirection rotates the tile so the high side faces the cell's actual high neighbor.
-			if (cell.LedgeShape == HeightTileShape.Straight)
-			{
-				yield return (int)cell.HighDirection;
-				yield break;
-			}
-
-			// Corner shapes need a pair of high directions to pick a single rotation.
-			// The current generator does not produce corner ledges yet, so until the cell carries
-			// pair info, allow all rotations and accept that corners may face a random direction.
-			for (int rotationSteps = 0; rotationSteps < 4; rotationSteps++)
-				yield return rotationSteps;
+			yield return cell.LedgeRotationSteps;
 		}
 
 		private HeightTileCandidate ChooseWeighted(List<HeightTileCandidate> candidates, System.Random random)
@@ -624,6 +1295,20 @@ namespace SimpleFPS
 			{
 				Definition = definition;
 				RotationSteps = rotationSteps;
+			}
+		}
+
+		private readonly struct HeightSeed
+		{
+			public readonly Vector2Int Position;
+			public readonly int HeightLevel;
+			public readonly float Weight;
+
+			public HeightSeed(Vector2Int position, int heightLevel, float weight)
+			{
+				Position = position;
+				HeightLevel = heightLevel;
+				Weight = weight;
 			}
 		}
 	}

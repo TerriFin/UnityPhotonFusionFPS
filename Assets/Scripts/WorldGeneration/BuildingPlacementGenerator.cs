@@ -318,6 +318,9 @@ namespace SimpleFPS
 			if (isBoundary != boundaryPhase)
 				return false;
 
+			if (shape != HeightTileShape.Straight && Settings.ReplaceCornerLedgesWithBlockingBuildings == false)
+				return false;
+
 			if (isBoundary)
 			{
 				// Boundary ledge: the map-edge fill always seals up to two cardinal sides with blockers.

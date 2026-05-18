@@ -11,6 +11,7 @@ namespace SimpleFPS
 		public readonly bool CanBeReplacedByHeightChangeRoad;
 		public readonly HeightTileShape LedgeShape;
 		public readonly RoadDirection HighDirection;
+		public readonly int LedgeRotationSteps;
 		public readonly int LowHeightLevel;
 		public readonly int HighHeightLevel;
 
@@ -22,6 +23,7 @@ namespace SimpleFPS
 			bool canBeReplacedByHeightChangeRoad,
 			HeightTileShape ledgeShape,
 			RoadDirection highDirection,
+			int ledgeRotationSteps,
 			int lowHeightLevel,
 			int highHeightLevel)
 		{
@@ -32,6 +34,7 @@ namespace SimpleFPS
 			CanBeReplacedByHeightChangeRoad = canBeReplacedByHeightChangeRoad;
 			LedgeShape = ledgeShape;
 			HighDirection = highDirection;
+			LedgeRotationSteps = ledgeRotationSteps;
 			LowHeightLevel = lowHeightLevel;
 			HighHeightLevel = highHeightLevel;
 		}

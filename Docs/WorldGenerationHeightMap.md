@@ -149,9 +149,18 @@ North = high side
 South = low side
 ```
 
-Inner and outer corner ledges should follow the same base-orientation rule: the `HeightTileDefinition` describes which sides are high and low at rotation `0`, and the generator rotates the definition to match the local height pattern.
+Inner and outer corner ledges follow deterministic base-orientation rules:
+
+```text
+Inner corner rotation 0: high sides are North + East
+Outer corner rotation 0: higher elevation touches the North-East diagonal
+```
+
+The generator rotates those definitions to match the local height pattern. Outer corners are created for low cells that touch higher elevation only diagonally. This fills the visible gap between two neighboring inner-corner transitions.
 
 When an elevation transition reaches the map edge, use boundary ledge tiles. For the first version, map-edge ledges should be straight. The height transition is considered to continue out of the map.
+
+Boundary corner ledge candidates are intentionally suppressed in the current implementation. If an edge cell would become an inner/outer corner ledge, it is left as a normal empty edge cell so building placement can fill it with a simple blocker. This keeps the map edge limited to edge roads, straight boundary ledges, and blocking buildings.
 
 Future special ledge tiles can include:
 
@@ -345,24 +354,26 @@ If `HeightLayerCount <= 1`, stop here. No ledge cells are created.
 
 ### 2. Generate Large Height Regions
 
-Create one or more regions for each available height layer.
+Create one or more organic regions for each available height layer.
 
-The first version can use seeded region growth or Voronoi-style seeds:
+The implementation uses seeded Voronoi-style region growth:
 
 1. Pick a small number of region seeds.
 2. Assign each seed a target height layer.
-3. Grow regions across the grid with seeded random weights.
+3. Assign every cell to the closest weighted seed, with deterministic coordinate warping to bend the borders.
 4. Prefer contiguous large regions.
 5. Use `RegionBalance` to decide how much to favor equal-size height layers.
 
-With two height layers, a common output should look like:
+With two height layers, a simple output can still look like:
 
 ```text
 lower half of map: height 0
 upper half of map: height 1
 ```
 
-but this can bend, curve, or create a central valley if enough usable space remains.
+but the expected output should usually bend, curve, blob, or create a central valley/hill if enough usable space remains.
+
+The generator retries organic layouts up to `MaxGenerationAttempts`. If none of the organic attempts can satisfy the road-replaceable ledge validation, it falls back to the older band-style split and then the normal flat-map fallback if needed.
 
 ### 3. Cull Unusable Features
 
@@ -379,6 +390,8 @@ MinUsableRegionArea
 Any region that cannot support at least a small usable flat section should be merged into the most compatible neighboring region.
 
 This is important because a `2x2` hill consumes map space but cannot support meaningful roads/buildings. The default goal is that every generated height region can fit at least one flat road/building opportunity after ledges are placed.
+
+The current implementation treats each contiguous same-height area as a region. Regions smaller than the configured minimum area, width, or height are merged into the neighboring height that touches them the most. This runs before ledges are marked, so ledge placement receives cleaner plateau/valley shapes.
 
 ### 4. Enforce Height Difference Rule
 
@@ -399,6 +412,12 @@ Apply `MinCellsBetweenHeightChanges`.
 If two separate ledge lines would be too close, smooth one of them away or merge the narrow strip into a neighboring region.
 
 This prevents unusable one-cell terraces and narrow zigzagging elevation strips.
+
+The organic implementation enforces this before ledge cells are created. It scans rows, columns, and both diagonal directions for two height transitions closer than `MinCellsBetweenHeightChanges`. When it finds a narrow strip between two transitions, it merges that strip into the neighboring height level with the strongest local support, then re-applies the one-level height-difference rule.
+
+This pass is intentionally cell-grid based rather than prefab based. A long continuous ledge line can still run through adjacent cells, but separate height changes should not form one-cell terraces or back-to-back elevation changes.
+
+The edge of the map gets an additional cleanup pass before ledges are marked. Edge cells copy their inward neighbor's height so a height transition cannot run parallel along the map boundary. A height transition may still meet the boundary perpendicularly, which produces a straight boundary ledge where the elevation line exits the playable map.
 
 ### 6. Mark Ledge Cells
 
@@ -453,7 +472,7 @@ y = (LowHeightLevel + HighHeightLevel) * 0.5 * HeightLevelWorldUnits
 rotation = (int)HighDirection * 90 degrees   // straight ledges
 ```
 
-Corner ledges need a pair of high directions to choose a unique rotation. Until `WorldHeightCell` stores that pair, the generator does not produce corner ledges and corner-tile rotation falls back to all four orientations.
+Corner ledges store a deterministic `LedgeRotationSteps` value on `WorldHeightCell`. The current inner-corner convention assumes the prefab at rotation `0` has its high sides facing North and East, then rotates to match the local pair of high-side neighbors.
 
 ## Road Generator Interaction
 
