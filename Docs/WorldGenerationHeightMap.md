@@ -489,6 +489,8 @@ low-side road -> ramp cell -> high-side road
 
 It cannot be a stub/dead-end itself. It may immediately lead to a stub road on the high or low side, but the ramp tile must have valid road connection on both low and high sides.
 
+Road generation enforces this before road prefab selection. If a road pass promotes a ledge into a ramp from only one side, it immediately tries to mark the opposite plateau cell as road. If that continuation cell cannot legally become road, the ramp promotion is reverted and the cell remains a normal ledge.
+
 When the road generator chooses to use a ledge cell as a road ramp:
 
 1. Remove/destroy/suppress the ledge prefab that height generation placed there.

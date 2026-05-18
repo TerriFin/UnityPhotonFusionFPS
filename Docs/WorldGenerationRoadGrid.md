@@ -459,7 +459,18 @@ Road tile sets should include dead-end definitions with exactly one `Road` socke
 
 ### 5. Derive Sockets
 
-After road cells are chosen, calculate sockets from neighbors:
+After road cells are chosen, validate height-change roads before calculating sockets.
+
+Height-change ramp cells are repaired as a small grid-level transaction before prefab selection:
+
+- if the ramp already has compatible road cells on both its low side and high side, keep it,
+- if it has a compatible road on only one side, try to mark the opposite plateau cell as a road,
+- if the opposite cell cannot legally become a road, demote the ramp back to a normal non-road ledge,
+- only surviving two-sided ramps suppress their ledge prefab during collapse.
+
+This prevents an invalid `road -> ramp -> building` layout. The final layout is either `road -> ramp -> road`, or the ramp candidate remains a normal ledge.
+
+After that, calculate sockets from neighbors:
 
 ```text
 If north neighbor is road at compatible height: North = Road

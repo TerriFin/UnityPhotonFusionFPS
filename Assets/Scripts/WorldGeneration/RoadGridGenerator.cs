@@ -287,6 +287,7 @@ namespace SimpleFPS
 			}
 
 			AddExtraRoads(grid, random);
+			EnsureHeightChangeRoadContinuations(grid);
 			DeriveSockets(grid);
 
 			Debug.Log($"{nameof(RoadGridGenerator)} generated {width}x{height} road grid with {_actualExitCount}/{Settings.RequestedExitCount} exits and {_failedPathAttempts} failed path attempts.", this);
@@ -1023,6 +1024,95 @@ namespace SimpleFPS
 
 			return WouldCreateSolidRoadSquare(grid, position, previous) == false
 				&& WouldExceedLocalRoadDensity(grid, position, previous) == false;
+		}
+
+		private void EnsureHeightChangeRoadContinuations(RoadCell[,] grid)
+		{
+			int completed = 0;
+			int reverted = 0;
+
+			for (int x = 0; x < grid.GetLength(0); x++)
+			{
+				for (int y = 0; y < grid.GetLength(1); y++)
+				{
+					Vector2Int position = new Vector2Int(x, y);
+					if (grid[x, y].IsHeightChangeRoad == false)
+						continue;
+
+					if (HasRequiredRampConnections(grid, position))
+						continue;
+
+					if (TryCompleteRampContinuation(grid, position))
+					{
+						completed++;
+						continue;
+					}
+
+					ref RoadCell cell = ref grid[x, y];
+					cell.IsRoad = false;
+					cell.IsHeightChangeRoad = false;
+					reverted++;
+				}
+			}
+
+			if (completed > 0 || reverted > 0)
+				Debug.Log($"{nameof(RoadGridGenerator)} completed {completed} one-sided ramp(s) and reverted {reverted} invalid ramp(s).", this);
+		}
+
+		private bool TryCompleteRampContinuation(RoadCell[,] grid, Vector2Int rampPosition)
+		{
+			RoadCell ramp = grid[rampPosition.x, rampPosition.y];
+			RoadDirection highDirection = ramp.HighDirection;
+			RoadDirection lowDirection = GetOpposite(highDirection);
+			bool highConnected = IsRampConnectedToRoad(grid, rampPosition, highDirection);
+			bool lowConnected = IsRampConnectedToRoad(grid, rampPosition, lowDirection);
+
+			if (highConnected && lowConnected)
+				return true;
+
+			if (highConnected == lowConnected)
+				return false;
+
+			RoadDirection missingDirection = highConnected ? lowDirection : highDirection;
+			Vector2Int continuationPosition = rampPosition + GetOffset(missingDirection);
+			if (CanCreateRampContinuationRoad(grid, ramp, continuationPosition, missingDirection) == false)
+				return false;
+
+			MarkRoad(grid, continuationPosition);
+			return HasRequiredRampConnections(grid, rampPosition);
+		}
+
+		private bool HasRequiredRampConnections(RoadCell[,] grid, Vector2Int rampPosition)
+		{
+			RoadCell ramp = grid[rampPosition.x, rampPosition.y];
+			return IsRampConnectedToRoad(grid, rampPosition, ramp.HighDirection)
+				&& IsRampConnectedToRoad(grid, rampPosition, GetOpposite(ramp.HighDirection));
+		}
+
+		private bool IsRampConnectedToRoad(RoadCell[,] grid, Vector2Int rampPosition, RoadDirection directionFromRamp)
+		{
+			Vector2Int neighborPosition = rampPosition + GetOffset(directionFromRamp);
+			if (IsInBounds(grid, neighborPosition) == false)
+				return false;
+
+			RoadCell neighbor = grid[neighborPosition.x, neighborPosition.y];
+			return neighbor.IsRoad && AreRoadCellsConnected(grid[rampPosition.x, rampPosition.y], neighbor, directionFromRamp);
+		}
+
+		private bool CanCreateRampContinuationRoad(RoadCell[,] grid, RoadCell ramp, Vector2Int continuationPosition, RoadDirection directionFromRamp)
+		{
+			if (IsInBounds(grid, continuationPosition) == false)
+				return false;
+
+			RoadCell continuation = grid[continuationPosition.x, continuationPosition.y];
+			if (continuation.IsRoad || continuation.IsLedge)
+				return false;
+
+			int requiredHeight = directionFromRamp == ramp.HighDirection ? ramp.HighHeightLevel : ramp.LowHeightLevel;
+			if (continuation.HeightLevel != requiredHeight)
+				return false;
+
+			return IsRoadPlacementAllowed(grid, continuationPosition, null);
 		}
 
 		private bool IsStubPlacementAllowed(RoadCell[,] grid, Vector2Int position)
