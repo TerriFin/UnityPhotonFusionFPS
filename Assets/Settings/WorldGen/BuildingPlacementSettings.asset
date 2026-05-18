@@ -18,3 +18,4 @@ MonoBehaviour:
   SeedOffset: 10000
   FillMapEdgesWithBlockingBuildings: 1
   FillRemainingEmptyCellsWithBlockingBuildings: 1
+  ReplaceCornerLedgesWithBlockingBuildings: 0

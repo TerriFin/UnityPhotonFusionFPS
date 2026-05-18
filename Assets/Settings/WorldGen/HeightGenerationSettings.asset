@@ -12,12 +12,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 17ec6456e73b09e4d894dd63f65912ae, type: 3}
   m_Name: HeightGenerationSettings
   m_EditorClassIdentifier: 
-  HeightLayerCount: 3
+  HeightLayerCount: 2
   MinCellsBetweenHeightChanges: 4
-  MinUsableRegionWidth: 3
-  MinUsableRegionHeight: 3
-  MinUsableRegionArea: 9
-  SmoothingPasses: 2
+  MinUsableRegionWidth: 4
+  MinUsableRegionHeight: 4
+  MinUsableRegionArea: 12
+  SmoothingPasses: 1
   RegionBalance: 0.5
   MaxGenerationAttempts: 100
   DefaultLedgeRepeatCooldownDistance: 2

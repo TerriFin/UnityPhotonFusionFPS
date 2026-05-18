@@ -177,7 +177,7 @@ namespace SimpleFPS
 			if (HasStateAuthority)
 			{
 				if (IsFinite(center) && TryGetValidAssignedAreaRadius(radius, out radius))
-					SurvivorAICommands.ApplySelectedTeamAssignedArea(Runner.LocalPlayer, selectedCharacterMask, center, radius);
+					SurvivorAICommands.ApplySelectedTeamAssignedArea(Runner.LocalPlayer, selectedCharacterMask, SnapAssignedAreaCenterToHeightMap(center), radius);
 				return;
 			}
 
@@ -767,7 +767,7 @@ namespace SimpleFPS
 			if (IsFinite(center) == false || TryGetValidAssignedAreaRadius(radius, out radius) == false)
 				return;
 
-			SurvivorAICommands.ApplySelectedTeamAssignedArea(info.Source, selectedCharacterMask, center, radius);
+			SurvivorAICommands.ApplySelectedTeamAssignedArea(info.Source, selectedCharacterMask, SnapAssignedAreaCenterToHeightMap(center), radius);
 		}
 
 		[Rpc(RpcSources.All, RpcTargets.StateAuthority, Channel = RpcChannel.Reliable)]
@@ -827,6 +827,34 @@ namespace SimpleFPS
 			radius = Mathf.Min(requestedRadius, maxRadius);
 			return radius > 0f;
 		}
+
+		// Replace the raw map-raycast Y (which may have hit a roof, car, or other scenery) with the ground Y of
+		// the underlying height cell. This way the AI's patrol-point sampler resolves at the correct floor,
+		// even if the player dragged the circle over something the survivors cannot climb on top of.
+		private Vector3 SnapAssignedAreaCenterToHeightMap(Vector3 center)
+		{
+			if (_heightMapGenerator == null)
+				_heightMapGenerator = FindObjectOfType<HeightMapGenerator>();
+
+			if (_heightMapGenerator == null)
+				return center;
+
+			if (_heightMapGenerator.TryGetHeightSnapshot(out WorldHeightSnapshot snapshot) == false || snapshot.IsValid == false || snapshot.TileSize <= 0f)
+				return center;
+
+			Vector3 local = center - snapshot.Origin;
+			Vector2Int cellPosition = new Vector2Int(
+				Mathf.RoundToInt(local.x / snapshot.TileSize),
+				Mathf.RoundToInt(local.z / snapshot.TileSize));
+
+			if (snapshot.TryGetCell(cellPosition, out WorldHeightCell cell) == false)
+				return center;
+
+			center.y = snapshot.Origin.y + cell.HeightLevel * snapshot.HeightLevelWorldUnits;
+			return center;
+		}
+
+		private HeightMapGenerator _heightMapGenerator;
 
 		private int GetAssignedTeamColorIndex(int currentIndex)
 		{

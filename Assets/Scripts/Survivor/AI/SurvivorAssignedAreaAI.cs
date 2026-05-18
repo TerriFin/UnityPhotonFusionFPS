@@ -248,7 +248,10 @@ namespace SimpleFPS
 		{
 			reachablePoint = default;
 
-			Vector3 navCandidate = new Vector3(candidate.x, query.StartPosition.y, candidate.z);
+			// Sample at the candidate's Y rather than the survivor's. The candidate carries the order's
+			// center height (the cell the player started the circle on), so if the circle is on a ledge
+			// the patrol points resolve on the ledge's NavMesh instead of the survivor's current floor.
+			Vector3 navCandidate = new Vector3(candidate.x, candidate.y, candidate.z);
 			if (NavMesh.SamplePosition(navCandidate, out var targetHit, query.SampleDistance, query.AreaMask) == false)
 				return false;
 			if (FlatDistanceSqr(targetHit.position, areaCenter) > areaRadius * areaRadius)
