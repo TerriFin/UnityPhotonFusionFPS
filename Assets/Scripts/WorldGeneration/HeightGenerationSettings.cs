@@ -7,6 +7,8 @@ namespace SimpleFPS
 	{
 		[Min(1)]
 		public int HeightLayerCount = 1;
+		[Min(0)]
+		public int PreferredLedgeCount = 1;
 		[Min(1)]
 		public int MinCellsBetweenHeightChanges = 3;
 		[Min(1)]
@@ -15,10 +17,8 @@ namespace SimpleFPS
 		public int MinUsableRegionHeight = 3;
 		[Min(1)]
 		public int MinUsableRegionArea = 9;
-		[Min(0)]
-		public int SmoothingPasses = 2;
 		[Range(0f, 1f)]
-		public float RegionBalance = 0.5f;
+		public float LedgePathRandomness = 0.65f;
 		[Min(1)]
 		public int MaxGenerationAttempts = 100;
 		[Min(0)]

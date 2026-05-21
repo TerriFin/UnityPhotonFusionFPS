@@ -191,153 +191,542 @@ namespace SimpleFPS
 		{
 			int[,] heights = new int[width, height];
 			int layerCount = Mathf.Max(1, Settings.HeightLayerCount);
-			if (layerCount <= 1)
+			int preferredLedgeCount = Mathf.Max(0, Settings.PreferredLedgeCount);
+			if (layerCount <= 1 || preferredLedgeCount <= 0)
 				return heights;
 
 			var random = new System.Random(Seed);
-			int attempts = Mathf.Max(1, Settings.MaxGenerationAttempts);
-			for (int attempt = 0; attempt < attempts; attempt++)
-			{
-				int[,] candidate = GenerateOrganicHeightLevels(width, height, layerCount, random, attempt);
-				ApplySmoothing(candidate, layerCount);
-				CullUnusableRegions(candidate);
-				EnforceHeightDifferenceRule(candidate, layerCount);
-				EnforceMapEdgeHeightContinuity(candidate);
-				EnforceMinimumDistanceBetweenHeightChanges(candidate, layerCount);
-				CullUnusableRegions(candidate);
-				EnforceMapEdgeHeightContinuity(candidate);
-				EnforceHeightDifferenceRule(candidate, layerCount);
-
-				if (Settings.MinRoadReplaceableLedgesPerHeightRegion <= 0 || HasEnoughRoadReplaceableLedges(BuildHeightCells(candidate, false)))
-					return candidate;
-			}
-
-			return GenerateBandHeightLevels(width, height, layerCount, random);
+			TryGeneratePathFirstHeightLevels(width, height, layerCount, preferredLedgeCount, random, out int[,] pathFirstHeights);
+			return pathFirstHeights;
 		}
 
-		private int[,] GenerateBandHeightLevels(int width, int height, int layerCount, System.Random random)
+		private bool TryGeneratePathFirstHeightLevels(int width, int height, int layerCount, int preferredLedgeCount, System.Random random, out int[,] heights)
 		{
-			int[,] heights = new int[width, height];
-			bool splitAlongX = random.Next(2) == 0;
-			int length = splitAlongX ? width : height;
-			int minBand = Mathf.Max(
-				Settings.MinCellsBetweenHeightChanges + 2,
-				splitAlongX ? Settings.MinUsableRegionWidth : Settings.MinUsableRegionHeight);
+			heights = new int[width, height];
+			var acceptedLedgePaths = new List<List<Vector2Int>>();
+			int attempts = Mathf.Max(1, Settings.MaxGenerationAttempts);
 
-			List<int> sequence = BuildHeightSequence(layerCount, length, minBand, random);
-			List<int> bandSizes = BuildBandSizes(length, sequence.Count, minBand, random);
-			int[] boundaries = BuildBoundaries(bandSizes);
+			for (int attempt = 0; attempt < attempts && acceptedLedgePaths.Count < preferredLedgeCount; attempt++)
+			{
+				TryAddHeightLayerByLedgePath(heights, layerCount, acceptedLedgePaths, random);
+			}
+
+			return acceptedLedgePaths.Count > 0;
+		}
+
+		private bool TryAddHeightLayerByLedgePath(
+			int[,] heights,
+			int layerCount,
+			List<List<Vector2Int>> acceptedLedgePaths,
+			System.Random random)
+		{
+			List<HeightRegion> regions = CollectHeightRegionsBelowMaxHeight(heights, layerCount - 1);
+			if (regions.Count == 0)
+				return false;
+
+			regions.Sort((a, b) => b.Cells.Count.CompareTo(a.Cells.Count));
+			int regionIndex = random.Next(Mathf.Min(regions.Count, 4));
+			HeightRegion region = regions[regionIndex];
+			int newHeight = region.HeightLevel + 1;
+
+			if (TryFindOrganicLedgePath(heights, region, acceptedLedgePaths, random, out List<Vector2Int> ledgePath) == false)
+				return false;
+
+			if (TryApplyLedgePathSplit(heights, region, ledgePath, newHeight, out int[,] candidate) == false)
+				return false;
+
+			if (HasOnlyUsableHeightRegions(candidate) == false)
+				return false;
+
+			if (Settings.MinRoadReplaceableLedgesPerHeightRegion > 0 && HasEnoughRoadReplaceableLedges(BuildHeightCells(candidate, false)) == false)
+				return false;
+
+			CopyHeights(candidate, heights);
+			acceptedLedgePaths.Add(ledgePath);
+			return true;
+		}
+
+		private List<HeightRegion> CollectHeightRegionsBelowMaxHeight(int[,] heights, int maxHeightLevel)
+		{
+			int width = heights.GetLength(0);
+			int height = heights.GetLength(1);
+			bool[,] visited = new bool[width, height];
+			var regions = new List<HeightRegion>();
 
 			for (int x = 0; x < width; x++)
 			{
 				for (int y = 0; y < height; y++)
 				{
-					int axis = splitAlongX ? x : y;
-					int band = GetBandIndex(axis, boundaries);
-					heights[x, y] = sequence[Mathf.Clamp(band, 0, sequence.Count - 1)];
+					if (visited[x, y] || heights[x, y] >= maxHeightLevel)
+						continue;
+
+					List<Vector2Int> cells = CollectHeightRegion(heights, new Vector2Int(x, y), visited, out Vector2Int min, out Vector2Int max);
+					var bounds = new RectInt(min.x, min.y, max.x - min.x + 1, max.y - min.y + 1);
+					var region = new HeightRegion(cells, bounds, heights[x, y]);
+					if (CanSplitHeightRegion(region))
+						regions.Add(region);
 				}
 			}
 
-			return heights;
+			return regions;
 		}
 
-		private int[,] GenerateOrganicHeightLevels(int width, int height, int layerCount, System.Random random, int attempt)
+		private bool CanSplitHeightRegion(HeightRegion region)
 		{
-			int[,] heights = new int[width, height];
-			List<HeightSeed> seeds = BuildHeightSeeds(width, height, layerCount, random);
+			int minimumArea = Mathf.Max(1, Settings.MinUsableRegionArea);
+			int minimumWidth = Mathf.Max(1, Settings.MinUsableRegionWidth);
+			int minimumHeight = Mathf.Max(1, Settings.MinUsableRegionHeight);
+			if (region.Cells.Count < minimumArea * 2)
+				return false;
 
-			for (int x = 0; x < width; x++)
+			return region.Bounds.width >= minimumWidth + 2 || region.Bounds.height >= minimumHeight + 2;
+		}
+
+		private bool TryFindOrganicLedgePath(
+			int[,] heights,
+			HeightRegion region,
+			List<List<Vector2Int>> acceptedLedgePaths,
+			System.Random random,
+			out List<Vector2Int> path)
+		{
+			path = null;
+
+			var regionCells = new HashSet<Vector2Int>(region.Cells);
+			List<BoundarySidePair> sidePairs = BuildBoundarySidePairs(random);
+			BoundarySidePair sidePair = sidePairs[0];
+			List<Vector2Int> starts = GetPathBoundaryCells(region, regionCells, sidePair.StartSide, acceptedLedgePaths);
+			List<Vector2Int> ends = GetPathBoundaryCells(region, regionCells, sidePair.EndSide, acceptedLedgePaths);
+			if (starts.Count == 0 || ends.Count == 0)
+				return false;
+
+			Vector2Int start = starts[random.Next(starts.Count)];
+			var targetCells = BuildTargetBoundaryCells(ends, start, sidePair.StartSide == sidePair.EndSide);
+			if (targetCells.Count == 0)
+				return false;
+
+			var allowedBoundaryCells = new HashSet<Vector2Int>(starts);
+			allowedBoundaryCells.UnionWith(ends);
+			int noiseSalt = random.Next();
+			return TryFindPathAcrossRegion(region, regionCells, start, targetCells, allowedBoundaryCells, acceptedLedgePaths, noiseSalt, out path)
+				&& IsRandomEnoughLedgePath(path, region);
+		}
+
+		private List<BoundarySidePair> BuildBoundarySidePairs(System.Random random)
+		{
+			var sides = new[]
 			{
-				for (int y = 0; y < height; y++)
-				{
-					float warpedX = x + (Hash01(x, y, Seed + attempt * 37) - 0.5f) * 1.75f;
-					float warpedY = y + (Hash01(x + 13, y - 7, Seed ^ (attempt * 7919)) - 0.5f) * 1.75f;
-					float bestScore = float.MaxValue;
-					int bestHeight = 0;
+				BoundarySide.North,
+				BoundarySide.East,
+				BoundarySide.South,
+				BoundarySide.West,
+			};
+			var pairs = new List<BoundarySidePair>(sides.Length * sides.Length);
 
-					for (int i = 0; i < seeds.Count; i++)
+			for (int start = 0; start < sides.Length; start++)
+			{
+				for (int end = 0; end < sides.Length; end++)
+					pairs.Add(new BoundarySidePair(sides[start], sides[end]));
+			}
+
+			for (int i = 0; i < pairs.Count; i++)
+			{
+				int swapIndex = random.Next(i, pairs.Count);
+				(pairs[i], pairs[swapIndex]) = (pairs[swapIndex], pairs[i]);
+			}
+
+			return pairs;
+		}
+
+		private List<Vector2Int> GetPathBoundaryCells(
+			HeightRegion region,
+			HashSet<Vector2Int> regionCells,
+			BoundarySide side,
+			List<List<Vector2Int>> acceptedLedgePaths)
+		{
+			var cells = new List<Vector2Int>();
+
+			foreach (Vector2Int cell in region.Cells)
+			{
+				if (IsOnBoundarySide(cell, region, side) && IsValidLedgePathCell(cell, region, regionCells, null, acceptedLedgePaths))
+					cells.Add(cell);
+			}
+
+			RemoveShortBoundaryRuns(cells, side);
+			return cells;
+		}
+
+		private void RemoveShortBoundaryRuns(List<Vector2Int> cells, BoundarySide side)
+		{
+			const int minimumRunLength = 2;
+			for (int i = cells.Count - 1; i >= 0; i--)
+			{
+				int runLength = CountBoundaryRunLength(cells, cells[i], side);
+				if (runLength < minimumRunLength)
+					cells.RemoveAt(i);
+			}
+		}
+
+		private int CountBoundaryRunLength(List<Vector2Int> cells, Vector2Int origin, BoundarySide side)
+		{
+			int runLength = 0;
+			for (int i = 0; i < cells.Count; i++)
+			{
+				Vector2Int cell = cells[i];
+				bool sameRun = side == BoundarySide.North || side == BoundarySide.South
+					? cell.y == origin.y && Mathf.Abs(cell.x - origin.x) <= 1
+					: cell.x == origin.x && Mathf.Abs(cell.y - origin.y) <= 1;
+
+				if (sameRun)
+					runLength++;
+			}
+
+			return runLength;
+		}
+
+		private HashSet<Vector2Int> BuildTargetBoundaryCells(List<Vector2Int> ends, Vector2Int start, bool sameSide)
+		{
+			var targets = new HashSet<Vector2Int>();
+			int minimumSameSideDistance = Mathf.Max(3, Settings.MinUsableRegionWidth, Settings.MinUsableRegionHeight);
+
+			for (int i = 0; i < ends.Count; i++)
+			{
+				Vector2Int end = ends[i];
+				int distance = Mathf.Abs(end.x - start.x) + Mathf.Abs(end.y - start.y);
+				if (sameSide && distance < minimumSameSideDistance)
+					continue;
+
+				targets.Add(end);
+			}
+
+			return targets;
+		}
+
+		private bool TryFindPathAcrossRegion(
+			HeightRegion region,
+			HashSet<Vector2Int> regionCells,
+			Vector2Int start,
+			HashSet<Vector2Int> targetCells,
+			HashSet<Vector2Int> allowedBoundaryCells,
+			List<List<Vector2Int>> acceptedLedgePaths,
+			int noiseSalt,
+			out List<Vector2Int> path)
+		{
+			path = null;
+			var open = new List<HeightPathNode>();
+			var closed = new HashSet<Vector2Int>();
+			var bestByPosition = new Dictionary<Vector2Int, HeightPathNode>();
+
+			var startNode = new HeightPathNode(start, null, 0f, EstimatePathCost(start, targetCells));
+			open.Add(startNode);
+			bestByPosition[start] = startNode;
+			float randomness = Mathf.Clamp01(Settings.LedgePathRandomness);
+			float randomCostScale = Mathf.Lerp(0.1f, 8f, randomness);
+			float heuristicWeight = Mathf.Lerp(1.2f, 0.05f, randomness);
+
+			while (open.Count > 0)
+			{
+				int currentIndex = GetLowestScoreNodeIndex(open);
+				HeightPathNode current = open[currentIndex];
+				open.RemoveAt(currentIndex);
+
+				if (closed.Add(current.Position) == false)
+					continue;
+
+				if (targetCells.Contains(current.Position) && current.Parent != null)
+				{
+					path = RebuildHeightPath(current);
+					return path.Count >= 3;
+				}
+
+				for (int i = 0; i < DirectionOffsets.Length; i++)
+				{
+					Vector2Int next = current.Position + DirectionOffsets[i];
+					if (closed.Contains(next)
+						|| IsParallelBoundaryStep(current.Position, next, region)
+						|| IsValidLedgePathCell(next, region, regionCells, allowedBoundaryCells, acceptedLedgePaths) == false)
+						continue;
+
+					float stepCost = 1f + Hash01(next.x + noiseSalt, next.y - noiseSalt, Seed ^ noiseSalt) * randomCostScale;
+					float newCost = current.Cost + stepCost;
+					if (bestByPosition.TryGetValue(next, out HeightPathNode existing) && existing.Cost <= newCost)
+						continue;
+
+					float score = newCost + EstimatePathCost(next, targetCells) * heuristicWeight;
+					var node = new HeightPathNode(next, current, newCost, score);
+					bestByPosition[next] = node;
+					open.Add(node);
+				}
+			}
+
+			return false;
+		}
+
+		private bool IsRandomEnoughLedgePath(List<Vector2Int> path, HeightRegion region)
+		{
+			float randomness = Mathf.Clamp01(Settings.LedgePathRandomness);
+			if (randomness <= 0.05f)
+				return true;
+
+			bool mostlyVertical = Mathf.Abs(path[path.Count - 1].y - path[0].y) >= Mathf.Abs(path[path.Count - 1].x - path[0].x);
+			int perpendicularSpan = mostlyVertical ? region.Bounds.width : region.Bounds.height;
+			int requiredDeviation = Mathf.RoundToInt(Mathf.Lerp(0f, Mathf.Max(1, perpendicularSpan) * 0.25f, randomness));
+			int requiredTurns = Mathf.RoundToInt(Mathf.Lerp(0f, 4f, randomness));
+
+			int minAxis = int.MaxValue;
+			int maxAxis = int.MinValue;
+			int turns = 0;
+			Vector2Int previousDirection = Vector2Int.zero;
+
+			for (int i = 0; i < path.Count; i++)
+			{
+				int axis = mostlyVertical ? path[i].x : path[i].y;
+				minAxis = Mathf.Min(minAxis, axis);
+				maxAxis = Mathf.Max(maxAxis, axis);
+
+				if (i == 0)
+					continue;
+
+				Vector2Int direction = path[i] - path[i - 1];
+				if (previousDirection != Vector2Int.zero && direction != previousDirection)
+					turns++;
+
+				previousDirection = direction;
+			}
+
+			return maxAxis - minAxis >= requiredDeviation && turns >= requiredTurns;
+		}
+
+		private bool IsParallelBoundaryStep(Vector2Int current, Vector2Int next, HeightRegion region)
+		{
+			bool bothOnBottom = current.y == region.Bounds.yMin && next.y == region.Bounds.yMin;
+			bool bothOnTop = current.y == region.Bounds.yMax - 1 && next.y == region.Bounds.yMax - 1;
+			bool bothOnLeft = current.x == region.Bounds.xMin && next.x == region.Bounds.xMin;
+			bool bothOnRight = current.x == region.Bounds.xMax - 1 && next.x == region.Bounds.xMax - 1;
+			return ((bothOnBottom || bothOnTop) && current.x != next.x)
+				|| ((bothOnLeft || bothOnRight) && current.y != next.y);
+		}
+
+		private bool IsValidLedgePathCell(
+			Vector2Int cell,
+			HeightRegion region,
+			HashSet<Vector2Int> regionCells,
+			HashSet<Vector2Int> allowedBoundaryCells,
+			List<List<Vector2Int>> acceptedLedgePaths)
+		{
+			if (regionCells.Contains(cell) == false)
+				return false;
+
+			if (allowedBoundaryCells != null && IsRegionBoundaryCell(cell, region) && allowedBoundaryCells.Contains(cell) == false)
+				return false;
+
+			return IsFarFromAcceptedLedgePaths(cell, acceptedLedgePaths);
+		}
+
+		private bool IsRegionBoundaryCell(Vector2Int cell, HeightRegion region)
+		{
+			return cell.x == region.Bounds.xMin
+				|| cell.x == region.Bounds.xMax - 1
+				|| cell.y == region.Bounds.yMin
+				|| cell.y == region.Bounds.yMax - 1;
+		}
+
+		private bool IsOnBoundarySide(Vector2Int cell, HeightRegion region, BoundarySide side)
+		{
+			return side switch
+			{
+				BoundarySide.North => cell.y == region.Bounds.yMax - 1,
+				BoundarySide.East => cell.x == region.Bounds.xMax - 1,
+				BoundarySide.South => cell.y == region.Bounds.yMin,
+				BoundarySide.West => cell.x == region.Bounds.xMin,
+				_ => false,
+			};
+		}
+
+		private bool IsFarFromAcceptedLedgePaths(Vector2Int cell, List<List<Vector2Int>> acceptedLedgePaths)
+		{
+			int minimumSpacing = Mathf.Max(0, Settings.MinCellsBetweenHeightChanges);
+			if (minimumSpacing <= 0)
+				return true;
+
+			for (int pathIndex = 0; pathIndex < acceptedLedgePaths.Count; pathIndex++)
+			{
+				List<Vector2Int> path = acceptedLedgePaths[pathIndex];
+				for (int i = 0; i < path.Count; i++)
+				{
+					Vector2Int other = path[i];
+					int distance = Mathf.Max(Mathf.Abs(cell.x - other.x), Mathf.Abs(cell.y - other.y));
+					if (distance <= minimumSpacing)
+						return false;
+				}
+			}
+
+			return true;
+		}
+
+		private float EstimatePathCost(Vector2Int cell, HashSet<Vector2Int> targetCells)
+		{
+			int best = int.MaxValue;
+			foreach (Vector2Int target in targetCells)
+			{
+				int distance = Mathf.Abs(cell.x - target.x) + Mathf.Abs(cell.y - target.y);
+				if (distance < best)
+					best = distance;
+			}
+
+			return best == int.MaxValue ? 0f : best;
+		}
+
+		private int GetLowestScoreNodeIndex(List<HeightPathNode> nodes)
+		{
+			int bestIndex = 0;
+			float bestScore = nodes[0].Score;
+			for (int i = 1; i < nodes.Count; i++)
+			{
+				if (nodes[i].Score < bestScore)
+				{
+					bestIndex = i;
+					bestScore = nodes[i].Score;
+				}
+			}
+
+			return bestIndex;
+		}
+
+		private List<Vector2Int> RebuildHeightPath(HeightPathNode node)
+		{
+			var path = new List<Vector2Int>();
+			for (HeightPathNode current = node; current != null; current = current.Parent)
+				path.Add(current.Position);
+
+			path.Reverse();
+			return path;
+		}
+
+		private bool TryApplyLedgePathSplit(
+			int[,] heights,
+			HeightRegion region,
+			List<Vector2Int> ledgePath,
+			int newHeight,
+			out int[,] candidate)
+		{
+			candidate = CloneHeights(heights);
+			var regionCells = new HashSet<Vector2Int>(region.Cells);
+			var pathCells = new HashSet<Vector2Int>(ledgePath);
+			var raisedCells = ChooseRaisedComponent(region, regionCells, pathCells);
+			if (raisedCells == null)
+				return false;
+
+			int lowSideCellCount = region.Cells.Count - raisedCells.Count - pathCells.Count;
+
+			if (raisedCells.Count < Mathf.Max(1, Settings.MinUsableRegionArea) || lowSideCellCount < Mathf.Max(1, Settings.MinUsableRegionArea))
+				return false;
+
+			foreach (Vector2Int cell in raisedCells)
+				candidate[cell.x, cell.y] = newHeight;
+
+			return true;
+		}
+
+		private HashSet<Vector2Int> ChooseRaisedComponent(
+			HeightRegion region,
+			HashSet<Vector2Int> regionCells,
+			HashSet<Vector2Int> pathCells)
+		{
+			List<HashSet<Vector2Int>> components = CollectSplitComponents(region, regionCells, pathCells);
+			if (components.Count < 2)
+				return null;
+
+			int minimumArea = Mathf.Max(1, Settings.MinUsableRegionArea);
+			HashSet<Vector2Int> best = null;
+			int bestSize = int.MaxValue;
+			for (int i = 0; i < components.Count; i++)
+			{
+				HashSet<Vector2Int> component = components[i];
+				int remaining = region.Cells.Count - component.Count - pathCells.Count;
+				if (component.Count < minimumArea || remaining < minimumArea)
+					continue;
+
+				if (component.Count < bestSize)
+				{
+					best = component;
+					bestSize = component.Count;
+				}
+			}
+
+			return best;
+		}
+
+		private List<HashSet<Vector2Int>> CollectSplitComponents(
+			HeightRegion region,
+			HashSet<Vector2Int> regionCells,
+			HashSet<Vector2Int> pathCells)
+		{
+			var components = new List<HashSet<Vector2Int>>();
+			var visited = new HashSet<Vector2Int>();
+
+			foreach (Vector2Int cell in region.Cells)
+			{
+				if (pathCells.Contains(cell) || visited.Contains(cell))
+					continue;
+
+				var component = new HashSet<Vector2Int>();
+				var open = new Queue<Vector2Int>();
+				open.Enqueue(cell);
+				visited.Add(cell);
+
+				while (open.Count > 0)
+				{
+					Vector2Int current = open.Dequeue();
+					component.Add(current);
+					for (int i = 0; i < DirectionOffsets.Length; i++)
 					{
-						HeightSeed seed = seeds[i];
-						float dx = warpedX - seed.Position.x;
-						float dy = warpedY - seed.Position.y;
-						float score = (dx * dx + dy * dy) * seed.Weight;
-						if (score >= bestScore)
+						Vector2Int next = current + DirectionOffsets[i];
+						if (regionCells.Contains(next) == false || pathCells.Contains(next) || visited.Add(next) == false)
 							continue;
 
-						bestScore = score;
-						bestHeight = seed.HeightLevel;
+						open.Enqueue(next);
 					}
-
-					heights[x, y] = bestHeight;
 				}
+
+				components.Add(component);
 			}
 
-			return heights;
+			return components;
 		}
 
-		private List<HeightSeed> BuildHeightSeeds(int width, int height, int layerCount, System.Random random)
+		private bool HasOnlyUsableHeightRegions(int[,] heights)
 		{
-			float balance = Mathf.Clamp01(Settings.RegionBalance);
-			int extraSeeds = Mathf.RoundToInt(Mathf.Lerp(layerCount * 3f, 1f, balance));
-			int seedCount = Mathf.Clamp(layerCount + extraSeeds, layerCount, Mathf.Min(width * height, layerCount * 4 + 4));
-			var seeds = new List<HeightSeed>(seedCount);
+			int width = heights.GetLength(0);
+			int height = heights.GetLength(1);
+			bool[,] visited = new bool[width, height];
 
-			for (int level = 0; level < layerCount; level++)
-				seeds.Add(CreateHeightSeed(width, height, level, random));
-
-			for (int i = seeds.Count; i < seedCount; i++)
-				seeds.Add(CreateHeightSeed(width, height, random.Next(layerCount), random));
-
-			return seeds;
-		}
-
-		private HeightSeed CreateHeightSeed(int width, int height, int heightLevel, System.Random random)
-		{
-			return new HeightSeed(
-				new Vector2Int(random.Next(width), random.Next(height)),
-				heightLevel,
-				Mathf.Lerp(0.75f, 1.35f, (float)random.NextDouble()));
-		}
-
-		private void ApplySmoothing(int[,] heights, int layerCount)
-		{
-			int passes = Mathf.Max(0, Settings.SmoothingPasses);
-			for (int pass = 0; pass < passes; pass++)
+			for (int x = 0; x < width; x++)
 			{
-				int width = heights.GetLength(0);
-				int height = heights.GetLength(1);
-				int[,] next = (int[,])heights.Clone();
-
-				for (int x = 0; x < width; x++)
+				for (int y = 0; y < height; y++)
 				{
-					for (int y = 0; y < height; y++)
+					if (visited[x, y])
+						continue;
+
+					List<Vector2Int> region = CollectHeightRegion(heights, new Vector2Int(x, y), visited, out Vector2Int min, out Vector2Int max);
+					int regionWidth = max.x - min.x + 1;
+					int regionHeight = max.y - min.y + 1;
+					if (region.Count < Mathf.Max(1, Settings.MinUsableRegionArea)
+						|| regionWidth < Mathf.Max(1, Settings.MinUsableRegionWidth)
+						|| regionHeight < Mathf.Max(1, Settings.MinUsableRegionHeight))
 					{
-						int[] counts = new int[layerCount];
-						for (int i = 0; i < NeighborOffsets.Length; i++)
-						{
-							Vector2Int neighbor = new Vector2Int(x, y) + NeighborOffsets[i];
-							if (IsInBounds(heights, neighbor))
-								counts[heights[neighbor.x, neighbor.y]]++;
-						}
-
-						int bestHeight = heights[x, y];
-						int bestCount = 0;
-						for (int level = 0; level < counts.Length; level++)
-						{
-							if (counts[level] > bestCount)
-							{
-								bestCount = counts[level];
-								bestHeight = level;
-							}
-						}
-
-						if (bestCount >= 5)
-							next[x, y] = bestHeight;
+						return false;
 					}
 				}
-
-				CopyHeights(next, heights);
 			}
+
+			return true;
+		}
+
+		private int[,] CloneHeights(int[,] heights)
+		{
+			var clone = new int[heights.GetLength(0), heights.GetLength(1)];
+			CopyHeights(heights, clone);
+			return clone;
 		}
 
 		private void CullUnusableRegions(int[,] heights)
@@ -755,37 +1144,6 @@ namespace SimpleFPS
 			}
 		}
 
-		private List<int> BuildHeightSequence(int layerCount, int length, int minBand, System.Random random)
-		{
-			int maxBands = Mathf.Max(1, length / Mathf.Max(1, minBand));
-			int targetBands = Mathf.Clamp(layerCount, 1, maxBands);
-
-			if (layerCount == 2 && maxBands >= 3 && random.NextDouble() > Settings.RegionBalance)
-				targetBands = 3;
-
-			var sequence = new List<int>(targetBands);
-			int current = layerCount == 2 && targetBands == 3 ? 1 : random.Next(2) == 0 ? 0 : layerCount - 1;
-			sequence.Add(current);
-
-			for (int i = 1; i < targetBands; i++)
-			{
-				int direction;
-				if (current <= 0)
-					direction = 1;
-				else if (current >= layerCount - 1)
-					direction = -1;
-				else if (layerCount > 2 && targetBands == layerCount)
-					direction = sequence[0] == 0 ? 1 : -1;
-				else
-					direction = random.Next(2) == 0 ? -1 : 1;
-
-				current = Mathf.Clamp(current + direction, 0, layerCount - 1);
-				sequence.Add(current);
-			}
-
-			return sequence;
-		}
-
 		private List<int> BuildBandSizes(int length, int bandCount, int minBand, System.Random random)
 		{
 			var sizes = new List<int>(bandCount);
@@ -941,18 +1299,25 @@ namespace SimpleFPS
 
 		private HeightTileShape GetLedgeShape(int[,] heights, Vector2Int position, int currentHeight)
 		{
-			int highNeighborCount = 0;
-			for (int i = 0; i < DirectionOffsets.Length; i++)
-			{
-				Vector2Int neighbor = position + DirectionOffsets[i];
-				if (IsInBounds(heights, neighbor) && heights[neighbor.x, neighbor.y] > currentHeight)
-					highNeighborCount++;
-			}
+			bool north = HasHigherNeighbor(heights, position, RoadDirection.North, currentHeight);
+			bool east = HasHigherNeighbor(heights, position, RoadDirection.East, currentHeight);
+			bool south = HasHigherNeighbor(heights, position, RoadDirection.South, currentHeight);
+			bool west = HasHigherNeighbor(heights, position, RoadDirection.West, currentHeight);
+			int highNeighborCount = (north ? 1 : 0) + (east ? 1 : 0) + (south ? 1 : 0) + (west ? 1 : 0);
 
 			if (highNeighborCount == 0 && HasHigherDiagonalNeighbor(heights, position, currentHeight))
 				return HeightTileShape.OuterCorner;
 
-			return highNeighborCount <= 1 ? HeightTileShape.Straight : HeightTileShape.InnerCorner;
+			// Inner corner is only valid when exactly two ADJACENT cardinal sides are higher.
+			// Sandwich cases (N+S or E+W) and 3+ high cardinals are degenerate: the inner-corner prefab
+			// represents a single concave corner and would be placed at an arbitrary rotation that does
+			// not match the actual terrain, which reads as "an inner corner in a straight section."
+			// Fall back to straight in those cases; the rotation uses HighDirection (the first higher
+			// cardinal found by TryGetLedgeData) and at least visually matches one of the high sides.
+			if (highNeighborCount == 2 && ((north && east) || (east && south) || (south && west) || (west && north)))
+				return HeightTileShape.InnerCorner;
+
+			return HeightTileShape.Straight;
 		}
 
 		private int GetLedgeRotationSteps(int[,] heights, Vector2Int position, HeightTileShape shape, RoadDirection highDirection, int currentHeight)
@@ -1064,10 +1429,12 @@ namespace SimpleFPS
 		private bool HasEnoughRoadReplaceableLedges(WorldHeightCell[,] cells)
 		{
 			var countsByHighLevel = new Dictionary<int, int>();
+			int maxPresentHeight = 0;
 			for (int x = 0; x < cells.GetLength(0); x++)
 			{
 				for (int y = 0; y < cells.GetLength(1); y++)
 				{
+					maxPresentHeight = Mathf.Max(maxPresentHeight, Mathf.Max(cells[x, y].HeightLevel, cells[x, y].HighHeightLevel));
 					if (cells[x, y].CanBeReplacedByHeightChangeRoad)
 					{
 						int highLevel = cells[x, y].HighHeightLevel;
@@ -1078,7 +1445,7 @@ namespace SimpleFPS
 			}
 
 			int required = Mathf.Max(0, Settings.MinRoadReplaceableLedgesPerHeightRegion);
-			for (int level = 1; level < Mathf.Max(1, Settings.HeightLayerCount); level++)
+			for (int level = 1; level <= maxPresentHeight; level++)
 			{
 				if (countsByHighLevel.TryGetValue(level, out int count) == false || count < required)
 					return false;
@@ -1284,6 +1651,56 @@ namespace SimpleFPS
 			}
 		}
 
+		private enum BoundarySide
+		{
+			North,
+			East,
+			South,
+			West,
+		}
+
+		private readonly struct BoundarySidePair
+		{
+			public readonly BoundarySide StartSide;
+			public readonly BoundarySide EndSide;
+
+			public BoundarySidePair(BoundarySide startSide, BoundarySide endSide)
+			{
+				StartSide = startSide;
+				EndSide = endSide;
+			}
+		}
+
+		private readonly struct HeightRegion
+		{
+			public readonly List<Vector2Int> Cells;
+			public readonly RectInt Bounds;
+			public readonly int HeightLevel;
+
+			public HeightRegion(List<Vector2Int> cells, RectInt bounds, int heightLevel)
+			{
+				Cells = cells;
+				Bounds = bounds;
+				HeightLevel = heightLevel;
+			}
+		}
+
+		private sealed class HeightPathNode
+		{
+			public readonly Vector2Int Position;
+			public readonly HeightPathNode Parent;
+			public readonly float Cost;
+			public readonly float Score;
+
+			public HeightPathNode(Vector2Int position, HeightPathNode parent, float cost, float score)
+			{
+				Position = position;
+				Parent = parent;
+				Cost = cost;
+				Score = score;
+			}
+		}
+
 		private readonly struct HeightTileCandidate
 		{
 			public readonly HeightTileDefinition Definition;
@@ -1298,18 +1715,5 @@ namespace SimpleFPS
 			}
 		}
 
-		private readonly struct HeightSeed
-		{
-			public readonly Vector2Int Position;
-			public readonly int HeightLevel;
-			public readonly float Weight;
-
-			public HeightSeed(Vector2Int position, int heightLevel, float weight)
-			{
-				Position = position;
-				HeightLevel = heightLevel;
-				Weight = weight;
-			}
-		}
 	}
 }

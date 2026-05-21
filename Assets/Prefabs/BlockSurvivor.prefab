@@ -1398,15 +1398,15 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2478dd1f95a716748a150702958df3c7, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  ReevaluateInterval: 6
+  ReevaluateInterval: 4
   CandidateCount: 5
   SearchRadius: 8
-  NavMeshSampleDistance: 1.25
+  NavMeshSampleDistance: 2.5
   StoppingDistance: 0.25
-  MinimumMoveDistance: 1.5
+  MinimumMoveDistance: 1
   DestinationRefreshDistance: 0.75
-  DirectFallbackDistance: 0.75
-  RequiredScoreImprovement: 0.25
+  DirectFallbackDistance: 0.5
+  RequiredScoreImprovement: 0.2
   InitialReevaluationStaggerMax: 0.75
   ReevaluateIntervalJitter: 0.25
   MaxCachedAllies: 16
@@ -1417,15 +1417,15 @@ MonoBehaviour:
   TargetLossRecentDestinationTime: 3
   CoverWeight: 3.5
   AllySpacingWeight: 2.5
-  PreferredRangeWeight: 2.25
+  PreferredRangeWeight: 2.75
   MoveCostWeight: 0.25
   AllySpacingRadius: 2.5
-  PistolPreferredRangeMin: 4
-  PistolPreferredRangeMax: 12
-  ShotgunPreferredRangeMin: 2
-  ShotgunPreferredRangeMax: 8
-  RiflePreferredRangeMin: 6
-  RiflePreferredRangeMax: 22
+  PistolPreferredRangeMin: 2
+  PistolPreferredRangeMax: 5
+  ShotgunPreferredRangeMin: 1
+  ShotgunPreferredRangeMax: 4
+  RiflePreferredRangeMin: 5
+  RiflePreferredRangeMax: 8
 --- !u!114 &1558554886111920215
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -12,14 +12,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 17ec6456e73b09e4d894dd63f65912ae, type: 3}
   m_Name: HeightGenerationSettings
   m_EditorClassIdentifier: 
-  HeightLayerCount: 2
-  MinCellsBetweenHeightChanges: 4
-  MinUsableRegionWidth: 4
-  MinUsableRegionHeight: 4
-  MinUsableRegionArea: 12
-  SmoothingPasses: 1
-  RegionBalance: 0.5
-  MaxGenerationAttempts: 100
+  HeightLayerCount: 8
+  PreferredLedgeCount: 10
+  MinCellsBetweenHeightChanges: 1
+  MinUsableRegionWidth: 1
+  MinUsableRegionHeight: 1
+  MinUsableRegionArea: 6
+  LedgePathRandomness: 1
+  MaxGenerationAttempts: 25000
   DefaultLedgeRepeatCooldownDistance: 2
   MinRoadReplaceableLedgesPerHeightRegion: 3
   LedgeTiles: {fileID: 11400000, guid: 9259fe944509b0843933aaf32f0c2114, type: 2}

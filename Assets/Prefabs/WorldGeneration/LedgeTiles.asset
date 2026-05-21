@@ -10,10 +10,11 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: c8da175093b1a15418c050728df98317, type: 3}
-  m_Name: HeightTiles
+  m_Name: LedgeTiles
   m_EditorClassIdentifier: 
   Tiles:
   - {fileID: 2274949019121453307, guid: 4c7371a3301c09b4db850fbe2b41db7c, type: 3}
   - {fileID: -6634540711535111146, guid: be082d708b7200b4eb01bba3e3d5f0dd, type: 3}
   - {fileID: 3779598406230203083, guid: 857d150639d232c489e88d3d8d45fc3b, type: 3}
   - {fileID: -7741529959908311990, guid: 3f16ec3cacea0824889e80b39696a7bb, type: 3}
+  - {fileID: 2274949019121453307, guid: db12a87a8d6ab3b4fbc32edd88655f18, type: 3}

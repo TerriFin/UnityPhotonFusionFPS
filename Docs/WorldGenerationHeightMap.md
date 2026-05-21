@@ -242,12 +242,12 @@ Height-specific settings live in a settings asset:
 HeightGenerationSettings
 {
     int HeightLayerCount;
+    int PreferredLedgeCount;
     int MinCellsBetweenHeightChanges;
     int MinUsableRegionWidth;
     int MinUsableRegionHeight;
     int MinUsableRegionArea;
-    int SmoothingPasses;
-    float RegionBalance;
+    float LedgePathRandomness;
     int MaxGenerationAttempts;
     int DefaultLedgeRepeatCooldownDistance;
     int MinRoadReplaceableLedgesPerHeightRegion;
@@ -260,12 +260,12 @@ Suggested defaults:
 
 ```text
 HeightLayerCount: 1
+PreferredLedgeCount: 1
 MinCellsBetweenHeightChanges: 3
 MinUsableRegionWidth: 3
 MinUsableRegionHeight: 3
 MinUsableRegionArea: 9
-SmoothingPasses: 2
-RegionBalance: 0.5
+LedgePathRandomness: 0.65
 MaxGenerationAttempts: 100
 DefaultLedgeRepeatCooldownDistance: 2
 MinRoadReplaceableLedgesPerHeightRegion: 5
@@ -274,19 +274,19 @@ MinRoadReplaceableLedgesPerHeightRegion: 5
 Meaning:
 
 - `HeightLayerCount`: number of possible elevation layers. `1` means flat map.
-- `MinCellsBetweenHeightChanges`: minimum flat distance before another elevation transition can happen.
+- `PreferredLedgeCount`: target number of separate ledge paths to place. The generator keeps partial success if it cannot place all requested ledges.
+- `MinCellsBetweenHeightChanges`: minimum grid distance between distinct generated ledge paths.
 - `MinUsableRegionWidth`: smallest width a non-ledge height region should have.
 - `MinUsableRegionHeight`: smallest height a non-ledge height region should have.
 - `MinUsableRegionArea`: smallest useful plateau/valley area.
-- `SmoothingPasses`: how aggressively small noisy features are removed.
-- `RegionBalance`: how strongly generation tries to split the map evenly between available height layers.
-- `MaxGenerationAttempts`: retry budget before falling back to a simpler valid height map.
+- `LedgePathRandomness`: how strongly organic ledge paths are allowed and required to bend. `0` allows very direct paths; `1` strongly favors noisy paths and rejects mostly straight ledges.
+- `MaxGenerationAttempts`: total retry budget for placing ledges. If the budget runs out, already placed ledges are kept.
 - `DefaultLedgeRepeatCooldownDistance`: fallback cooldown used when a specific ledge tile does not override repeat distance.
 - `MinRoadReplaceableLedgesPerHeightRegion`: minimum number of meaningful `1x1` straight ledge cells that can be replaced by height-change roads for each non-base height region.
 
-For `HeightLayerCount = 2`, the generator should usually split the map into two roughly similar-sized sections, but it may also produce a valley/hill shape if constraints allow it.
+For `HeightLayerCount = 2`, every accepted ledge can only create height `0` and height `1` regions. Setting `PreferredLedgeCount` higher than `1` can create several separate hills/valleys that reuse those two height levels.
 
-For `HeightLayerCount = 3`, it should produce three usable elevation regions where possible. The regions do not need to be equal, but no height should exist only as tiny unusable noise.
+For higher `HeightLayerCount` values, later ledges may split already-raised plateaus to create taller stepped regions. For example, `HeightLayerCount = 5` and `PreferredLedgeCount = 4` can theoretically create a five-level hill if each ledge splits the previous high plateau.
 
 ### HeightTileDefinition
 
@@ -342,7 +342,17 @@ A second tile set would only be needed if there were a reason to swap entire pal
 
 ## Height Generation Approach
 
-The first implementation should favor large, usable regions over noisy terrain.
+The implementation favors large, usable regions over noisy terrain.
+
+Height generation is now ledge-path-first. Instead of painting a noisy height field and trying to repair bad ledges afterward, the generator creates the elevation transition lines first. The height regions are then derived from those accepted ledge paths.
+
+This makes `MinCellsBetweenHeightChanges` a real generation constraint:
+
+```text
+Two distinct ledge paths cannot be within this many cells of each other.
+```
+
+That means separate ledges cannot cross, touch, or form 3-layer intersections unless the spacing value is intentionally reduced enough to allow that. A single ledge path may still occupy adjacent cells along its own length, because that is one continuous ledge.
 
 Recommended pipeline:
 
@@ -350,34 +360,48 @@ Recommended pipeline:
 
 Create every cell at height `0`.
 
-If `HeightLayerCount <= 1`, stop here. No ledge cells are created.
+If `HeightLayerCount <= 1` or `PreferredLedgeCount <= 0`, stop here. No ledge cells are created.
 
 ### 2. Generate Large Height Regions
 
-Create one or more organic regions for each available height layer.
+Create organic ledge paths one at a time.
 
-The implementation uses seeded Voronoi-style region growth:
+Until either `PreferredLedgeCount` ledges have been placed or `MaxGenerationAttempts` is exhausted:
 
-1. Pick a small number of region seeds.
-2. Assign each seed a target height layer.
-3. Assign every cell to the closest weighted seed, with deterministic coordinate warping to bend the borders.
-4. Prefer contiguous large regions.
-5. Use `RegionBalance` to decide how much to favor equal-size height layers.
+1. Find an existing usable height region that can be split.
+2. Pick start and end sides for an organic ledge path.
+3. Pathfind a connected line between those region-boundary sides.
+4. Reject the path if it comes too close to any previously accepted ledge path.
+5. Treat the accepted path as the low-side ledge cells.
+6. Temporarily remove the path from the region, find the connected areas it creates, and raise one valid area by one height level.
+7. Validate that both resulting regions are still usable.
 
-With two height layers, a simple output can still look like:
+With two height layers, this often creates one organic map-spanning transition:
 
 ```text
-lower half of map: height 0
-upper half of map: height 1
+one side of ledge: height 0
+other side of ledge: height 1
 ```
 
-but the expected output should usually bend, curve, blob, or create a central valley/hill if enough usable space remains.
+The generator preserves partial success. If it places one ledge and then fails to place the second after spending the remaining attempt budget, the final height map keeps the first ledge.
 
-The generator retries organic layouts up to `MaxGenerationAttempts`. If none of the organic attempts can satisfy the road-replaceable ledge validation, it falls back to the older band-style split and then the normal flat-map fallback if needed.
+With three or more height layers, the generator can split an existing raised region again, while still respecting ledge spacing. If it cannot create a valid organic path for every requested ledge, it leaves the missing ledges out instead of throwing the whole height map away or falling back to a straight split.
+
+The generated path is not a prefab choice yet. It is only a grid path that later becomes straight, inner-corner, or outer-corner ledge cells during ledge marking.
+
+The path start and end can be on:
+
+- opposite region edges,
+- adjacent region edges,
+- two separate points on the same region edge.
+
+This allows long splits, corner cuts, bays, peninsulas, and curved ledges that enter and leave through the same side. Same-edge paths must start and end far enough apart to make a usable split.
+
+Candidate start/end points are chosen inside one contiguous same-height plateau. Existing ledges split the map into separate plateau regions, so a new ledge is never pathfound through a different plateau or across an existing ledge. Boundary sides with only a one-cell usable run are culled, which prevents tiny mouths/entrances from being used as ledge endpoints.
 
 ### 3. Cull Unusable Features
 
-Remove or merge height regions that are too small.
+Reject height splits that would create unusable regions.
 
 Use:
 
@@ -387,37 +411,40 @@ MinUsableRegionHeight
 MinUsableRegionArea
 ```
 
-Any region that cannot support at least a small usable flat section should be merged into the most compatible neighboring region.
+Any generated split that cannot support at least a small usable flat section on both sides is rejected and regenerated.
 
 This is important because a `2x2` hill consumes map space but cannot support meaningful roads/buildings. The default goal is that every generated height region can fit at least one flat road/building opportunity after ledges are placed.
 
-The current implementation treats each contiguous same-height area as a region. Regions smaller than the configured minimum area, width, or height are merged into the neighboring height that touches them the most. This runs before ledges are marked, so ledge placement receives cleaner plateau/valley shapes.
+The current implementation treats each contiguous same-height area as a region. After a candidate ledge path is applied, every resulting same-height region must pass the configured area/width/height checks.
 
 ### 4. Enforce Height Difference Rule
 
-Scan cardinal and diagonal neighbors.
+Generate height levels one step at a time.
 
-If any pair differs by more than one level, adjust intermediate cells or lower/raise one region until:
+Each accepted path raises one side of an existing region by exactly one height level. This means cardinal and diagonal neighbors can only differ by one level:
 
 ```text
 abs(deltaHeight) <= 1
 ```
 
-Since the first version should usually create adjacent height bands, this rule should mostly be a validation step.
+Legacy repair helpers still exist in code, but the ledge-path-first generator avoids creating illegal jumps in the first place.
 
 ### 5. Enforce Distance Between Height Changes
 
-Apply `MinCellsBetweenHeightChanges`.
+Apply `MinCellsBetweenHeightChanges` while choosing ledge paths.
 
-If two separate ledge lines would be too close, smooth one of them away or merge the narrow strip into a neighboring region.
+If a candidate ledge path would come too close to an already accepted ledge path, it is rejected before it changes the height map.
 
-This prevents unusable one-cell terraces and narrow zigzagging elevation strips.
+This prevents:
 
-The organic implementation enforces this before ledge cells are created. It scans rows, columns, and both diagonal directions for two height transitions closer than `MinCellsBetweenHeightChanges`. When it finds a narrow strip between two transitions, it merges that strip into the neighboring height level with the strongest local support, then re-applies the one-level height-difference rule.
+- crossing ledges,
+- back-to-back cliffs,
+- tiny terraces between height changes,
+- 3-layer intersection knots that road generation cannot plan around.
 
-This pass is intentionally cell-grid based rather than prefab based. A long continuous ledge line can still run through adjacent cells, but separate height changes should not form one-cell terraces or back-to-back elevation changes.
+The spacing test uses grid distance between distinct accepted ledge paths. A long continuous ledge line can still bend through adjacent cells along its own path.
 
-The edge of the map gets an additional cleanup pass before ledges are marked. Edge cells copy their inward neighbor's height so a height transition cannot run parallel along the map boundary. A height transition may still meet the boundary perpendicularly, which produces a straight boundary ledge where the elevation line exits the playable map.
+For path-first generation, ledges enter and exit through valid region-boundary sides. On the first split, those boundaries are usually map edges. Later splits can exit the boundary of an existing height region instead. Adjacent-edge and same-edge paths are allowed as long as the path creates usable connected regions.
 
 ### 6. Mark Ledge Cells
 
@@ -454,6 +481,8 @@ both side cells belong to usable height regions
 Each non-base height region should have at least `MinRoadReplaceableLedgesPerHeightRegion` meaningful road-replaceable ledges. If a region cannot provide enough candidates, generation should modify or remove that height region before road generation begins.
 
 This prevents height regions that look nice but cannot realistically connect to the road graph. It also prevents large special ledge structures from accidentally consuming every possible transition point.
+
+If the path-first generator cannot satisfy this validation after its retry budget, the failed ledge is left out. If no valid ledges remain, `BuildHeightCells` falls back to a flat height map.
 
 ### 8. Instantiate Ledge Prefabs
 
@@ -599,11 +628,11 @@ Those should be deterministic outputs of the shared seed and settings.
 1. Add `HeightTileDefinition`, `HeightTileSet`, `HeightGenerationSettings`, and `HeightMapGenerator`.
 2. Move shared run values (`Width`, `Height`, `Seed`, `RandomizeSeedOnGenerate`, `TileSize`) from `RoadGridGenerator` to `HeightMapGenerator`.
 3. Keep `RoadGridGenerator` fallback values for flat-map compatibility when no height generator is assigned.
-4. Generate flat height map when `HeightLayerCount <= 1`.
-5. Generate larger height regions when `HeightLayerCount > 1`.
-6. Cull/merge unusably small height features.
-7. Enforce cardinal and diagonal height-difference rules.
-8. Enforce minimum distance between height changes.
+4. Generate flat height map when `HeightLayerCount <= 1` or `PreferredLedgeCount <= 0`.
+5. Generate organic ledge paths while under `PreferredLedgeCount` and `MaxGenerationAttempts`.
+6. Reject ledge paths that create unusably small height regions.
+7. Reject ledge paths that violate `MinCellsBetweenHeightChanges` against previously accepted ledges.
+8. Keep already accepted ledges when later ledges cannot satisfy the constraints.
 9. Mark ledge cells and instantiate ledge prefabs.
 10. Expose `WorldHeightSnapshot`.
 11. Update `RoadGridGenerator` to consume the snapshot.
@@ -613,9 +642,12 @@ Those should be deterministic outputs of the shared seed and settings.
 ## First Version Acceptance Criteria
 
 - `HeightLayerCount = 1` produces the same flat behavior as the current map generator.
-- `HeightLayerCount = 2` can split the map into two usable elevation regions.
+- `PreferredLedgeCount = 0` produces the same flat behavior as the current map generator.
+- `HeightLayerCount = 2` can create multiple separate ledges that reuse two height levels.
 - No cardinal or diagonal neighbors differ by more than one height level.
-- Tiny unusable hills/valleys are smoothed away or merged.
+- Tiny unusable hills/valleys are rejected before they become final height regions.
+- Separate ledge paths do not cross, touch, or violate `MinCellsBetweenHeightChanges`.
+- If generation cannot place every preferred ledge, the successfully placed ledges remain.
 - Ledge prefabs are placed at elevation transitions.
 - Boundary ledges are used where elevation transitions meet the map edge.
 - Road generation can optionally replace a straight ledge cell with a height-change road tile.
@@ -627,6 +659,7 @@ Those should be deterministic outputs of the shared seed and settings.
 ## Implementation Decisions
 
 - Height levels are normalized to `0..HeightLayerCount - 1`.
+- `HeightLayerCount` caps how high terrain can go; `PreferredLedgeCount` controls how many separate height transitions the generator tries to place.
 - The ledge/ramp cell is positioned at the lower height and points toward the high side.
 - Non-road ledge cells are ledges, not building cells. They can be used as ledge geometry, but ordinary buildings are not placed on them.
 - Road exits are allowed on any height layer. The generator should rely on road-replaceable ledge availability and pathfinding to connect them, then polish edge cases as they appear in testing.
