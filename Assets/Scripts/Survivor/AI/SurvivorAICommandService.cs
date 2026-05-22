@@ -16,15 +16,34 @@ namespace SimpleFPS
 		public float AssignedAreaMinRadius = 3f;
 		public float AssignedAreaMaxRadius = 16f;
 		public LayerMask MoveCommandHitMask = 1;
+		// Meters between adjacent lanes when a group move / assigned-area order spreads survivors across
+		// the corridor. Three survivors at 0.9 produce lanes at -0.9, 0, +0.9.
+		public float LaneSpacing = 0.9f;
+		// Within this distance to the final destination the lane offset fades to 0 so a group still
+		// converges on the goal instead of stopping in a fan shape.
+		public float LaneOffsetTaperDistance = 4f;
+		// The lane offset softens within this distance of the current path corner so a perpendicular
+		// shove doesn't make a survivor cut a corner from the inside.
+		public float LaneOffsetCornerSoftenDistance = 1.5f;
+		// NavMesh.SamplePosition clamp distance applied to the offset steering target, so a sideways
+		// shove never pushes the target into a wall.
+		public float LaneOffsetSampleDistance = 1.0f;
 	}
 
 	public readonly struct SurvivorAICommand
 	{
 		private readonly Func<Survivor, Survivor.ICharacterInputSource> _createInputSource;
 
-		public SurvivorAICommand(Func<Survivor, Survivor.ICharacterInputSource> createInputSource)
+		// Commands toward a static destination (MoveTo / AssignedArea) spread the group across lanes so
+		// the squad fills the corridor instead of stacking on the optimal path. Follow / Idle commands
+		// don't benefit from a fixed sideways offset (Follow's target moves, Idle doesn't path) so they
+		// opt out.
+		public readonly bool AllowsLaneSpread;
+
+		public SurvivorAICommand(Func<Survivor, Survivor.ICharacterInputSource> createInputSource, bool allowsLaneSpread = false)
 		{
 			_createInputSource = createInputSource;
+			AllowsLaneSpread = allowsLaneSpread;
 		}
 
 		public Survivor.ICharacterInputSource CreateInputSource(Survivor survivor)
@@ -44,22 +63,22 @@ namespace SimpleFPS
 
 		public static SurvivorAICommand MoveTo(Vector3 destination)
 		{
-			return new SurvivorAICommand(survivor => SurvivorNonCombatAI.MoveTo(survivor, destination, survivor.NonCombatAISettings));
+			return new SurvivorAICommand(survivor => SurvivorNonCombatAI.MoveTo(survivor, destination, survivor.NonCombatAISettings), allowsLaneSpread: true);
 		}
 
 		public static SurvivorAICommand AssignedArea(Vector3 center, float radius)
 		{
-			return new SurvivorAICommand(survivor => SurvivorNonCombatAI.AssignedArea(survivor, center, radius, survivor.NonCombatAISettings));
+			return new SurvivorAICommand(survivor => SurvivorNonCombatAI.AssignedArea(survivor, center, radius, survivor.NonCombatAISettings), allowsLaneSpread: true);
 		}
 
 		public static SurvivorAICommand AssignedArea(Vector3 center, float radius, Vector3 entryPoint)
 		{
-			return new SurvivorAICommand(survivor => SurvivorNonCombatAI.AssignedArea(survivor, center, radius, entryPoint, survivor.NonCombatAISettings));
+			return new SurvivorAICommand(survivor => SurvivorNonCombatAI.AssignedArea(survivor, center, radius, entryPoint, survivor.NonCombatAISettings), allowsLaneSpread: true);
 		}
 
 		public static SurvivorAICommand AssignedArea(Vector3 center, float radius, Vector3 entryPoint, Vector3[] patrolPoints)
 		{
-			return new SurvivorAICommand(survivor => SurvivorNonCombatAI.AssignedArea(survivor, center, radius, entryPoint, patrolPoints, survivor.NonCombatAISettings));
+			return new SurvivorAICommand(survivor => SurvivorNonCombatAI.AssignedArea(survivor, center, radius, entryPoint, patrolPoints, survivor.NonCombatAISettings), allowsLaneSpread: true);
 		}
 	}
 
@@ -68,6 +87,12 @@ namespace SimpleFPS
 		private readonly Gameplay _gameplay;
 		private readonly Dictionary<PlayerRef, Dictionary<int, Survivor>> _survivorsByOwner;
 		private readonly SurvivorAICommandSettings _settings;
+
+		// Reusable buffer for sorting group-command targets by CharacterIndex so lane assignment is
+		// deterministic (same survivor always lands in the same lane within a given group composition).
+		private readonly List<KeyValuePair<int, Survivor>> _laneTargetBuffer = new();
+		private static readonly Comparison<KeyValuePair<int, Survivor>> LaneTargetComparer =
+			(a, b) => a.Key.CompareTo(b.Key);
 
 		public SurvivorAICommandService(
 			Gameplay gameplay,
@@ -145,18 +170,26 @@ namespace SimpleFPS
 			if (TryGetSelectedCommandContext(owner, selectedCharacterMask, out var data, out var survivors) == false)
 				return;
 
+			_laneTargetBuffer.Clear();
 			foreach (var pair in survivors)
 			{
-				int characterIndex = pair.Key;
-				var survivor = pair.Value;
-
-				if (IsSelectedCommandTargetValid(data, selectedCharacterMask, characterIndex, survivor) == false)
+				if (IsSelectedCommandTargetValid(data, selectedCharacterMask, pair.Key, pair.Value) == false)
 					continue;
+				_laneTargetBuffer.Add(pair);
+			}
+			_laneTargetBuffer.Sort(LaneTargetComparer);
 
+			for (int i = 0; i < _laneTargetBuffer.Count; i++)
+			{
+				var survivor = _laneTargetBuffer[i].Value;
 				var inputSource = command.CreateInputSource(survivor);
 				if (inputSource != null)
 					survivor.SetAI(inputSource);
+
+				AssignLaneOffset(survivor, i, _laneTargetBuffer.Count, command.AllowsLaneSpread, _settings);
 			}
+
+			_laneTargetBuffer.Clear();
 		}
 
 		public void ApplySelectedTeamAssignedArea(PlayerRef owner, long selectedCharacterMask, Vector3 center, float radius)
@@ -168,18 +201,27 @@ namespace SimpleFPS
 
 			Vector3 entryPoint = patrolPoints[0];
 			var command = SurvivorAICommand.AssignedArea(center, radius, entryPoint, patrolPoints);
+
+			_laneTargetBuffer.Clear();
 			foreach (var pair in survivors)
 			{
-				int characterIndex = pair.Key;
-				var survivor = pair.Value;
-
-				if (IsSelectedCommandTargetValid(data, selectedCharacterMask, characterIndex, survivor) == false)
+				if (IsSelectedCommandTargetValid(data, selectedCharacterMask, pair.Key, pair.Value) == false)
 					continue;
+				_laneTargetBuffer.Add(pair);
+			}
+			_laneTargetBuffer.Sort(LaneTargetComparer);
 
+			for (int i = 0; i < _laneTargetBuffer.Count; i++)
+			{
+				var survivor = _laneTargetBuffer[i].Value;
 				var inputSource = command.CreateInputSource(survivor);
 				if (inputSource != null)
 					survivor.SetAI(inputSource);
+
+				AssignLaneOffset(survivor, i, _laneTargetBuffer.Count, command.AllowsLaneSpread, _settings);
 			}
+
+			_laneTargetBuffer.Clear();
 		}
 
 		public void ApplySelectedTeamFollow(PlayerRef owner, long selectedCharacterMask, int targetCharacterIndex)
@@ -203,6 +245,8 @@ namespace SimpleFPS
 					continue;
 
 				survivor.SetAI(SurvivorAICommand.Follow(target).CreateInputSource(survivor));
+				// Follow tracks a moving target, so a persistent lateral offset would look strange — reset.
+				ClearLaneOffset(survivor);
 			}
 		}
 
@@ -249,12 +293,44 @@ namespace SimpleFPS
 			int originCharacterIndex,
 			SurvivorAICommand command)
 		{
-			ForEachNearbyTeamSurvivor(owner, data, origin, originCharacterIndex, survivor =>
+			if (_survivorsByOwner.TryGetValue(owner, out var survivors) == false)
+				return;
+
+			float radius = Mathf.Max(0f, _settings.CommandRadius);
+			float radiusSqr = radius * radius;
+			long aliveMask = data.AliveCharacterMask;
+
+			_laneTargetBuffer.Clear();
+			foreach (var pair in survivors)
 			{
+				int characterIndex = pair.Key;
+				var survivor = pair.Value;
+
+				if (survivor == null || characterIndex == originCharacterIndex)
+					continue;
+				if ((aliveMask & (1L << characterIndex)) == 0)
+					continue;
+
+				Vector3 offset = survivor.transform.position - origin.transform.position;
+				offset.y = 0f;
+				if (offset.sqrMagnitude > radiusSqr)
+					continue;
+
+				_laneTargetBuffer.Add(pair);
+			}
+			_laneTargetBuffer.Sort(LaneTargetComparer);
+
+			for (int i = 0; i < _laneTargetBuffer.Count; i++)
+			{
+				var survivor = _laneTargetBuffer[i].Value;
 				var inputSource = command.CreateInputSource(survivor);
 				if (inputSource != null)
 					survivor.SetAI(inputSource);
-			});
+
+				AssignLaneOffset(survivor, i, _laneTargetBuffer.Count, command.AllowsLaneSpread, _settings);
+			}
+
+			_laneTargetBuffer.Clear();
 		}
 
 		private bool TryGetLookPoint(Survivor origin, out Vector3 destination)
@@ -323,6 +399,48 @@ namespace SimpleFPS
 				return false;
 
 			return true;
+		}
+
+		// Distribute survivors across lanes so they fill the corridor instead of stacking on the optimal
+		// path. Order in the group determines lane: 0 -> centre, 1 -> +1, 2 -> -1, 3 -> +2, 4 -> -2, ...
+		// This keeps the group symmetric around the leader and stays cheap (no state, no lookups).
+		// Commands that don't want a static offset (Follow, Idle) pass allowsLaneSpread=false and reset
+		// the lane so a previous group order doesn't leak into them.
+		private static void AssignLaneOffset(Survivor survivor, int orderIndex, int groupSize, bool allowsLaneSpread, SurvivorAICommandSettings settings)
+		{
+			var navigator = survivor != null ? survivor.Navigator : null;
+			if (navigator == null)
+				return;
+
+			float spacing = settings != null ? settings.LaneSpacing : 0f;
+			if (allowsLaneSpread == false || groupSize <= 1 || spacing <= 0f)
+			{
+				navigator.LaneOffset = 0f;
+				return;
+			}
+
+			int laneIndex;
+			if (orderIndex == 0)
+				laneIndex = 0;
+			else
+			{
+				int magnitude = (orderIndex + 1) / 2;
+				laneIndex = (orderIndex % 2 == 1) ? magnitude : -magnitude;
+			}
+
+			navigator.LaneOffset = laneIndex * spacing;
+			// Push the corridor-shape knobs onto the navigator each assignment so retuning the Gameplay
+			// settings takes effect without requiring a domain reload or prefab edit.
+			navigator.LaneOffsetTaperDistance = settings.LaneOffsetTaperDistance;
+			navigator.LaneOffsetCornerSoftenDistance = settings.LaneOffsetCornerSoftenDistance;
+			navigator.LaneOffsetSampleDistance = settings.LaneOffsetSampleDistance;
+		}
+
+		private static void ClearLaneOffset(Survivor survivor)
+		{
+			var navigator = survivor != null ? survivor.Navigator : null;
+			if (navigator != null)
+				navigator.LaneOffset = 0f;
 		}
 
 		private bool TryBuildSharedAssignedAreaPatrolPoints(

@@ -14,7 +14,7 @@ namespace SimpleFPS
 		public float StoppingDistance = 1.25f;
 		public float MinimumMoveDistance = 1.5f;
 		public float DestinationRefreshDistance = 1f;
-		public float DirectFallbackDistance = 4f;
+		public float DirectFallbackDistance = 1.5f;
 		public float RequiredScoreImprovement = 0.25f;
 
 		[Header("Performance")]

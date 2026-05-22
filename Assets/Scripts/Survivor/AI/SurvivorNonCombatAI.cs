@@ -38,7 +38,7 @@ namespace SimpleFPS
 		[Header("Assignment")]
 		public float DefaultFollowStoppingDistance = 2f;
 		public float DefaultMoveStoppingDistance = 1.25f;
-		public float DirectFallbackDistance = 4f;
+		public float DirectFallbackDistance = 1.5f;
 		public float MaxYawDegreesPerTick = 8f;
 
 		[Header("Idle Look")]

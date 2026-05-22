@@ -10,7 +10,7 @@ namespace SimpleFPS
 	{
 		[Header("Movement")]
 		public float InvestigationStoppingDistance = 1.25f;
-		public float DirectFallbackDistance = 4f;
+		public float DirectFallbackDistance = 1.5f;
 
 		[Header("Alerts")]
 		public float AllyAlertRadius = 8f;

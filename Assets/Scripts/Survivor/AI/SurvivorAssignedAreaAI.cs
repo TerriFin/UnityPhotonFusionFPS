@@ -22,7 +22,7 @@ namespace SimpleFPS
 		[Header("Movement")]
 		public float AreaStoppingDistance = 1.25f;
 		public float PatrolPointStoppingDistance = 1f;
-		public float DirectFallbackDistance = 4f;
+		public float DirectFallbackDistance = 1.5f;
 		public int PatrolPointSampleAttempts = 8;
 
 		[Header("Waiting")]

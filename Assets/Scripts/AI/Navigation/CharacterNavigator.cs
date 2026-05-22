@@ -15,6 +15,14 @@ namespace SimpleFPS
 		public float ReachablePointSampleMaxDistance = 8f;
 		public int AreaMask = NavMesh.AllAreas;
 
+		// Runtime lane-spread state. Written by SurvivorAICommandService at lane assignment time —
+		// the canonical tunable values live on SurvivorAICommandSettings (on the Gameplay GameObject).
+		// 0 lane offset = no spread, which is the default for non-group orders.
+		[HideInInspector] public float LaneOffset;
+		[HideInInspector] public float LaneOffsetTaperDistance = 4f;
+		[HideInInspector] public float LaneOffsetCornerSoftenDistance = 1.5f;
+		[HideInInspector] public float LaneOffsetSampleDistance = 1.0f;
+
 		private NavMeshPath _path;
 		private NavMeshPath _scratchPath;
 		private Vector3[] _corners = Array.Empty<Vector3>();
@@ -100,8 +108,44 @@ namespace SimpleFPS
 			if (_cornerIndex >= _corners.Length)
 				return false;
 
-			steeringTarget = _corners[_cornerIndex];
+			Vector3 corner = _corners[_cornerIndex];
+			steeringTarget = ApplyLaneOffset(corner, currentPosition);
 			return true;
+		}
+
+		private Vector3 ApplyLaneOffset(Vector3 corner, Vector3 currentPosition)
+		{
+			if (Mathf.Abs(LaneOffset) <= 0.001f)
+				return corner;
+
+			Vector3 toCorner = corner - currentPosition;
+			toCorner.y = 0f;
+			float distanceToCorner = toCorner.magnitude;
+			if (distanceToCorner < 0.05f)
+				return corner;
+
+			float distanceToDestination = FlatDistance(currentPosition, _sampledDestination);
+			float destinationTaper = LaneOffsetTaperDistance <= 0f
+				? 1f
+				: Mathf.Clamp01(distanceToDestination / LaneOffsetTaperDistance);
+
+			float cornerSoften = LaneOffsetCornerSoftenDistance <= 0f
+				? 1f
+				: Mathf.Clamp01(distanceToCorner / LaneOffsetCornerSoftenDistance);
+
+			float effectiveOffset = LaneOffset * destinationTaper * cornerSoften;
+			if (Mathf.Abs(effectiveOffset) <= 0.001f)
+				return corner;
+
+			Vector3 direction = toCorner / distanceToCorner;
+			Vector3 perpendicular = new Vector3(-direction.z, 0f, direction.x);
+			Vector3 candidate = corner + perpendicular * effectiveOffset;
+
+			float sampleDistance = Mathf.Max(0.1f, LaneOffsetSampleDistance);
+			if (NavMesh.SamplePosition(candidate, out var hit, sampleDistance, AreaMask))
+				return hit.position;
+
+			return corner;
 		}
 
 		public bool TryFindReachablePoint(Vector3 currentPosition, Vector3 targetPosition, out Vector3 reachablePoint)
@@ -195,6 +239,13 @@ namespace SimpleFPS
 			a.y = 0f;
 			b.y = 0f;
 			return (a - b).sqrMagnitude;
+		}
+
+		private static float FlatDistance(Vector3 a, Vector3 b)
+		{
+			a.y = 0f;
+			b.y = 0f;
+			return (a - b).magnitude;
 		}
 	}
 }

@@ -9,7 +9,7 @@ namespace SimpleFPS
 	{
 		[Header("Movement")]
 		public float PickupStoppingDistance = 0.75f;
-		public float DirectFallbackDistance = 4f;
+		public float DirectFallbackDistance = 1.5f;
 
 		private readonly List<KnownPickupInfo> _pickupCandidates = new(8);
 		private KnownPickupInfo _pickupTarget;
