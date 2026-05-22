@@ -51,7 +51,7 @@ MonoBehaviour:
   IsBoundaryTile: 0
   AllowsTraversalWithoutRoad: 0
   CanBeReplacedByHeightChangeRoad: 1
-  Weight: 3
+  Weight: 1
   RepeatCooldownDistance: 0
 --- !u!1 &6544350475138116353
 GameObject:

@@ -238,12 +238,38 @@ namespace SimpleFPS
 			if (HasOnlyUsableHeightRegions(candidate) == false)
 				return false;
 
-			if (Settings.MinRoadReplaceableLedgesPerHeightRegion > 0 && HasEnoughRoadReplaceableLedges(BuildHeightCells(candidate, false)) == false)
+			if (Settings.MinRoadReplaceableLedgesPerHeightRegion > 0
+				&& HasEnoughRoadReplaceableLedgesInPath(BuildHeightCells(candidate, false), ledgePath) == false)
 				return false;
 
 			CopyHeights(candidate, heights);
 			acceptedLedgePaths.Add(ledgePath);
 			return true;
+		}
+
+		// Counts road-replaceable straight cardinal-step cells that exist along a single new ledge path.
+		// Diagonal-step cells become inner/outer corner ledges (not road-replaceable), so this naturally
+		// requires each division to have enough cardinal-step ledge segments to host height-change roads.
+		private bool HasEnoughRoadReplaceableLedgesInPath(WorldHeightCell[,] cells, List<Vector2Int> ledgePath)
+		{
+			int required = Mathf.Max(0, Settings.MinRoadReplaceableLedgesPerHeightRegion);
+			if (required <= 0)
+				return true;
+
+			int count = 0;
+			int width = cells.GetLength(0);
+			int height = cells.GetLength(1);
+			for (int i = 0; i < ledgePath.Count; i++)
+			{
+				Vector2Int position = ledgePath[i];
+				if (position.x < 0 || position.y < 0 || position.x >= width || position.y >= height)
+					continue;
+
+				if (cells[position.x, position.y].CanBeReplacedByHeightChangeRoad)
+					count++;
+			}
+
+			return count >= required;
 		}
 
 		private List<HeightRegion> CollectHeightRegionsBelowMaxHeight(int[,] heights, int maxHeightLevel)
@@ -438,15 +464,36 @@ namespace SimpleFPS
 					return path.Count >= 3;
 				}
 
-				for (int i = 0; i < DirectionOffsets.Length; i++)
+				for (int i = 0; i < NeighborOffsets.Length; i++)
 				{
-					Vector2Int next = current.Position + DirectionOffsets[i];
+					Vector2Int next = current.Position + NeighborOffsets[i];
+					bool isDiagonal = NeighborOffsets[i].x != 0 && NeighborOffsets[i].y != 0;
 					if (closed.Contains(next)
 						|| IsParallelBoundaryStep(current.Position, next, region)
 						|| IsValidLedgePathCell(next, region, regionCells, allowedBoundaryCells, acceptedLedgePaths) == false)
 						continue;
 
-					float stepCost = 1f + Hash01(next.x + noiseSalt, next.y - noiseSalt, Seed ^ noiseSalt) * randomCostScale;
+					// Boundary ledge tiles are only authored as Straight. A diagonal step into or out of a
+					// map-edge cell would classify that cell as an inner/outer corner, which BuildHeightCells
+					// then suppresses entirely — leaving a missing boundary cap. Force cardinal-only steps at
+					// the map edge so endpoint cells stay Straight.
+					if (isDiagonal
+						&& (IsEdgeCell(EffectiveWidth, EffectiveHeight, current.Position)
+							|| IsEdgeCell(EffectiveWidth, EffectiveHeight, next)))
+						continue;
+
+					// Reject 1-cell-wide notches/bumps. If `next` is cardinally adjacent to any path cell
+					// other than the immediate predecessor, the path doubles back through a 1-cell gap.
+					// The corner ledge tile set can only render proper U-turns when the parallel runs are
+					// at least 2 cells apart, so tighter doublebacks would leave malformed corner pieces.
+					if (HasNonPredecessorPathNeighbor(current, next))
+						continue;
+
+					// Diagonal path steps create inner/outer corner ledge cells which the road generator cannot
+					// replace with a ramp. Use the geometric step length (≈1.414) so the path doesn't trivially
+					// prefer diagonals just because they cover more distance per step.
+					float baseStepCost = isDiagonal ? 1.4142f : 1f;
+					float stepCost = baseStepCost + Hash01(next.x + noiseSalt, next.y - noiseSalt, Seed ^ noiseSalt) * randomCostScale;
 					float newCost = current.Cost + stepCost;
 					if (bestByPosition.TryGetValue(next, out HeightPathNode existing) && existing.Cost <= newCost)
 						continue;
@@ -455,6 +502,24 @@ namespace SimpleFPS
 					var node = new HeightPathNode(next, current, newCost, score);
 					bestByPosition[next] = node;
 					open.Add(node);
+				}
+			}
+
+			return false;
+		}
+
+		private bool HasNonPredecessorPathNeighbor(HeightPathNode current, Vector2Int next)
+		{
+			for (int i = 0; i < DirectionOffsets.Length; i++)
+			{
+				Vector2Int neighbor = next + DirectionOffsets[i];
+				if (neighbor == current.Position)
+					continue;
+
+				for (HeightPathNode ancestor = current.Parent; ancestor != null; ancestor = ancestor.Parent)
+				{
+					if (ancestor.Position == neighbor)
+						return true;
 				}
 			}
 
@@ -1519,9 +1584,18 @@ namespace SimpleFPS
 					var candidate = new HeightTileCandidate(tile, rotationSteps);
 					candidates.Add(candidate);
 
-					int cooldown = tile.RepeatCooldownDistance > 0 ? tile.RepeatCooldownDistance : Mathf.Max(0, Settings.DefaultLedgeRepeatCooldownDistance);
-					if (recentPlacements.TryGetValue(tile, out int lastPlacement) == false || placementIndex - lastPlacement > cooldown)
+					// RepeatCooldownDistance is the literal value: 0 means "no cooldown, always available".
+					// Previously this fell back to Settings.DefaultLedgeRepeatCooldownDistance when the tile
+					// was 0, which silently put every "common" tile on cooldown and caused the weighted
+					// fallback pool to fire constantly — letting specialty tiles repeat far more than their
+					// own cooldown should have allowed.
+					int cooldown = Mathf.Max(0, tile.RepeatCooldownDistance);
+					if (cooldown == 0
+						|| recentPlacements.TryGetValue(tile, out int lastPlacement) == false
+						|| placementIndex - lastPlacement > cooldown)
+					{
 						cooldownCandidates.Add(candidate);
+					}
 				}
 			}
 

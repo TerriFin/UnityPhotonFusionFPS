@@ -281,7 +281,7 @@ Meaning:
 - `MinUsableRegionArea`: smallest useful plateau/valley area.
 - `LedgePathRandomness`: how strongly organic ledge paths are allowed and required to bend. `0` allows very direct paths; `1` strongly favors noisy paths and rejects mostly straight ledges.
 - `MaxGenerationAttempts`: total retry budget for placing ledges. If the budget runs out, already placed ledges are kept.
-- `DefaultLedgeRepeatCooldownDistance`: fallback cooldown used when a specific ledge tile does not override repeat distance.
+- `DefaultLedgeRepeatCooldownDistance`: deprecated. Tiles use their own `RepeatCooldownDistance` directly, where `0` means no cooldown.
 - `MinRoadReplaceableLedgesPerHeightRegion`: minimum number of meaningful `1x1` straight ledge cells that can be replaced by height-change roads for each non-base height region.
 
 For `HeightLayerCount = 2`, every accepted ledge can only create height `0` and height `1` regions. Setting `PreferredLedgeCount` higher than `1` can create several separate hills/valleys that reuse those two height levels.
@@ -320,7 +320,9 @@ enum HeightTileShape
 
 `CanBeReplacedByHeightChangeRoad` should only be enabled for `1x1` straight ledge tiles. It tells the road generator that this ledge cell may be suppressed and replaced by the special road ramp tile.
 
-`RepeatCooldownDistance` is per ledge prefab. This lets unique pieces, such as a `2x2` parking garage, prevent another copy of the same source tile from appearing within a larger radius. If the value is `0` or negative, the generator should use `DefaultLedgeRepeatCooldownDistance` from `HeightGenerationSettings`.
+`RepeatCooldownDistance` is per ledge prefab and is interpreted literally: `0` means "no cooldown, always available", and a positive value means "this tile cannot be placed again within that many ledge-cell placements of its previous placement". This lets unique pieces, such as a `2x2` parking garage, prevent another copy of the same source tile from appearing within a larger radius while leaving the common variants always available.
+
+`DefaultLedgeRepeatCooldownDistance` is no longer applied by the generator; the previous fallback behavior silently put every tile with `RepeatCooldownDistance = 0` on the default cooldown, which made the cooldown-violating fallback pool fire constantly and let specialty tiles repeat far more often than their own cooldown should have allowed. The field is kept on the settings asset for backward compatibility but is unused.
 
 All height tile definitions are considered rotatable in all four cardinal directions. Rotated candidates still count as the same source tile for repeat cooldown.
 
@@ -370,11 +372,12 @@ Until either `PreferredLedgeCount` ledges have been placed or `MaxGenerationAtte
 
 1. Find an existing usable height region that can be split.
 2. Pick start and end sides for an organic ledge path.
-3. Pathfind a connected line between those region-boundary sides.
+3. Pathfind a connected line between those region-boundary sides. The path expansion considers all eight cardinal and diagonal neighbors, so a single ledge can run on a diagonal or zig-zag. Diagonal steps into or out of a map-edge cell are rejected, because boundary ledge tiles are only authored as Straight and a diagonal step at the edge would force the endpoint cell into a corner shape that the boundary ledge set cannot represent. Steps that would make the new cell cardinally adjacent to any prior path cell other than the immediate predecessor are also rejected, because that pattern is the path doubling back through a 1-cell gap. The corner ledge tile set can render U-turns only when the parallel runs are at least 2 cells apart; tighter notches/bumps would leave malformed corner pieces.
 4. Reject the path if it comes too close to any previously accepted ledge path.
 5. Treat the accepted path as the low-side ledge cells.
 6. Temporarily remove the path from the region, find the connected areas it creates, and raise one valid area by one height level.
 7. Validate that both resulting regions are still usable.
+8. Count how many cells in the accepted path become road-replaceable straight ledges (cardinal-step cells with valid low/high sides). Reject the path if that count is below `MinRoadReplaceableLedgesPerHeightRegion`.
 
 With two height layers, this often creates one organic map-spanning transition:
 
@@ -478,9 +481,9 @@ has one clear high-side cell
 both side cells belong to usable height regions
 ```
 
-Each non-base height region should have at least `MinRoadReplaceableLedgesPerHeightRegion` meaningful road-replaceable ledges. If a region cannot provide enough candidates, generation should modify or remove that height region before road generation begins.
+Each accepted ledge path must contribute at least `MinRoadReplaceableLedgesPerHeightRegion` meaningful road-replaceable cells of its own. Diagonal-step path cells classify as inner/outer corner ledges and are intentionally non-replaceable, so a path that runs entirely or mostly diagonally needs enough cardinal-step segments to satisfy the requirement; otherwise the candidate path is rejected.
 
-This prevents height regions that look nice but cannot realistically connect to the road graph. It also prevents large special ledge structures from accidentally consuming every possible transition point.
+This prevents height regions that look nice but cannot realistically connect to the road graph. It also prevents large special ledge structures, and now diagonal ledge segments, from accidentally consuming every possible transition point. Each split therefore guarantees its own road-replaceable budget instead of pooling the count across the whole map.
 
 If the path-first generator cannot satisfy this validation after its retry budget, the failed ledge is left out. If no valid ledges remain, `BuildHeightCells` falls back to a flat height map.
 
@@ -492,7 +495,7 @@ For each ledge cell:
 2. Find matching `HeightTileDefinition` candidates.
 3. Expand all four rotations.
 4. Filter boundary/non-boundary tile sets.
-5. Apply weight and the selected tile's repeat cooldown, falling back to `DefaultLedgeRepeatCooldownDistance` if needed.
+5. Apply weight and the selected tile's repeat cooldown. `RepeatCooldownDistance = 0` means the tile is always available; a positive value strictly excludes the tile from the pool for that many ledge-cell placements after its last placement.
 6. Instantiate the selected prefab at:
 
 ```csharp
@@ -537,7 +540,17 @@ low-side road -> ramp cell -> high-side road
 
 It cannot be a stub/dead-end itself. It may immediately lead to a stub road on the high or low side, but the ramp tile must have valid road connection on both low and high sides.
 
-Road generation enforces this before road prefab selection. If a road pass promotes a ledge into a ramp from only one side, it immediately tries to mark the opposite plateau cell as road. If that continuation cell cannot legally become road, the ramp promotion is reverted and the cell remains a normal ledge.
+Road generation enforces this before road prefab selection. If a road pass promotes a ledge into a ramp from only one side, it immediately tries to mark the opposite plateau cell as road. The continuation cell must:
+
+- be in bounds,
+- not be a map-edge cell (an edge stub against the boundary is rejected so it cannot leave a one-cell tail at the map border),
+- not already be a road, ledge, or height-change road,
+- be at the matching plateau's height level,
+- pass the normal road-placement rules.
+
+If any of those conditions fails, the ramp promotion is reverted. If the continuation road was already placed when a later check fails, that orphan road is also reverted so only the ledge remains.
+
+Roads may only override a ledge cell when that ledge is road-replaceable (a `1x1` straight ledge with valid cardinal low/high sides). Every road-placement entry point — exits, exit-inner cells, pathfinding, stubs, ramp continuations — refuses to mark a non-replaceable ledge as a road, so straight boundary ledges, corner ledges, and diagonal-step inner/outer corner ledges never get covered by a normal road tile.
 
 When the road generator chooses to use a ledge cell as a road ramp:
 

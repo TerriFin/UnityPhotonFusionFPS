@@ -465,10 +465,14 @@ Height-change ramp cells are repaired as a small grid-level transaction before p
 
 - if the ramp already has compatible road cells on both its low side and high side, keep it,
 - if it has a compatible road on only one side, try to mark the opposite plateau cell as a road,
+- the continuation cell must be in bounds, **not a map-edge cell**, not already a road or ledge, at the matching plateau's height level, and pass the normal road-placement rules,
 - if the opposite cell cannot legally become a road, demote the ramp back to a normal non-road ledge,
+- if the continuation road was already placed before a later check fails, revert that continuation alongside the ramp so no orphan stub is left behind,
 - only surviving two-sided ramps suppress their ledge prefab during collapse.
 
-This prevents an invalid `road -> ramp -> building` layout. The final layout is either `road -> ramp -> road`, or the ramp candidate remains a normal ledge.
+This prevents an invalid `road -> ramp -> building` layout and an invalid `road -> ramp -> map edge` layout. The final layout is either `road -> ramp -> road`, or the ramp candidate remains a normal ledge.
+
+Roads may only override a ledge cell when that ledge is road-replaceable (a `1x1` straight ledge with valid cardinal low/high sides). Every road-placement entry point — exits, exit-inner cells, pathfinding, stubs, ramp continuations — refuses to mark a non-replaceable ledge as a road. Exit candidates whose boundary cell or inner cell falls on a non-replaceable ledge are filtered out during exit selection, so straight boundary ledges, corner ledges, and diagonal-step inner/outer corner ledges produced by the height pass never get covered by a normal road tile.
 
 After that, calculate sockets from neighbors:
 

@@ -262,7 +262,7 @@ namespace SimpleFPS
 				}
 			}
 
-			List<ExitPlacement> exits = ChooseExits(width, height, random);
+			List<ExitPlacement> exits = ChooseExits(grid, width, height, random);
 			_actualExitCount = exits.Count;
 			_failedPathAttempts = 0;
 
@@ -293,9 +293,10 @@ namespace SimpleFPS
 			Debug.Log($"{nameof(RoadGridGenerator)} generated {width}x{height} road grid with {_actualExitCount}/{Settings.RequestedExitCount} exits and {_failedPathAttempts} failed path attempts.", this);
 		}
 
-		private List<ExitPlacement> ChooseExits(int width, int height, System.Random random)
+		private List<ExitPlacement> ChooseExits(RoadCell[,] grid, int width, int height, System.Random random)
 		{
 			List<ExitPlacement> candidates = BuildExitCandidates(width, height);
+			candidates.RemoveAll(candidate => IsExitGridPositionAllowed(grid, candidate) == false);
 			Shuffle(candidates, random);
 
 			int requested = Mathf.Clamp(Settings.RequestedExitCount, 0, candidates.Count);
@@ -315,6 +316,23 @@ namespace SimpleFPS
 			}
 
 			return new List<ExitPlacement>();
+		}
+
+		private bool IsExitGridPositionAllowed(RoadCell[,] grid, ExitPlacement candidate)
+		{
+			// Both the boundary-edge exit cell and the inner cell that anchors it must be markable as a road.
+			// A non-replaceable ledge (e.g. a straight boundary ledge or a corner ledge) at either position
+			// would otherwise force a normal road on top of ledge geometry, which has no matching tile.
+			return CanCellBecomeRoad(grid, candidate.Position) && CanCellBecomeRoad(grid, candidate.InnerPosition);
+		}
+
+		private bool CanCellBecomeRoad(RoadCell[,] grid, Vector2Int position)
+		{
+			if (IsInBounds(grid, position) == false)
+				return false;
+
+			RoadCell cell = grid[position.x, position.y];
+			return cell.IsLedge == false || cell.CanBeHeightChangeRoad;
 		}
 
 		private List<ExitPlacement> BuildExitCandidates(int width, int height)
@@ -1001,17 +1019,24 @@ namespace SimpleFPS
 			return candidates[candidates.Count - 1];
 		}
 
-		private void MarkRoad(RoadCell[,] grid, Vector2Int position)
+		private bool MarkRoad(RoadCell[,] grid, Vector2Int position)
 		{
 			if (IsInBounds(grid, position) == false)
-				return;
+				return false;
 
 			ref RoadCell cell = ref grid[position.x, position.y];
+
+			// Roads may only override a ledge cell when that cell can become a height-change ramp.
+			// Refusing here keeps the invariant that a road cell on a ledge is always a ramp, so tile
+			// selection never has to pick a normal road tile that cannot match the ledge geometry.
+			if (cell.IsLedge && cell.CanBeHeightChangeRoad == false)
+				return false;
+
 			cell.IsRoad = true;
 			if (cell.IsLedge && cell.CanBeHeightChangeRoad)
-			{
 				cell.IsHeightChangeRoad = true;
-			}
+
+			return true;
 		}
 
 		private bool IsRoadPlacementAllowed(RoadCell[,] grid, Vector2Int position, PathNode previous)
@@ -1078,8 +1103,18 @@ namespace SimpleFPS
 			if (CanCreateRampContinuationRoad(grid, ramp, continuationPosition, missingDirection) == false)
 				return false;
 
-			MarkRoad(grid, continuationPosition);
-			return HasRequiredRampConnections(grid, rampPosition);
+			if (MarkRoad(grid, continuationPosition) == false)
+				return false;
+
+			if (HasRequiredRampConnections(grid, rampPosition))
+				return true;
+
+			// MarkRoad succeeded but the ramp still cannot satisfy both connection sides — revert the
+			// continuation road so the caller does not leave an orphan stub when it reverts the ramp.
+			ref RoadCell continuation = ref grid[continuationPosition.x, continuationPosition.y];
+			continuation.IsRoad = false;
+			continuation.IsHeightChangeRoad = false;
+			return false;
 		}
 
 		private bool HasRequiredRampConnections(RoadCell[,] grid, Vector2Int rampPosition)
@@ -1102,6 +1137,12 @@ namespace SimpleFPS
 		private bool CanCreateRampContinuationRoad(RoadCell[,] grid, RoadCell ramp, Vector2Int continuationPosition, RoadDirection directionFromRamp)
 		{
 			if (IsInBounds(grid, continuationPosition) == false)
+				return false;
+
+			// A ramp's continuation must be a normal road cell, not a map-edge cell. Edge cells along the
+			// boundary are reserved for exits or simple-blocker fill; auto-placing a continuation road there
+			// would leave a stub against the map edge and break tile-socket matching.
+			if (IsEdgeCell(grid.GetLength(0), grid.GetLength(1), continuationPosition))
 				return false;
 
 			RoadCell continuation = grid[continuationPosition.x, continuationPosition.y];
