@@ -331,8 +331,8 @@ namespace SimpleFPS
 				return 1f;
 
 			float miss = distance < min ? min - distance : distance - max;
-			float tolerance = Mathf.Max(1f, max - min);
-			return Mathf.Clamp01(1f - miss / tolerance);
+			float falloffDistance = Mathf.Max(1f, SearchRadius);
+			return -Mathf.Min(miss / falloffDistance, 4f);
 		}
 
 		private void CacheNearbyAllies(Survivor survivor, Vector3 currentPosition)

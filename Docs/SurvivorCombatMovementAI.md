@@ -132,6 +132,7 @@ Preferred range scoring:
 - If too close, prefer candidate points farther from the enemy.
 - If too far, prefer candidate points closer to the enemy.
 - If inside range, avoid moving only for range reasons.
+- If far outside the preferred range, the score stays directional instead of flattening out. A candidate that moves closer to the preferred range is better even if it cannot reach the preferred range in one reposition.
 
 ## Ally Spacing
 

@@ -55,6 +55,8 @@ namespace SimpleFPS
 			Camera eventCamera = mapView.GetEventCamera();
 			HandleKeyboardSelection(gameplay, runner);
 			HandleKeyboardCommands(gameplay, runner);
+			if (HandleKeyboardPossess(mapView, gameplay, runner))
+				return;
 
 			if (mouse.leftButton.wasPressedThisFrame)
 			{
@@ -334,6 +336,30 @@ namespace SimpleFPS
 
 			if (next != null)
 				AddSelection(next, gameplay, runner);
+		}
+
+		private bool HandleKeyboardPossess(GameMapView mapView, Gameplay gameplay, NetworkRunner runner)
+		{
+			if (_selected.Count != 1)
+				return false;
+
+			var keyboard = Keyboard.current;
+			if (keyboard == null || keyboard.spaceKey.wasPressedThisFrame == false)
+				return false;
+
+			Survivor target = null;
+			foreach (var survivor in _selected)
+			{
+				target = survivor;
+				break;
+			}
+
+			if (target == null || IsSelectable(target, gameplay, runner) == false)
+				return false;
+
+			gameplay.RequestSwitchActiveCharacter(target.CharacterIndex);
+			mapView.CloseMap();
+			return true;
 		}
 
 		private void HandleKeyboardCommands(Gameplay gameplay, NetworkRunner runner)

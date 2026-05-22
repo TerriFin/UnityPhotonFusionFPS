@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: RoadGenerationSettings
   m_EditorClassIdentifier: 
   RequestedExitCount: 5
-  MinExitSpacing: 6
+  MinExitSpacing: 5
   MinRoadSpacing: 1
   MaxRoadSpacing: 2
   PreventSolidRoadBlocks: 1

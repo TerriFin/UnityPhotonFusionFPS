@@ -13,6 +13,5 @@ namespace SimpleFPS
 		public int SeedOffset = 10000;
 		public bool FillMapEdgesWithBlockingBuildings = true;
 		public bool FillRemainingEmptyCellsWithBlockingBuildings = true;
-		public bool ReplaceCornerLedgesWithBlockingBuildings = true;
 	}
 }

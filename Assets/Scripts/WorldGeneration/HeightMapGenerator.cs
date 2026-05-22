@@ -370,15 +370,58 @@ namespace SimpleFPS
 			List<List<Vector2Int>> acceptedLedgePaths)
 		{
 			var cells = new List<Vector2Int>();
+			int mapEdgeEndpointClearance = Mathf.Max(3, Mathf.Max(0, Settings.MinCellsBetweenHeightChanges) + 1);
 
 			foreach (Vector2Int cell in region.Cells)
 			{
-				if (IsOnBoundarySide(cell, region, side) && IsValidLedgePathCell(cell, region, regionCells, null, acceptedLedgePaths))
-					cells.Add(cell);
+				if (IsOnBoundarySide(cell, region, side) == false)
+					continue;
+				if (IsValidLedgePathCell(cell, region, regionCells, null, acceptedLedgePaths) == false)
+					continue;
+
+				// Defensive: a candidate that would become a map-edge endpoint of the new path must
+				// not be the same cell as — nor visually crowd — any previously accepted path's
+				// map-edge endpoint. MinCellsBetweenHeightChanges already keeps the new path's whole
+				// length away from old path cells, but we apply an extra clearance specifically
+				// against old endpoints so two ledges never appear to share the same edge tile.
+				if (IsEdgeCell(EffectiveWidth, EffectiveHeight, cell)
+					&& IsNearAcceptedMapEdgeEndpoint(cell, acceptedLedgePaths, mapEdgeEndpointClearance))
+					continue;
+
+				cells.Add(cell);
 			}
 
 			RemoveShortBoundaryRuns(cells, side);
 			return cells;
+		}
+
+		private bool IsNearAcceptedMapEdgeEndpoint(
+			Vector2Int cell,
+			List<List<Vector2Int>> acceptedLedgePaths,
+			int clearance)
+		{
+			int width = EffectiveWidth;
+			int height = EffectiveHeight;
+			for (int i = 0; i < acceptedLedgePaths.Count; i++)
+			{
+				List<Vector2Int> path = acceptedLedgePaths[i];
+				if (path.Count == 0)
+					continue;
+
+				Vector2Int first = path[0];
+				Vector2Int last = path[path.Count - 1];
+				if (IsEdgeCell(width, height, first) && ChebyshevDistance(cell, first) < clearance)
+					return true;
+				if (IsEdgeCell(width, height, last) && ChebyshevDistance(cell, last) < clearance)
+					return true;
+			}
+
+			return false;
+		}
+
+		private int ChebyshevDistance(Vector2Int a, Vector2Int b)
+		{
+			return Mathf.Max(Mathf.Abs(a.x - b.x), Mathf.Abs(a.y - b.y));
 		}
 
 		private void RemoveShortBoundaryRuns(List<Vector2Int> cells, BoundarySide side)
@@ -677,7 +720,7 @@ namespace SimpleFPS
 			candidate = CloneHeights(heights);
 			var regionCells = new HashSet<Vector2Int>(region.Cells);
 			var pathCells = new HashSet<Vector2Int>(ledgePath);
-			var raisedCells = ChooseRaisedComponent(region, regionCells, pathCells);
+			var raisedCells = ChooseRaisedComponent(region, regionCells, pathCells, heights);
 			if (raisedCells == null)
 				return false;
 
@@ -689,13 +732,21 @@ namespace SimpleFPS
 			foreach (Vector2Int cell in raisedCells)
 				candidate[cell.x, cell.y] = newHeight;
 
+			// Safety net: raising must never produce a >1 level difference against any neighbor (cardinal
+			// or diagonal). ChooseRaisedComponent already filters out components that border a lower
+			// region outside the current region, but if a future change weakens that filter this check
+			// still rejects the candidate instead of silently emitting a cliff.
+			if (ViolatesHeightAdjacencyRule(candidate, raisedCells))
+				return false;
+
 			return true;
 		}
 
 		private HashSet<Vector2Int> ChooseRaisedComponent(
 			HeightRegion region,
 			HashSet<Vector2Int> regionCells,
-			HashSet<Vector2Int> pathCells)
+			HashSet<Vector2Int> pathCells,
+			int[,] heights)
 		{
 			List<HashSet<Vector2Int>> components = CollectSplitComponents(region, regionCells, pathCells);
 			if (components.Count < 2)
@@ -711,6 +762,14 @@ namespace SimpleFPS
 				if (component.Count < minimumArea || remaining < minimumArea)
 					continue;
 
+				// Skip components whose cells touch a lower region beyond the current region's border.
+				// Raising those cells to region.HeightLevel + 1 would put them next to a cell at
+				// region.HeightLevel - 1 (or lower) and produce a 2+ level jump — the "way too high"
+				// cliff the user reported. Subsequent passes can split the same region with a different
+				// path that places the raised side on the safe interior.
+				if (IsComponentAdjacentToLowerRegion(component, regionCells, heights, region.HeightLevel))
+					continue;
+
 				if (component.Count < bestSize)
 				{
 					best = component;
@@ -719,6 +778,47 @@ namespace SimpleFPS
 			}
 
 			return best;
+		}
+
+		private bool IsComponentAdjacentToLowerRegion(
+			HashSet<Vector2Int> component,
+			HashSet<Vector2Int> regionCells,
+			int[,] heights,
+			int regionHeightLevel)
+		{
+			foreach (Vector2Int cell in component)
+			{
+				for (int i = 0; i < NeighborOffsets.Length; i++)
+				{
+					Vector2Int neighbor = cell + NeighborOffsets[i];
+					if (IsInBounds(heights, neighbor) == false)
+						continue;
+					if (regionCells.Contains(neighbor))
+						continue;
+					if (heights[neighbor.x, neighbor.y] < regionHeightLevel)
+						return true;
+				}
+			}
+
+			return false;
+		}
+
+		private bool ViolatesHeightAdjacencyRule(int[,] heights, HashSet<Vector2Int> raisedCells)
+		{
+			foreach (Vector2Int cell in raisedCells)
+			{
+				int height = heights[cell.x, cell.y];
+				for (int i = 0; i < NeighborOffsets.Length; i++)
+				{
+					Vector2Int neighbor = cell + NeighborOffsets[i];
+					if (IsInBounds(heights, neighbor) == false)
+						continue;
+					if (height - heights[neighbor.x, neighbor.y] > 1)
+						return true;
+				}
+			}
+
+			return false;
 		}
 
 		private List<HashSet<Vector2Int>> CollectSplitComponents(

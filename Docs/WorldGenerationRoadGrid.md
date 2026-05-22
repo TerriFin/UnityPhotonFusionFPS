@@ -367,7 +367,7 @@ Pick edge cells for exits.
 Rules:
 
 - Try to place `RequestedExitCount`.
-- Do not place exits directly next to each other on the same edge.
+- Do not place exits within `MinExitSpacing` grid cells of each other, even when they are on different map edges near the same corner.
 - Prefer positions that point inward to at least one viable interior cell.
 - Avoid corners on very small maps unless needed.
 - If constraints make the requested count impossible, reduce the exit count and log/debug-report it.
@@ -655,7 +655,7 @@ Special structures that connect height levels belong to the height/ledge system,
 4. `RoadGenerationSettings` stores road-specific exit count, spacing settings, local density limits, density behavior, and tile set.
 5. `RoadGridGenerator` currently owns run-specific map size, seed, generation, and prefab instantiation. After height generation is implemented, shared run-specific values move to `HeightMapGenerator`, and `RoadGridGenerator` keeps fallback values for flat/editor generation.
 6. Empty grid initialization is implemented.
-7. Exit placement uses randomized candidate selection with same-edge spacing and graceful count reduction.
+7. Exit placement uses randomized candidate selection with grid-distance spacing and graceful count reduction.
 8. Exit connection uses randomized A* toward the existing connected road network.
 9. Optional extra roads are controlled by `ExtraRoadDensity`; mid density prioritizes complete road-to-road connectors, late density can add short stubs, and at `1.0` every legal connected road cell is filled.
 10. Sockets are derived from the carved road graph.
@@ -688,7 +688,7 @@ These are important because procedural generation bugs are hard to reason about 
 
 - Generates a connected road network from configurable map size.
 - Places up to the configured number of edge exits.
-- Avoids directly adjacent exits.
+- Avoids exits closer than `MinExitSpacing`, including exits on adjacent map edges near corners.
 - Connects every placed exit to the same road network.
 - Avoids adjacent unconnected parallel road strips where possible.
 - Leaves empty cells for future buildings.

@@ -94,10 +94,11 @@ A ledge cell is a cell occupied by the height transition itself.
 
 Ledge cells:
 
-- cannot contain buildings,
+- cannot receive buildings during normal footprint placement,
 - cannot contain normal flat road tiles,
-- cannot contain simple filler blockers,
+- cannot contain simple filler blockers during normal placement,
 - can be replaced by the road generator with a height-change road tile,
+- can later be replaced by the building generator with a simple blocking building only if the ledge is buried inside blocking mass,
 - are placed by the height generator before road generation.
 
 The authored ledge prefabs use this convention:
@@ -375,7 +376,7 @@ Until either `PreferredLedgeCount` ledges have been placed or `MaxGenerationAtte
 3. Pathfind a connected line between those region-boundary sides. The path expansion considers all eight cardinal and diagonal neighbors, so a single ledge can run on a diagonal or zig-zag. Diagonal steps into or out of a map-edge cell are rejected, because boundary ledge tiles are only authored as Straight and a diagonal step at the edge would force the endpoint cell into a corner shape that the boundary ledge set cannot represent. Steps that would make the new cell cardinally adjacent to any prior path cell other than the immediate predecessor are also rejected, because that pattern is the path doubling back through a 1-cell gap. The corner ledge tile set can render U-turns only when the parallel runs are at least 2 cells apart; tighter notches/bumps would leave malformed corner pieces.
 4. Reject the path if it comes too close to any previously accepted ledge path.
 5. Treat the accepted path as the low-side ledge cells.
-6. Temporarily remove the path from the region, find the connected areas it creates, and raise one valid area by one height level.
+6. Temporarily remove the path from the region, find the connected areas it creates, and raise one valid area by one height level. Reject any candidate component whose cells are cardinally or diagonally adjacent to a cell outside the current region with `height < region.HeightLevel`. Raising such a component would put a `H + 1` cell next to an `H - 1` cell (typically a previous pass's path) and create a 2-level cliff. If both components touch a lower region, the candidate path is rejected and a different path is tried so the raised side ends up on the safe interior of the region.
 7. Validate that both resulting regions are still usable.
 8. Count how many cells in the accepted path become road-replaceable straight ledges (cardinal-step cells with valid low/high sides). Reject the path if that count is below `MinRoadReplaceableLedgesPerHeightRegion`.
 
@@ -401,6 +402,8 @@ The path start and end can be on:
 This allows long splits, corner cuts, bays, peninsulas, and curved ledges that enter and leave through the same side. Same-edge paths must start and end far enough apart to make a usable split.
 
 Candidate start/end points are chosen inside one contiguous same-height plateau. Existing ledges split the map into separate plateau regions, so a new ledge is never pathfound through a different plateau or across an existing ledge. Boundary sides with only a one-cell usable run are culled, which prevents tiny mouths/entrances from being used as ledge endpoints.
+
+Endpoint candidates that sit on the map edge get an additional clearance check: they are rejected if they are within `max(3, MinCellsBetweenHeightChanges + 1)` chebyshev cells of any previously accepted path's map-edge endpoint. This is on top of the global `MinCellsBetweenHeightChanges` spacing, and is what prevents two different ledges from sharing the same boundary edge tile or visually crowding into the same one.
 
 ### 3. Cull Unusable Features
 

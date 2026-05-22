@@ -19,7 +19,7 @@ MonoBehaviour:
   MinUsableRegionHeight: 3
   MinUsableRegionArea: 9
   LedgePathRandomness: 1
-  MaxGenerationAttempts: 12500
+  MaxGenerationAttempts: 10000
   DefaultLedgeRepeatCooldownDistance: 2
   MinRoadReplaceableLedgesPerHeightRegion: 3
   LedgeTiles: {fileID: 11400000, guid: 9259fe944509b0843933aaf32f0c2114, type: 2}

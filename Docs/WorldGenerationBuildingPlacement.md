@@ -250,7 +250,6 @@ BuildingPlacementSettings
     int SeedOffset;
     bool FillMapEdgesWithBlockingBuildings;
     bool FillRemainingEmptyCellsWithBlockingBuildings;
-    bool ReplaceCornerLedgesWithBlockingBuildings;
 }
 ```
 
@@ -262,7 +261,6 @@ RepeatCooldownDistance: 2
 SeedOffset: 10000
 FillMapEdgesWithBlockingBuildings: true
 FillRemainingEmptyCellsWithBlockingBuildings: true
-ReplaceCornerLedgesWithBlockingBuildings: true
 ```
 
 `LargeBuildingPreference` controls how aggressively the placer tries larger footprints first:
@@ -473,21 +471,38 @@ Rules:
 
 This guarantees there are no unintended walkable voids behind buildings.
 
-### 7. Replace Dead-End Ledge Cells
+### 7. Replace Buried Ledge Cells
 
-After all buildings are placed, scan ledge cells for adjacency to simple blocking buildings.
+After all buildings are placed, scan remaining ledge cells and remove only the ledges that have become part of sealed blocking mass.
 
-A ledge whose across-side neighbor is occupied by a `SimpleBlocking` building is a dead-end: you can walk along the ledge but the area beyond is sealed off, creating a "tunnel that leads to nowhere" or a visually awkward ledge that only one side can ever reach. To handle this, the generator:
+This pass runs after the road generator has already decided which straight ledges become height-change roads. Height-change ramps still carry `IsLedge = true` because the road generator promotes the ledge in place, so every cleanup check must also require `IsHeightChangeRoad == false`.
+
+The intended flow is:
+
+1. `HeightMapGenerator` creates ledges according to height constraints.
+2. `RoadGridGenerator` may override individual straight, road-replaceable ledge pieces with height-change roads. A ramp is kept only if the road generator can also place a road cell on the opposite side. If that continuation cannot be made, the ramp candidate is reverted back to the original ledge.
+3. `BuildingPlacementGenerator` replaces non-boundary ledges with simple blocking buildings only when all four cardinal neighbors are either simple blocking buildings, height-change roads, or other non-ramp ledges, and at least one neighbor is a simple blocking building or height-change road.
+4. Inner/outer corner ledges receive a pit check. If the two low/down-side cardinal neighbors of the corner are both sealed by simple blocking buildings, height-change roads, or boundary ledge pieces, the corner is replaced by a simple blocking building.
+5. Boundary ledges are replaced last, after pit-corner cleanup has added any new blockers. A boundary ledge is replaced only when it is surrounded by sealed neighbors: exactly three cardinal neighbors are simple blocking buildings or height-change roads, and the fourth side is outside the map.
+
+Ledges that touch a normal road, a complex building, or an open/unfilled cell on any cardinal side are preserved. Height-change roads are the exception: a ramp cell itself is never replaced, but it counts as a sealed neighbor for adjacent ledges. This prevents ramp-adjacent ledge edge pieces from creating small unreachable pockets.
 
 The pass runs in two phases against the live grid:
 
-**Phase 1 — non-boundary ledges.** Iterate every cell where `IsLedge == true` and `IsHeightChangeRoad == false` and the cell is not a boundary ledge. Height-change ramps still carry `IsLedge=true` because the road generator promotes the ledge in place rather than clearing the flag, so this guard is what prevents the pass from accidentally replacing a ramp with a blocker. For each:
-- **Straight ledges:** check only the high-side and low-side neighbors (the two cells perpendicular to the ledge's run direction, derived from `WorldHeightCell.HighDirection`). Flag for replacement if **either** is a `SimpleBlocking` building in the current grid. The run-direction neighbors are other ledges in the same band and are intentionally ignored, which is what makes this phase non-cascading among itself: the perpendicular cells are always high- or low-side cells, never other ledges.
-- **Corner shapes:** when `ReplaceCornerLedgesWithBlockingBuildings` is enabled, fall back to "any of the four cardinal neighbors is a blocker". When disabled, inner/outer corner ledges are preserved even if adjacent blockers would otherwise replace them.
+**Phase 1 — non-boundary ledges.** Iterate every cell where `IsLedge == true`, `IsHeightChangeRoad == false`, and the height snapshot says the cell is not a boundary ledge. Replace the cell only if every in-bounds cardinal neighbor is a `SimpleBlocking` building, a height-change road, or another non-ramp ledge, with at least one `SimpleBlocking` or height-change-road neighbor.
 
-**Phase 2 — boundary ledges.** Iterate the remaining boundary ledges. Phase 1 has already finished, so any non-boundary ledges that needed replacing are now blockers in the grid, and the boundary ledge correctly sees its inward neighbor as walled off if that neighbor was a dead-end interior ledge. For each boundary ledge:
-- Count the immediate cardinal neighbors that are `SimpleBlocking` buildings. Out-of-bounds and ramps (`IsHeightChangeRoad`) do not count.
-- Replace when this count is **more than two**. The map-edge fill always seals up to two cardinal sides of a boundary ledge with blockers, so the `> 2` threshold means a third immediate neighbor must also be a blocker before the ledge is considered fully sealed in. Do not look past adjacent cells: only immediate neighbors are inspected.
+**Phase 2 — pit-corner check.** After buried interior ledges are resolved, scan inner/outer corner ledges. Corner ledges have two low/down-side cardinal directions, derived from their rotation:
+
+```text
+rotation 0 -> down sides South + West
+rotation 1 -> down sides West + North
+rotation 2 -> down sides North + East
+rotation 3 -> down sides East + South
+```
+
+If both down-side neighbors are sealed by simple blocking buildings, height-change roads, or boundary ledge pieces, replace the corner ledge with a simple blocker. Repeat this scan until no more corners are replaced. This closes tiny pits formed by diagonal ledge corners facing blocker/ramp/edge-ledge mass without deleting corner ledges that still open toward playable space.
+
+**Phase 3 — boundary ledges.** Iterate the remaining boundary ledges after phase 2 has updated the grid. Replace a boundary ledge only when it has exactly one out-of-bounds cardinal side and the other three cardinal neighbors are sealed by `SimpleBlocking` buildings or height-change roads. Running this pass last lets edge ledges see blockers created by pit-corner cleanup.
 
 When a ledge is flagged for replacement, the generator:
 1. Picks a `1x1` simple blocker from `BuildingSet` (preferring one without a `RequiresRoad` side, since the replacement is interior fill, not an edge facade).
@@ -728,7 +743,7 @@ Simple blocking buildings should normally remain non-enterable and act as solid 
 11. Place larger complex buildings according to `LargeBuildingPreference`.
 12. Place smaller complex buildings.
 13. Fill remaining empty cells with simple blockers.
-14. Replace dead-end ledge cells (ledges with a simple-blocking neighbor) with simple blocker buildings and suppress the corresponding ledge prefab on the height generator.
+14. Replace buried ledge cells with simple blocker buildings and suppress the corresponding ledge prefab on the height generator.
 15. Instantiate building prefabs under a generated building root.
 16. Add gizmos for complex buildings, simple blockers, and rejected/empty cells.
 

@@ -225,6 +225,17 @@ namespace SimpleFPS
 			RPC_RequestMapCombatSettings(maskLow, maskHigh, enabled);
 		}
 
+		public void RequestSwitchActiveCharacter(int targetCharacterIndex)
+		{
+			if (HasStateAuthority)
+			{
+				SwitchToCharacter(Runner.LocalPlayer, targetCharacterIndex);
+				return;
+			}
+
+			RPC_RequestSwitchActiveCharacter(targetCharacterIndex);
+		}
+
 		public void CharacterKilled(PlayerRef killerPlayerRef, PlayerRef ownerRef, int characterIndex, EWeaponType weaponType, bool isCriticalKill)
 		{
 			if (HasStateAuthority == false)
@@ -279,6 +290,34 @@ namespace SimpleFPS
 			if (next < 0 || next == data.ActiveCharacterIndex)
 				return;
 
+			ApplyActiveCharacterSwitch(owner, data, next);
+		}
+
+		public void SwitchToCharacter(PlayerRef owner, int targetCharacterIndex)
+		{
+			if (HasStateAuthority == false)
+				return;
+
+			if (_lastSwitchTicks.TryGetValue(owner, out int lastTick) && Runner.Tick - lastTick < SwitchCooldownTicks)
+				return;
+
+			if (PlayerData.TryGet(owner, out var data) == false)
+				return;
+
+			if (targetCharacterIndex < 0 || targetCharacterIndex >= data.CharacterCount)
+				return;
+
+			if ((data.AliveCharacterMask & (1L << targetCharacterIndex)) == 0)
+				return;
+
+			if (targetCharacterIndex == data.ActiveCharacterIndex)
+				return;
+
+			ApplyActiveCharacterSwitch(owner, data, targetCharacterIndex);
+		}
+
+		private void ApplyActiveCharacterSwitch(PlayerRef owner, PlayerData data, int nextIndex)
+		{
 			var previousCharacter = GetSurvivor(owner, data.ActiveCharacterIndex);
 			if (previousCharacter != null)
 			{
@@ -286,7 +325,7 @@ namespace SimpleFPS
 				previousCharacter.SetIdleAI();
 			}
 
-			data.ActiveCharacterIndex = next;
+			data.ActiveCharacterIndex = nextIndex;
 			PlayerData.Set(owner, data);
 			UpdatePlayerObject(owner, data);
 
@@ -798,6 +837,15 @@ namespace SimpleFPS
 
 			long selectedCharacterMask = ((long)(uint)selectedMaskHigh << 32) | (uint)selectedMaskLow;
 			SurvivorAICommands.ApplySelectedTeamCombatSettings(info.Source, selectedCharacterMask, enabled);
+		}
+
+		[Rpc(RpcSources.All, RpcTargets.StateAuthority, Channel = RpcChannel.Reliable)]
+		private void RPC_RequestSwitchActiveCharacter(int targetCharacterIndex, RpcInfo info = default)
+		{
+			if (IsValidMapOrderSource(info.Source) == false)
+				return;
+
+			SwitchToCharacter(info.Source, targetCharacterIndex);
 		}
 
 		private bool IsValidMapOrderSource(PlayerRef source)

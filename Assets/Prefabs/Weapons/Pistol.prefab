@@ -666,7 +666,7 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 65
   MaxHitDistance: 100
-  BulletSpeed: 125
+  BulletSpeed: 175
   GravityScale: 0.95
   MaxClipAmmo: 12
   StartAmmo: 99999

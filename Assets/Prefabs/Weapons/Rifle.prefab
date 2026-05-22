@@ -1039,12 +1039,12 @@ MonoBehaviour:
   Damage: 20
   FireRate: 600
   ProjectilesPerShot: 1
-  Dispersion: 0.8
+  Dispersion: 0.65
   HitMask:
     serializedVersion: 2
     m_Bits: 65
   MaxHitDistance: 200
-  BulletSpeed: 175
+  BulletSpeed: 225
   GravityScale: 0.9
   MaxClipAmmo: 30
   StartAmmo: 90

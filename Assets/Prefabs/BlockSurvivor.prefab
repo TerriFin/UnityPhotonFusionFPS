@@ -1289,7 +1289,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   DefaultFollowStoppingDistance: 2
   DefaultMoveStoppingDistance: 1.25
-  DirectFallbackDistance: 1
+  DirectFallbackDistance: 0.5
   MaxYawDegreesPerTick: 8
   IdleLookRotationIntervalMin: 6
   IdleLookRotationIntervalMax: 10
@@ -1398,10 +1398,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2478dd1f95a716748a150702958df3c7, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  ReevaluateInterval: 4
+  ReevaluateInterval: 3.5
   CandidateCount: 5
-  SearchRadius: 8
-  NavMeshSampleDistance: 2.5
+  SearchRadius: 10
+  NavMeshSampleDistance: 6
   StoppingDistance: 0.25
   MinimumMoveDistance: 1
   DestinationRefreshDistance: 0.75
@@ -1420,12 +1420,12 @@ MonoBehaviour:
   PreferredRangeWeight: 2.75
   MoveCostWeight: 0.25
   AllySpacingRadius: 2.5
-  PistolPreferredRangeMin: 2
-  PistolPreferredRangeMax: 5
+  PistolPreferredRangeMin: 3
+  PistolPreferredRangeMax: 7
   ShotgunPreferredRangeMin: 1
   ShotgunPreferredRangeMax: 4
   RiflePreferredRangeMin: 5
-  RiflePreferredRangeMax: 8
+  RiflePreferredRangeMax: 12
 --- !u!114 &1558554886111920215
 MonoBehaviour:
   m_ObjectHideFlags: 0

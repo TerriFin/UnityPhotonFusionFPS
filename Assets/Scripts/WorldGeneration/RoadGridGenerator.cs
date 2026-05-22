@@ -363,17 +363,20 @@ namespace SimpleFPS
 
 		private bool IsExitCandidateAllowed(ExitPlacement candidate, List<ExitPlacement> selected)
 		{
+			int minSpacing = Mathf.Max(1, Settings.MinExitSpacing);
 			for (int i = 0; i < selected.Count; i++)
 			{
 				ExitPlacement other = selected[i];
-				if (candidate.Edge != other.Edge)
-					continue;
-
-				if (Mathf.Abs(candidate.EdgeCoordinate - other.EdgeCoordinate) < Mathf.Max(1, Settings.MinExitSpacing))
+				if (GetExitGridDistance(candidate.Position, other.Position) < minSpacing)
 					return false;
 			}
 
 			return true;
+		}
+
+		private static int GetExitGridDistance(Vector2Int a, Vector2Int b)
+		{
+			return Mathf.Max(Mathf.Abs(a.x - b.x), Mathf.Abs(a.y - b.y));
 		}
 
 		private void CarveExit(RoadCell[,] grid, ExitPlacement exit)

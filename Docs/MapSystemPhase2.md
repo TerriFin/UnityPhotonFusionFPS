@@ -211,6 +211,12 @@ While the map is open, `Shift` and `Ctrl` are local selection shortcuts:
 - If multiple survivors are selected, `Shift`/`Ctrl` do nothing.
 - Cycling skips dead, hidden/off-map, enemy, and active possessed survivors.
 
+While the map is open with exactly one selectable survivor selected, `Space` possesses that survivor and closes the map:
+
+- The request goes through `Gameplay.RequestSwitchActiveCharacter(targetCharacterIndex)`, which validates ownership, alive state, and the same switch cooldown the in-game `Shift`/`Ctrl` cycling uses.
+- The map closes immediately after the request is dispatched so the player can drive the newly possessed survivor without a second key press.
+- If zero or multiple survivors are selected, `Space` does nothing on the map and is consumed only when the possess actually fires.
+
 While the map is open, `I` and `O` apply non-combat AI setting commands to the currently selected survivors:
 
 - `I`: disable all current optional non-combat/combat-activation settings for selected inactive survivors.
