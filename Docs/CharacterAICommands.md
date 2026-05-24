@@ -235,14 +235,16 @@ When a group command resolves to a static-destination assignment (move or assign
 - The command service sorts the affected survivors by `CharacterIndex` and assigns them lane indices `0, +1, -1, +2, -2, ...` (centre, then alternating outward).
 - All lane-spread tuning lives on `SurvivorAICommandSettings`, which is the serialized field on the `Gameplay` GameObject next to `CommandRadius`/`AssignedAreaMinRadius`:
   - `LaneSpacing` (default `0.9 m`) — meters between adjacent lanes. Set to `0` to disable the spread entirely.
+  - `MaxLaneOffset` (default `2.5 m`) — maximum absolute sideways offset from the real path. This prevents very large groups from spreading into absurdly wide lines. Set to `0` or less to disable the cap.
   - `LaneOffsetTaperDistance` (default `4 m`) — fade the offset to `0` as the survivor approaches the final destination, so defending / arriving groups still converge instead of stopping in a fan shape.
   - `LaneOffsetCornerSoftenDistance` (default `1.5 m`) — soften the offset near the current path corner, so a perpendicular shove doesn't make a survivor cut a corner from the inside.
   - `LaneOffsetSampleDistance` (default `1.0 m`) — `NavMesh.SamplePosition` clamp distance applied to the offset target so a sideways shove never pushes the steering target into a wall.
-- The assignment helper writes all four values onto `CharacterNavigator` each time it installs a new input source. The navigator carries them as runtime state (the prefab adds the navigator via `AddComponent` at startup, so these aren't authored per-prefab — retuning the Gameplay settings is the only place the values are edited).
-- `CharacterNavigator.TryGetSteeringTarget` applies the lateral offset perpendicular to the current path segment direction, then `NavMesh.SamplePosition` clamps it back onto walkable mesh. Where the corridor narrows the offset gets clamped and the group files through; once the corridor widens again they spread back out automatically.
+  - `ValidateLaneOffsetPath` (default `true`) — after the offset target is sampled onto the NavMesh, `CharacterNavigator` does one cheap `NavMesh.Raycast` from the survivor to that offset target. If that straight NavMesh segment is blocked, it ignores the lane offset for that steering query and uses the original path corner.
+- The assignment helper writes the lane values onto `CharacterNavigator` each time it installs a new input source. The navigator carries them as runtime state (the prefab adds the navigator via `AddComponent` at startup, so these aren't authored per-prefab — retuning the Gameplay settings is the only place the values are edited).
+- `CharacterNavigator.TryGetSteeringTarget` applies the lateral offset perpendicular to the current path segment direction, caps it by `MaxLaneOffset`, then `NavMesh.SamplePosition` clamps it back onto walkable mesh. Where the corridor narrows the offset gets clamped or rejected and the group files through; once the corridor widens again they spread back out automatically.
 - `SurvivorAICommand` carries an `AllowsLaneSpread` flag. `MoveTo` and `AssignedArea` set it to `true`; `Idle` and `Follow` leave it `false`, and the assignment helper resets the navigator lane to `0` in those cases so a previous group's lane assignment never leaks into a follow target's path. Single-target commands also reset to `0` automatically because the group size is `1`.
 
-This is intentionally cheap: one perpendicular vector + one `NavMesh.SamplePosition` per character per steering query, no extra state beyond four floats on the navigator and one shared sort buffer in the command service.
+This is intentionally cheap: one perpendicular vector, one `NavMesh.SamplePosition`, and optionally one `NavMesh.Raycast` per lane-spread steering query. It avoids extra path calculations while still preventing most indoor offsets that would make KCC steer through props.
 
 ## Possession Rules
 

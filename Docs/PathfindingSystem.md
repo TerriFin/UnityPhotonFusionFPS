@@ -177,6 +177,8 @@ input.MoveDirection = Vector2.up;
 
 If the steering target is extremely close, advance to the next corner or stop.
 
+Group move and assigned-area orders can apply a lateral lane offset to the current path corner so squads spread across roads instead of stacking into one line. The lane offset is still only a steering target; it does not create a separate path. To keep this usable indoors, `CharacterNavigator` caps the total lane offset and can reject an offset target with a single `NavMesh.Raycast` if the straight NavMesh segment from the survivor to the offset target crosses a blocked edge. This is much cheaper than recalculating a separate path per survivor lane.
+
 When combat and path steering both want to control `LookRotationDelta`, direct visible combat target aim should win. The movement AI should still emit movement input. Because KCC movement is relative to the current look rotation, movement AI should convert the desired world path direction into local `MoveDirection` after applying the combat look delta. If there is no direct target with line of fire, use the steering target for look rotation as usual. Do not use noise, bullet-impact, or last-known-position memories as firing targets while moving; those remain investigation look targets.
 
 ## Survivor Integration

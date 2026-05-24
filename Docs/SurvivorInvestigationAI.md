@@ -69,6 +69,8 @@ Sound and bullet-impact stimuli are immediate prompts, not remembered investigat
 
 This prevents stale combat sounds from pulling survivors around later after the situation has changed.
 
+Likewise, a survivor that sees or shoots at an enemy while still travelling to a player-issued move destination, follow target, or first-time assigned-area entry point must not store that enemy as a delayed lost-combat investigation. The survivor may aim and fire while moving, but once the direct combat moment is gone it should continue the player order and forget that old last-known enemy position.
+
 ## Behavior Flow
 
 1. Receive a suspicious target point from `CharacterSensor` or combat handoff.
@@ -120,6 +122,8 @@ Investigation cannot interrupt:
 - First-time travel into an assigned area.
 - A follow order.
 - Possessed player control.
+
+These blocked cases are not queued. The investigation is discarded instead of stored for later.
 
 If a survivor is already on an optional detour, such as investigating, returning from investigation, looting, or returning from loot, a fresh stimulus may replace that temporary behavior. This keeps gunshots and re-sighted enemies responsive even after the survivor has left its assigned area to check something out.
 

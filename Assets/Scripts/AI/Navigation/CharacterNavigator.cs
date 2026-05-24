@@ -19,9 +19,11 @@ namespace SimpleFPS
 		// the canonical tunable values live on SurvivorAICommandSettings (on the Gameplay GameObject).
 		// 0 lane offset = no spread, which is the default for non-group orders.
 		[HideInInspector] public float LaneOffset;
+		[HideInInspector] public float MaxLaneOffset = 2.5f;
 		[HideInInspector] public float LaneOffsetTaperDistance = 4f;
 		[HideInInspector] public float LaneOffsetCornerSoftenDistance = 1.5f;
 		[HideInInspector] public float LaneOffsetSampleDistance = 1.0f;
+		[HideInInspector] public bool ValidateLaneOffsetPath = true;
 
 		private NavMeshPath _path;
 		private NavMeshPath _scratchPath;
@@ -134,6 +136,8 @@ namespace SimpleFPS
 				: Mathf.Clamp01(distanceToCorner / LaneOffsetCornerSoftenDistance);
 
 			float effectiveOffset = LaneOffset * destinationTaper * cornerSoften;
+			if (MaxLaneOffset > 0f)
+				effectiveOffset = Mathf.Clamp(effectiveOffset, -MaxLaneOffset, MaxLaneOffset);
 			if (Mathf.Abs(effectiveOffset) <= 0.001f)
 				return corner;
 
@@ -143,9 +147,23 @@ namespace SimpleFPS
 
 			float sampleDistance = Mathf.Max(0.1f, LaneOffsetSampleDistance);
 			if (NavMesh.SamplePosition(candidate, out var hit, sampleDistance, AreaMask))
+			{
+				if (ValidateLaneOffsetPath && IsLaneOffsetPathBlocked(currentPosition, hit.position, sampleDistance))
+					return corner;
+
 				return hit.position;
+			}
 
 			return corner;
+		}
+
+		private bool IsLaneOffsetPathBlocked(Vector3 currentPosition, Vector3 offsetTarget, float sampleDistance)
+		{
+			float currentSampleDistance = Mathf.Max(0.1f, sampleDistance);
+			if (NavMesh.SamplePosition(currentPosition, out var currentHit, currentSampleDistance, AreaMask) == false)
+				return true;
+
+			return NavMesh.Raycast(currentHit.position, offsetTarget, out _, AreaMask);
 		}
 
 		public bool TryFindReachablePoint(Vector3 currentPosition, Vector3 targetPosition, out Vector3 reachablePoint)

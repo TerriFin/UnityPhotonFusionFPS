@@ -13,12 +13,12 @@ MonoBehaviour:
   m_Name: RoadGenerationSettings
   m_EditorClassIdentifier: 
   RequestedExitCount: 5
-  MinExitSpacing: 5
+  MinExitSpacing: 6
   MinRoadSpacing: 1
   MaxRoadSpacing: 2
   PreventSolidRoadBlocks: 1
   MaxRoadCellsIn3x3: 5
-  ExtraRoadDensity: 0.619
+  ExtraRoadDensity: 0.621
   StubRoadStartDensity: 0.452
   RequireDiagonalSpaceForStubRoads: 1
   MinConnectingRoadLength: 5

@@ -19,6 +19,9 @@ namespace SimpleFPS
 		// Meters between adjacent lanes when a group move / assigned-area order spreads survivors across
 		// the corridor. Three survivors at 0.9 produce lanes at -0.9, 0, +0.9.
 		public float LaneSpacing = 0.9f;
+		// Caps the total sideways offset so very large groups do not spread wider than useful roads.
+		// Set to 0 or less to leave the lane offset uncapped.
+		public float MaxLaneOffset = 2.5f;
 		// Within this distance to the final destination the lane offset fades to 0 so a group still
 		// converges on the goal instead of stopping in a fan shape.
 		public float LaneOffsetTaperDistance = 4f;
@@ -28,6 +31,9 @@ namespace SimpleFPS
 		// NavMesh.SamplePosition clamp distance applied to the offset steering target, so a sideways
 		// shove never pushes the target into a wall.
 		public float LaneOffsetSampleDistance = 1.0f;
+		// Reject offset steering targets when the straight NavMesh segment from the survivor to the
+		// offset target crosses a blocked edge. This keeps indoor lane spread from cutting through props.
+		public bool ValidateLaneOffsetPath = true;
 	}
 
 	public readonly struct SurvivorAICommand
@@ -428,12 +434,19 @@ namespace SimpleFPS
 				laneIndex = (orderIndex % 2 == 1) ? magnitude : -magnitude;
 			}
 
-			navigator.LaneOffset = laneIndex * spacing;
+			float laneOffset = laneIndex * spacing;
+			float maxLaneOffset = settings != null ? settings.MaxLaneOffset : 0f;
+			if (maxLaneOffset > 0f)
+				laneOffset = Mathf.Clamp(laneOffset, -maxLaneOffset, maxLaneOffset);
+
+			navigator.LaneOffset = laneOffset;
 			// Push the corridor-shape knobs onto the navigator each assignment so retuning the Gameplay
 			// settings takes effect without requiring a domain reload or prefab edit.
+			navigator.MaxLaneOffset = maxLaneOffset;
 			navigator.LaneOffsetTaperDistance = settings.LaneOffsetTaperDistance;
 			navigator.LaneOffsetCornerSoftenDistance = settings.LaneOffsetCornerSoftenDistance;
 			navigator.LaneOffsetSampleDistance = settings.LaneOffsetSampleDistance;
+			navigator.ValidateLaneOffsetPath = settings.ValidateLaneOffsetPath;
 		}
 
 		private static void ClearLaneOffset(Survivor survivor)

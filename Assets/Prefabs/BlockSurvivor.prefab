@@ -1595,16 +1595,16 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   ProximityAwarenessRadius: 5
-  NoiseAwarenessRadius: 16
-  BulletImpactAwarenessRadius: 8
+  NoiseAwarenessRadius: 14
+  BulletImpactAwarenessRadius: 4
   VisionDistance: 46
   VisionAngle: 90
   EyeHeight: 1.6
   VisionBlockers:
     serializedVersion: 2
     m_Bits: 1
-  DisableWhenPossessed: 1
-  SensorInterval: 0.2
+  DisableWhenPossessed: 0
+  SensorInterval: 0.3
   MemoryDuration: 2
   MaxKnownEntries: 8
   MaxKnownPickups: 8
@@ -1620,12 +1620,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7d6b88d197e3a6c4dbdd6e30317f1f0e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  DefaultFollowStoppingDistance: 2
-  DefaultMoveStoppingDistance: 0.5
-  DirectFallbackDistance: 0.75
+  DefaultFollowStoppingDistance: 3.5
+  DefaultMoveStoppingDistance: 0.25
+  DirectFallbackDistance: 0.5
   MaxYawDegreesPerTick: 8
-  IdleLookRotationIntervalMin: 4
-  IdleLookRotationIntervalMax: 10
+  IdleLookRotationIntervalMin: 3
+  IdleLookRotationIntervalMax: 9
   IdleLookMaxYawDegreesPerTick: 2
 --- !u!114 &8835636566654811975
 MonoBehaviour:
@@ -1639,8 +1639,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8f7a1d3b92d64e6f9c4a58e012bd7341, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  PickupStoppingDistance: 0.5
-  DirectFallbackDistance: 0.5
+  PickupStoppingDistance: 0.2
+  DirectFallbackDistance: 0.33
 --- !u!114 &3140107809847408399
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1653,7 +1653,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 61c928d4e57a4fb2b93f0a6c3857de10, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  InvestigationStoppingDistance: 1.25
+  InvestigationStoppingDistance: 0.25
   DirectFallbackDistance: 0.5
   AllyAlertRadius: 10
   LookDurationMin: 3
@@ -1673,12 +1673,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 47acbc7b6ad442ff935d926bfc730b22, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  AreaStoppingDistance: 1.25
-  PatrolPointStoppingDistance: 1
-  DirectFallbackDistance: 0.5
+  AreaStoppingDistance: 0.5
+  PatrolPointStoppingDistance: 0.5
+  DirectFallbackDistance: 0.75
   PatrolPointSampleAttempts: 8
   WaitDurationMin: 8
-  WaitDurationMax: 20
+  WaitDurationMax: 17
 --- !u!114 &-4394101241498737787
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1695,15 +1695,15 @@ MonoBehaviour:
   WeaponPriority: 020000000300000001000000
   FirstShotDelayMin: 0.5
   FirstShotDelayMax: 0.8
-  MovingFirstShotDelayMultiplier: 1.1
-  FollowupShotDelayMin: 0.3
-  FollowupShotDelayMax: 0.7
-  TriggerHoldDuration: 0.225
-  HorizontalAimErrorDegrees: 5
-  VerticalAimErrorDegrees: 3
+  MovingFirstShotDelayMultiplier: 1.2
+  FollowupShotDelayMin: 0.2
+  FollowupShotDelayMax: 0.6
+  TriggerHoldDuration: 0.185
+  HorizontalAimErrorDegrees: 6
+  VerticalAimErrorDegrees: 2.5
   AimTargetHeight: 1.4
   AimErrorRefreshInterval: 0.8
-  FireAlignmentAngle: 10
+  FireAlignmentAngle: 6
   MaxYawDegreesPerTick: 6
   MaxPitchDegreesPerTick: 5
 --- !u!114 &1772856214135365984
@@ -1731,14 +1731,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2478dd1f95a716748a150702958df3c7, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  ReevaluateInterval: 3.5
+  ReevaluateInterval: 3
   CandidateCount: 5
   SearchRadius: 10
-  NavMeshSampleDistance: 6
-  StoppingDistance: 0.2
+  NavMeshSampleDistance: 7
+  StoppingDistance: 0.1
   MinimumMoveDistance: 1
   DestinationRefreshDistance: 0.75
-  DirectFallbackDistance: 0.25
+  DirectFallbackDistance: 0.2
   RequiredScoreImprovement: 0.2
   InitialReevaluationStaggerMax: 0.75
   ReevaluateIntervalJitter: 0.25

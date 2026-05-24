@@ -257,8 +257,7 @@ namespace SimpleFPS
 			// Transfer control if the active character just died.
 			if (victimData.ActiveCharacterIndex == characterIndex)
 			{
-				victimData.ActiveCharacterIndex = FindNextAliveCharacter(
-					victimData.AliveCharacterMask, victimData.CharacterCount, characterIndex, 1);
+				victimData.ActiveCharacterIndex = FindClosestAliveCharacter(ownerRef, victimData, characterIndex);
 				// -1 means no alive characters remain — the player has lost.
 			}
 
@@ -624,6 +623,48 @@ namespace SimpleFPS
 					return candidate;
 			}
 			return -1;
+		}
+
+		private int FindClosestAliveCharacter(PlayerRef owner, PlayerData data, int deadCharacterIndex)
+		{
+			if (data.AliveCharacterMask == 0 || data.CharacterCount <= 0)
+				return -1;
+
+			var deadCharacter = GetSurvivor(owner, deadCharacterIndex);
+			if (deadCharacter == null)
+				return FindNextAliveCharacter(data.AliveCharacterMask, data.CharacterCount, deadCharacterIndex, 1);
+
+			Vector3 origin = deadCharacter.transform.position;
+			int closestIndex = -1;
+			float closestDistanceSqr = float.MaxValue;
+
+			for (int i = 0; i < data.CharacterCount; i++)
+			{
+				if ((data.AliveCharacterMask & (1L << i)) == 0)
+					continue;
+
+				var candidate = GetSurvivor(owner, i);
+				if (candidate == null)
+					continue;
+
+				float distanceSqr = FlatDistanceSqr(origin, candidate.transform.position);
+				if (distanceSqr >= closestDistanceSqr)
+					continue;
+
+				closestDistanceSqr = distanceSqr;
+				closestIndex = i;
+			}
+
+			return closestIndex >= 0
+				? closestIndex
+				: FindNextAliveCharacter(data.AliveCharacterMask, data.CharacterCount, deadCharacterIndex, 1);
+		}
+
+		private static float FlatDistanceSqr(Vector3 a, Vector3 b)
+		{
+			a.y = 0f;
+			b.y = 0f;
+			return (a - b).sqrMagnitude;
 		}
 
 		private static Vector3[] GetClusterOffsets(int count, float radius)

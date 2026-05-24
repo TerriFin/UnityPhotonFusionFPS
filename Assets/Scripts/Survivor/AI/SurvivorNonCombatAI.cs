@@ -300,6 +300,7 @@ namespace SimpleFPS
 			_investigation?.ClearTask(false, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
 			_assignedArea?.ClearTask(_survivor != null ? _survivor.Navigator : null);
 			_combat?.ClearMovementTask();
+			ClearRememberedCombatEnemy();
 		}
 
 		public void SetMoveDestination(Vector3 destination, float stoppingDistance = -1f)
@@ -315,6 +316,7 @@ namespace SimpleFPS
 			_investigation?.ClearTask(false, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
 			_assignedArea?.ClearTask(_survivor != null ? _survivor.Navigator : null);
 			_combat?.ClearMovementTask();
+			ClearRememberedCombatEnemy();
 			_survivor?.Navigator?.SetDestination(destination);
 		}
 
@@ -344,6 +346,7 @@ namespace SimpleFPS
 			_investigation?.ClearTask(false, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
 			_assignedArea?.ClearTask(_survivor != null ? _survivor.Navigator : null);
 			_combat?.ClearMovementTask();
+			ClearRememberedCombatEnemy();
 			_survivor?.Navigator?.SetDestination(_assignedAreaEntryPoint);
 		}
 
@@ -722,7 +725,8 @@ namespace SimpleFPS
 
 				if (hasLineOfFire)
 				{
-					RememberCombatEnemy(enemy);
+					if (allowLostCombatInvestigation)
+						RememberCombatEnemy(enemy);
 					if (_combat.TryGetInput(enemy, hasLineOfFire, out input, isMoving, allowCombatMovement))
 						return true;
 				}
@@ -756,6 +760,14 @@ namespace SimpleFPS
 			_lastCombatEnemyPosition = enemy.LastKnownPosition;
 			_lastCombatEnemyTick = enemy.Tick;
 			_hasLastCombatEnemy = true;
+		}
+
+		private void ClearRememberedCombatEnemy()
+		{
+			_lastCombatEnemy = null;
+			_lastCombatEnemyPosition = default;
+			_lastCombatEnemyTick = 0;
+			_hasLastCombatEnemy = false;
 		}
 
 		private bool TryStartLostCombatInvestigation(KnownEnemyInfo enemy)

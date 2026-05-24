@@ -391,8 +391,8 @@ public void CharacterKilled(PlayerRef killerRef, PlayerRef ownerRef, int charact
     // Transfer control if the active character just died.
     if (victimData.ActiveCharacterIndex == characterIndex)
     {
-        victimData.ActiveCharacterIndex = FindNextAliveCharacter(
-            victimData.AliveCharacterMask, victimData.CharacterCount, characterIndex, 1);
+        victimData.ActiveCharacterIndex = FindClosestAliveCharacter(
+            ownerRef, victimData, characterIndex);
         // -1 means no alive characters remain.
     }
 
@@ -406,7 +406,9 @@ public void CharacterKilled(PlayerRef killerRef, PlayerRef ownerRef, int charact
 }
 ```
 
-**`FindNextAliveCharacter`** — wraps through the player's full character count, not a hardcoded 5:
+Death handoff is intentionally different from manual switching. When the possessed survivor dies, control transfers to the closest living survivor owned by that player, measured from the dead survivor's final position. If the dead survivor cannot be found in the local cache, the system falls back to the normal next-alive search.
+
+**`FindNextAliveCharacter`** — used by Shift/Ctrl manual switching. It wraps through the player's full character count, not a hardcoded 5:
 
 ```csharp
 private int FindNextAliveCharacter(int aliveMask, int characterCount, int startIndex, int direction)

@@ -135,6 +135,7 @@ Rules:
 - If looting, investigation, or combat movement starts after a survivor has entered an assigned area once, assigned-area patrol pauses until that temporary behavior finishes and returns control.
 - Player orders have a one-time completion gate before AI movement behaviors may override them. A move order is completed when the survivor reaches the destination. An assigned-area order is completed when the survivor enters the circle at least once. Follow remains continuous player intent and does not unlock looting, investigation, or combat movement.
 - While a player order still requires travel, the survivor keeps moving toward that player-given target. Combat aim and fire may still merge into that movement so the survivor can strafe and shoot, but combat movement, looting, investigation, and lost-enemy pursuit cannot replace the ordered movement.
+- While a player movement order still requires travel, combat aim/fire must not record a delayed lost-enemy investigation target. If the survivor sees or shoots at an enemy during that journey and then reaches the ordered destination after the enemy is gone, it should not walk back across the map to investigate the old last-known position.
 - After a move order completes, it becomes `HoldPosition`. After an assigned-area order completes once, temporary AI behaviors may pull the survivor outside the circle. The assigned area remains stored as the fallback order, but the survivor does not need to return to the circle between every AI detour.
 
 Temporary behavior settings are separate from these player-given assignments. Toggling all non-combat settings off or on should not convert a follower into a holder or cancel a move order. It should only stop currently running optional behaviors such as pickup collection or future investigation movement.
@@ -208,6 +209,7 @@ Handoff rules:
 - If the enemy is alive but breaks line of fire, non-combat AI can investigate the last known enemy position before returning to the previous assignment.
 - Lost-combat investigation is treated as a combat handoff. It may start even if combat pulled the survivor outside an assigned area, as long as investigation is enabled and the enemy is not confirmed dead.
 - Lost-combat investigation does not override an unreached player movement order. If the survivor is still following, moving to a clicked point, or travelling into an assigned defend area for the first time, that order remains the movement priority.
+- Player movement orders also clear any remembered lost-combat target from before the order was issued. This prevents a survivor from obeying a new move/assigned-area command and then resuming an old investigation after arrival.
 - Unreached player movement still allows combat aim/fire to merge into the ordered movement. This lets survivors strafe and shoot while continuing toward the ordered destination, without letting combat cover movement or lost-target pursuit pull them away.
 - If no assignment remains valid, set `HoldPosition` at the current survivor position.
 

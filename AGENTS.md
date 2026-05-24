@@ -4,6 +4,8 @@
 A multiplayer arena-based shooter prototype built on the Photon Fusion FPS template (Unity 2022.3.62f3 LTS).
 The goal is to prototype a **PvPvPvPvE** format — where there are 2 to ~20 players, each controlling their own team with distinct team colors. Each team has one human player and one or more survivor characters. The player can seamlessly take direct control over any survivor on their team. While not under direct control, survivors have rudimentary AI capable of simple instructions and defending themselves to their best abilities.
 
+- **Read `Docs/HumanToDo.md` for long-term project direction when making architectural decisions. Do not modify it unless the user explicitly asks.** Treat it as a human-owned roadmap, not as implementation documentation.
+
 ## What the ultimate goal of this project is
 A typical match in the finished project starts with 4 players. Each player spawns in a semi-randomly generated city-arena with 5 controllable survivors. Two players focus more on RTS-like gameplay and control their survivors through a camera high up. Two others take direct control over one of their survivors and tell the others to follow them.
 
