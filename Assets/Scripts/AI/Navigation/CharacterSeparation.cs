@@ -29,6 +29,7 @@ namespace SimpleFPS
 		public int MaxNeighbors = 8;
 
 		private Survivor _survivor;
+		private ZombieCharacter _zombie;
 		private Collider[] _colliders = Array.Empty<Collider>();
 		private PlayerRef _lastOwnerRef = PlayerRef.None;
 		private Func<KCC, Collider, bool> _previousResolveCollision;
@@ -38,17 +39,17 @@ namespace SimpleFPS
 		public void Activate(Survivor survivor)
 		{
 			_survivor = survivor;
+			_zombie = null;
 			_lastOwnerRef = _survivor != null ? _survivor.OwnerRef : PlayerRef.None;
-			CacheColliders();
-			ActivateKCCCollisionFilter();
+			ActivateShared();
+		}
 
-			if (_isRegistered == false)
-			{
-				ActiveSeparators.Add(this);
-				_isRegistered = true;
-			}
-
-			RefreshCollisionPairs();
+		public void Activate(ZombieCharacter zombie)
+		{
+			_zombie = zombie;
+			_survivor = null;
+			_lastOwnerRef = PlayerRef.None;
+			ActivateShared();
 		}
 
 		public void Deactivate()
@@ -69,7 +70,7 @@ namespace SimpleFPS
 
 		public Vector3 GetSeparationVelocity()
 		{
-			if (_survivor == null || _survivor.HasStateAuthority == false)
+			if (HasStateAuthority() == false)
 				return Vector3.zero;
 
 			Vector3 direction = GetSeparationDirection();
@@ -104,6 +105,20 @@ namespace SimpleFPS
 			DesiredDistance = Mathf.Clamp(DesiredDistance, 0.01f, Radius);
 			PushSpeed = Mathf.Max(0f, PushSpeed);
 			MaxNeighbors = Mathf.Max(1, MaxNeighbors);
+		}
+
+		private void ActivateShared()
+		{
+			CacheColliders();
+			ActivateKCCCollisionFilter();
+
+			if (_isRegistered == false)
+			{
+				ActiveSeparators.Add(this);
+				_isRegistered = true;
+			}
+
+			RefreshCollisionPairs();
 		}
 
 		private Vector3 GetSeparationDirection()
@@ -186,7 +201,20 @@ namespace SimpleFPS
 
 		private bool IsAlive()
 		{
-			return _survivor == null || _survivor.Health == null || _survivor.Health.IsAlive;
+			if (_survivor != null)
+				return _survivor.Health == null || _survivor.Health.IsAlive;
+			if (_zombie != null)
+				return _zombie.Health == null || _zombie.Health.IsAlive;
+			return true;
+		}
+
+		private bool HasStateAuthority()
+		{
+			if (_survivor != null)
+				return _survivor.HasStateAuthority;
+			if (_zombie != null)
+				return _zombie.HasStateAuthority;
+			return false;
 		}
 
 		private bool RefreshOwnerRef()
@@ -254,22 +282,24 @@ namespace SimpleFPS
 
 		private void ActivateKCCCollisionFilter()
 		{
-			if (_survivor == null || _survivor.KCC == null)
+			var kcc = GetKCC();
+			if (kcc == null)
 				return;
 
 			_resolveCollisionCallback = ResolveKCCCollision;
-			_previousResolveCollision = _survivor.KCC.ResolveCollision;
-			_survivor.KCC.ResolveCollision = _resolveCollisionCallback;
+			_previousResolveCollision = kcc.ResolveCollision;
+			kcc.ResolveCollision = _resolveCollisionCallback;
 		}
 
 		private void DeactivateKCCCollisionFilter()
 		{
-			if (_survivor == null || _survivor.KCC == null)
+			var kcc = GetKCC();
+			if (kcc == null)
 				return;
 
-			if (_survivor.KCC.ResolveCollision == _resolveCollisionCallback)
+			if (kcc.ResolveCollision == _resolveCollisionCallback)
 			{
-				_survivor.KCC.ResolveCollision = _previousResolveCollision;
+				kcc.ResolveCollision = _previousResolveCollision;
 			}
 
 			_resolveCollisionCallback = null;
@@ -283,6 +313,15 @@ namespace SimpleFPS
 				return false;
 
 			return _previousResolveCollision == null || _previousResolveCollision.Invoke(kcc, otherCollider);
+		}
+
+		private SimpleKCC GetKCC()
+		{
+			if (_survivor != null)
+				return _survivor.KCC;
+			if (_zombie != null)
+				return _zombie.KCC;
+			return null;
 		}
 	}
 }

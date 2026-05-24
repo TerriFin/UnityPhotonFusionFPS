@@ -94,6 +94,7 @@ namespace SimpleFPS
 		private readonly List<KnownEnemyInfo> _knownEnemies = new(DefaultMaxKnownEntries);
 		private readonly List<KnownPickupInfo> _knownPickups = new(DefaultMaxKnownEntries);
 		private Survivor _survivor;
+		private ZombieCharacter _zombie;
 		private NetworkObject _networkObject;
 		private float _nextSenseTime;
 
@@ -101,6 +102,7 @@ namespace SimpleFPS
 
 		public NetworkObject NetworkObject => _networkObject;
 		public Survivor Survivor => _survivor;
+		public ZombieCharacter Zombie => _zombie;
 
 		public bool IsStateAuthority => _networkObject != null && _networkObject.HasStateAuthority;
 
@@ -110,9 +112,9 @@ namespace SimpleFPS
 			{
 				if (IsStateAuthority == false)
 					return false;
-				if (IsAliveSurvivor() == false)
+				if (IsAliveCharacter() == false)
 					return false;
-				if (DisableWhenPossessed && _survivor.IsActiveCharacter())
+				if (DisableWhenPossessed && _survivor != null && _survivor.IsActiveCharacter())
 					return false;
 				return true;
 			}
@@ -126,9 +128,9 @@ namespace SimpleFPS
 					return false;
 				if (_networkObject.HasStateAuthority == false && _networkObject.HasInputAuthority == false)
 					return false;
-				if (IsAliveSurvivor() == false)
+				if (IsAliveCharacter() == false)
 					return false;
-				if (DisableWhenPossessed && _survivor.IsActiveCharacter() && _networkObject.HasInputAuthority == false)
+				if (DisableWhenPossessed && _survivor != null && _survivor.IsActiveCharacter() && _networkObject.HasInputAuthority == false)
 					return false;
 				return true;
 			}
@@ -156,7 +158,7 @@ namespace SimpleFPS
 			for (int i = 0; i < _knownEnemies.Count; i++)
 			{
 				var candidate = _knownEnemies[i];
-				if (IsDeadRememberedSurvivor(candidate))
+				if (IsDeadRememberedCharacter(candidate))
 				{
 					_knownEnemies.RemoveAt(i);
 					i--;
@@ -227,7 +229,7 @@ namespace SimpleFPS
 			for (int i = 0; i < _knownEnemies.Count; i++)
 			{
 				var candidate = _knownEnemies[i];
-				if (IsDeadRememberedSurvivor(candidate))
+				if (IsDeadRememberedCharacter(candidate))
 				{
 					_knownEnemies.RemoveAt(i);
 					i--;
@@ -253,13 +255,17 @@ namespace SimpleFPS
 			return stimulus == ESensoryStimulus.Vision || stimulus == ESensoryStimulus.Proximity;
 		}
 
-		private static bool IsDeadRememberedSurvivor(KnownEnemyInfo info)
+		private static bool IsDeadRememberedCharacter(KnownEnemyInfo info)
 		{
 			if (info.Object == null)
 				return false;
 
 			var survivor = info.Object.GetComponent<Survivor>();
-			return survivor != null && (survivor.Health == null || survivor.Health.IsAlive == false);
+			if (survivor != null)
+				return survivor.Health == null || survivor.Health.IsAlive == false;
+
+			var zombie = info.Object.GetComponent<ZombieCharacter>();
+			return zombie != null && (zombie.Health == null || zombie.Health.IsAlive == false);
 		}
 
 		public bool TryGetLookRotationDelta(float maxYawDegreesPerTick, out Vector2 lookRotationDelta)
@@ -285,7 +291,7 @@ namespace SimpleFPS
 		{
 			if (IsSenseEnabled == false || NoiseAwarenessRadius <= 0f)
 				return;
-			if (_survivor == null)
+			if (_survivor == null && _zombie == null)
 				return;
 			if (IsEnemySource(source) == false)
 				return;
@@ -294,25 +300,31 @@ namespace SimpleFPS
 			if ((noisePosition - transform.position).sqrMagnitude > effectiveRadius * effectiveRadius)
 				return;
 
-			_survivor.ReceiveInvestigationStimulus(noisePosition, GetTick());
+			if (_survivor != null)
+				_survivor.ReceiveInvestigationStimulus(noisePosition, GetTick());
+			else
+				_zombie.ReceiveInvestigationStimulus(noisePosition, GetTick());
 		}
 
 		public void RecordBulletImpact(Vector3 impactPosition, Vector3 approximateShooterPosition, NetworkObject shooter)
 		{
 			if (IsSenseEnabled == false || BulletImpactAwarenessRadius <= 0f)
 				return;
-			if (_survivor == null || IsEnemySource(shooter) == false)
+			if ((_survivor == null && _zombie == null) || IsEnemySource(shooter) == false)
 				return;
 			if ((impactPosition - transform.position).sqrMagnitude > BulletImpactAwarenessRadius * BulletImpactAwarenessRadius)
 				return;
 
-			_survivor.ReceiveInvestigationStimulus(approximateShooterPosition, GetTick());
-			Debug.Log($"Bullet impact heard near {name}. Approx shooter position: {approximateShooterPosition}");
+			if (_survivor != null)
+				_survivor.ReceiveInvestigationStimulus(approximateShooterPosition, GetTick());
+			else
+				_zombie.ReceiveInvestigationStimulus(approximateShooterPosition, GetTick());
 		}
 
 		private void Awake()
 		{
 			_survivor = GetComponent<Survivor>();
+			_zombie = GetComponent<ZombieCharacter>();
 			_networkObject = GetComponent<NetworkObject>();
 		}
 
@@ -343,12 +355,14 @@ namespace SimpleFPS
 			ScanPickups();
 		}
 
-		private bool IsAliveSurvivor()
+		private bool IsAliveCharacter()
 		{
-			if (_survivor == null)
-				return true;
+			if (_survivor != null)
+				return _survivor.Health != null && _survivor.Health.IsAlive;
+			if (_zombie != null)
+				return _zombie.Health != null && _zombie.Health.IsAlive;
 
-			return _survivor.Health != null && _survivor.Health.IsAlive;
+			return true;
 		}
 
 		private void ScanCharacters()
@@ -362,7 +376,7 @@ namespace SimpleFPS
 					continue;
 				}
 
-				if (other == this || other._survivor == null || other._survivor.Health.IsAlive == false)
+				if (other == this || other.IsAliveCharacter() == false)
 					continue;
 				if (IsEnemy(other) == false)
 					continue;
@@ -387,6 +401,9 @@ namespace SimpleFPS
 
 		private void ScanPickups()
 		{
+			if (_survivor == null)
+				return;
+
 			ScanWeaponPickups();
 			ScanHealthPickups();
 		}
@@ -476,12 +493,27 @@ namespace SimpleFPS
 			if (_survivor != null && other._survivor != null)
 				return _survivor.OwnerRef != other._survivor.OwnerRef;
 
+			if (_zombie != null && other._survivor != null)
+				return true;
+
+			if (_survivor != null && other._zombie != null)
+				return true;
+
 			return false;
 		}
 
 		private bool IsEnemySource(NetworkObject source)
 		{
-			if (source == null || _survivor == null)
+			if (source == null)
+				return true;
+
+			var sourceZombie = source.GetComponent<ZombieCharacter>();
+			if (_zombie != null)
+				return sourceZombie == null;
+
+			if (_survivor == null)
+				return true;
+			if (sourceZombie != null)
 				return true;
 			if (source.InputAuthority.IsRealPlayer == false)
 				return true;
@@ -536,10 +568,11 @@ namespace SimpleFPS
 
 		private void ExpireOldEntries()
 		{
-			if (_survivor == null || _survivor.Runner == null || MemoryDuration <= 0f)
+			NetworkRunner runner = GetRunner();
+			if (runner == null || MemoryDuration <= 0f)
 				return;
 
-			int maxAgeTicks = Mathf.CeilToInt(MemoryDuration / _survivor.Runner.DeltaTime);
+			int maxAgeTicks = Mathf.CeilToInt(MemoryDuration / runner.DeltaTime);
 			int currentTick = GetTick();
 
 			for (int i = _knownEnemies.Count - 1; i >= 0; i--)
@@ -553,10 +586,11 @@ namespace SimpleFPS
 
 		private void ExpireOldPickupEntries()
 		{
-			if (_survivor == null || _survivor.Runner == null || MemoryDuration <= 0f)
+			NetworkRunner runner = GetRunner();
+			if (runner == null || MemoryDuration <= 0f)
 				return;
 
-			int maxAgeTicks = Mathf.CeilToInt(MemoryDuration / _survivor.Runner.DeltaTime);
+			int maxAgeTicks = Mathf.CeilToInt(MemoryDuration / runner.DeltaTime);
 			int currentTick = GetTick();
 
 			for (int i = _knownPickups.Count - 1; i >= 0; i--)
@@ -580,7 +614,17 @@ namespace SimpleFPS
 
 		private int GetTick()
 		{
-			return _survivor != null && _survivor.Runner != null ? _survivor.Runner.Tick : 0;
+			NetworkRunner runner = GetRunner();
+			return runner != null ? runner.Tick : 0;
+		}
+
+		private NetworkRunner GetRunner()
+		{
+			if (_survivor != null)
+				return _survivor.Runner;
+			if (_zombie != null)
+				return _zombie.Runner;
+			return null;
 		}
 	}
 }

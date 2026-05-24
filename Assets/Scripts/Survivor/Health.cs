@@ -46,7 +46,10 @@ namespace SimpleFPS
 				CurrentHealth = 0f;
 
 				var survivor = GetComponent<Survivor>();
-				_sceneObjects.Gameplay.CharacterKilled(instigator, survivor.OwnerRef, survivor.CharacterIndex, weaponType, isCritical);
+				if (survivor != null && _sceneObjects != null && _sceneObjects.Gameplay != null)
+				{
+					_sceneObjects.Gameplay.CharacterKilled(instigator, survivor.OwnerRef, survivor.CharacterIndex, weaponType, isCritical);
+				}
 			}
 
 			// Store relative hit position.
@@ -57,6 +60,21 @@ namespace SimpleFPS
 			_hitCount++;
 
 			return true;
+		}
+
+		public void SetMaxHealth(float maxHealth, bool preserveHealthPercentage)
+		{
+			float previousMaxHealth = Mathf.Max(0.001f, MaxHealth);
+			float healthRatio = CurrentHealth > 0f ? Mathf.Clamp01(CurrentHealth / previousMaxHealth) : 0f;
+
+			MaxHealth = Mathf.Max(1f, maxHealth);
+
+			if (CurrentHealth <= 0f)
+				return;
+
+			CurrentHealth = preserveHealthPercentage
+				? Mathf.Clamp(MaxHealth * healthRatio, 0f, MaxHealth)
+				: MaxHealth;
 		}
 
 		public bool AddHealth(float health)
@@ -105,7 +123,8 @@ namespace SimpleFPS
 				PlayDamageEffect();
 			}
 
-			ImmortalityIndicator.SetActive(IsImmortal);
+			if (ImmortalityIndicator != null)
+				ImmortalityIndicator.SetActive(IsImmortal);
 
 			// Sync network hit counter with local.
 			_visibleHitCount = _hitCount;

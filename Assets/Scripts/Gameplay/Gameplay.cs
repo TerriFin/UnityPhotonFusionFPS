@@ -102,6 +102,7 @@ namespace SimpleFPS
 		private SurvivorAICommandService _survivorAICommands;
 		private RoadGridGenerator _roadGridGenerator;
 		private BuildingPlacementGenerator _buildingPlacementGenerator;
+		private ZombieOrchestrator _zombieOrchestrator;
 		private bool _loggedWaitingForWorldGeneration;
 
 		private const int SwitchCooldownTicks = 10;
@@ -385,7 +386,10 @@ namespace SimpleFPS
 
 				if (RemainingTime.Expired(Runner))
 				{
-					StopGameplay();
+					if (TryStartZombieOvertime() == false)
+					{
+						StopGameplay();
+					}
 				}
 			}
 		}
@@ -764,6 +768,18 @@ namespace SimpleFPS
 			RecalculateStatisticPositions();
 
 			State = EGameplayState.Finished;
+		}
+
+		private bool TryStartZombieOvertime()
+		{
+			if (_zombieOrchestrator == null)
+				_zombieOrchestrator = FindObjectOfType<ZombieOrchestrator>();
+
+			if (_zombieOrchestrator == null || _zombieOrchestrator.HasUsableSettings == false)
+				return false;
+
+			_zombieOrchestrator.StartOvertime();
+			return true;
 		}
 
 		private void RecalculateStatisticPositions()

@@ -150,7 +150,7 @@ namespace SimpleFPS
 				return false;
 			if (_survivor.Sensor.TryGetClosestDirectEnemy(out enemy) == false)
 				return false;
-			if (IsDeadSurvivor(enemy.Object))
+			if (IsDeadTarget(enemy.Object))
 				return false;
 
 			hasLineOfFire = HasLineOfFire(enemy);
@@ -162,13 +162,17 @@ namespace SimpleFPS
 			_survivor = GetComponent<Survivor>();
 		}
 
-		private static bool IsDeadSurvivor(NetworkObject target)
+		private static bool IsDeadTarget(NetworkObject target)
 		{
 			if (target == null)
 				return false;
 
 			var survivor = target.GetComponent<Survivor>();
-			return survivor != null && (survivor.Health == null || survivor.Health.IsAlive == false);
+			if (survivor != null)
+				return survivor.Health == null || survivor.Health.IsAlive == false;
+
+			var zombie = target.GetComponent<ZombieCharacter>();
+			return zombie != null && (zombie.Health == null || zombie.Health.IsAlive == false);
 		}
 
 		private void UpdateTargetState(KnownEnemyInfo enemy, bool isMoving)
