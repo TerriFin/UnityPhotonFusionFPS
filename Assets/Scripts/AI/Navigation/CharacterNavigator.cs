@@ -7,9 +7,9 @@ namespace SimpleFPS
 	[DisallowMultipleComponent]
 	public sealed class CharacterNavigator : MonoBehaviour
 	{
-		public float RepathInterval = 0.25f;
-		public float CornerReachDistance = 0.35f;
-		public float DestinationReachDistance = 1.25f;
+		public float RepathInterval = 0.35f;
+		public float CornerReachDistance = 0.75f;
+		public float DestinationReachDistance = 1.35f;
 		public float DestinationChangeRepathDistance = 0.5f;
 		public float SampleMaxDistance = 2f;
 		public float ReachablePointSampleMaxDistance = 8f;
@@ -71,6 +71,14 @@ namespace SimpleFPS
 			_cornerIndex = 0;
 			_corners = Array.Empty<Vector3>();
 			_path?.ClearCorners();
+		}
+
+		public void ForceRepath()
+		{
+			_hasPath = false;
+			_cornerIndex = 0;
+			_corners = Array.Empty<Vector3>();
+			_nextRepathTime = 0f;
 		}
 
 		public void Tick(Vector3 currentPosition)

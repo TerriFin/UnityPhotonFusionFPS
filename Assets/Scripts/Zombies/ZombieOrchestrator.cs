@@ -34,10 +34,12 @@ namespace SimpleFPS
 		private readonly List<SpawnCandidate> _candidates = new();
 		private readonly List<int> _bestRegions = new();
 		private readonly List<NetworkObject> _spawnedZombies = new();
+		private NavMeshPath _spawnValidationPath;
 		private Bounds _spawnBounds;
 		private System.Random _random;
 		private float _nextPulseTime;
 		private float _spawnRemainder;
+		private int _filteredSpawnPointCount;
 		private bool _hasSpawnBounds;
 		private bool _isOvertime;
 		private bool _isStarted;
@@ -121,6 +123,7 @@ namespace SimpleFPS
 		{
 			_spawnPoints.Clear();
 			_hasSpawnBounds = false;
+			_filteredSpawnPointCount = 0;
 
 			Transform root = GetGeneratedRoot();
 			if (root == null)
@@ -133,11 +136,20 @@ namespace SimpleFPS
 				if (marker == null)
 					continue;
 
+				if (TryGetUsableSpawnPointPosition(marker, out var navMeshPosition) == false)
+				{
+					_filteredSpawnPointCount++;
+					continue;
+				}
+
 				_spawnPoints.Add(marker);
-				EncapsulateSpawnPoint(marker.transform.position);
+				EncapsulateSpawnPoint(navMeshPosition);
 			}
 
 			_random = new System.Random(GetSeed());
+
+			if (_filteredSpawnPointCount > 0)
+				Debug.Log($"{nameof(ZombieOrchestrator)} ignored {_filteredSpawnPointCount} zombie spawn point(s) on too-small or unreachable NavMesh islands.", this);
 		}
 
 		[ContextMenu("Start Zombie Spawning")]
@@ -237,18 +249,64 @@ namespace SimpleFPS
 					continue;
 				if (IsSpawnPointBlocked(point))
 					continue;
-				if (NavMesh.SamplePosition(point.transform.position, out var hit, 1.5f, NavMesh.AllAreas) == false)
+				if (TryGetUsableSpawnPointPosition(point, out var spawnPosition) == false)
 					continue;
 
 				_candidates.Add(new SpawnCandidate
 				{
 					Point = point,
-					Position = hit.position,
+					Position = spawnPosition,
 					Rotation = point.transform.rotation,
 					Region = GetRegion(point.transform.position),
 					Remaining = Mathf.Max(1, point.MaxSpawnCountPerPulse),
 				});
 			}
+		}
+
+		private bool TryGetUsableSpawnPointPosition(ZombieSpawnPoint point, out Vector3 position)
+		{
+			position = default;
+			if (point == null)
+				return false;
+
+			float sampleDistance = Settings != null ? Settings.SpawnNavMeshSampleDistance : 1.5f;
+			if (NavMesh.SamplePosition(point.transform.position, out var hit, Mathf.Max(0.1f, sampleDistance), NavMesh.AllAreas) == false)
+				return false;
+
+			position = hit.position;
+			float requiredRadius = Settings != null ? Settings.MinimumSpawnConnectedNavMeshRadius : 0f;
+			return IsConnectedNavMeshLargeEnough(position, requiredRadius, sampleDistance);
+		}
+
+		private bool IsConnectedNavMeshLargeEnough(Vector3 navMeshPosition, float requiredRadius, float sampleDistance)
+		{
+			if (requiredRadius <= 0f)
+				return true;
+
+			if (_spawnValidationPath == null)
+				_spawnValidationPath = new NavMeshPath();
+
+			const int probeCount = 12;
+			float radius = Mathf.Max(0.5f, requiredRadius);
+			float navSampleDistance = Mathf.Max(0.5f, sampleDistance);
+
+			for (int i = 0; i < probeCount; i++)
+			{
+				float angle = i * Mathf.PI * 2f / probeCount;
+				Vector3 probe = navMeshPosition + new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle)) * radius;
+				if (NavMesh.SamplePosition(probe, out var probeHit, navSampleDistance, NavMesh.AllAreas) == false)
+					continue;
+				if (FlatDistanceSqr(navMeshPosition, probeHit.position) < radius * radius * 0.65f)
+					continue;
+				if (NavMesh.CalculatePath(navMeshPosition, probeHit.position, NavMesh.AllAreas, _spawnValidationPath) == false)
+					continue;
+				if (_spawnValidationPath.status != NavMeshPathStatus.PathComplete)
+					continue;
+
+				return true;
+			}
+
+			return false;
 		}
 
 		private int ChooseCandidateIndex()
@@ -440,10 +498,16 @@ namespace SimpleFPS
 				return 0f;
 
 			ResolveGameplay();
-			if (Gameplay != null && Gameplay.State == EGameplayState.Running)
+			if (Gameplay != null)
 			{
-				float remaining = Gameplay.RemainingTime.RemainingTime(Gameplay.Runner).GetValueOrDefault();
-				return Mathf.Clamp01((duration - remaining) / duration);
+				if (Gameplay.State == EGameplayState.Skirmish && Settings.ScaleDuringSkirmish == false)
+					return 0f;
+
+				if (Gameplay.State == EGameplayState.Running)
+				{
+					float remaining = Gameplay.RemainingTime.RemainingTime(Gameplay.Runner).GetValueOrDefault();
+					return Mathf.Clamp01((duration - remaining) / duration);
+				}
 			}
 
 			return Mathf.Clamp01(Time.timeSinceLevelLoad / duration);
@@ -581,6 +645,13 @@ namespace SimpleFPS
 		{
 			if (zombie != null && _spawnedZombies.Contains(zombie) == false)
 				_spawnedZombies.Add(zombie);
+		}
+
+		private static float FlatDistanceSqr(Vector3 a, Vector3 b)
+		{
+			a.y = 0f;
+			b.y = 0f;
+			return (a - b).sqrMagnitude;
 		}
 	}
 }

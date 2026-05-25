@@ -6,7 +6,7 @@ AvatarMask:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: BlockZombie_UpperBodyMask
+  m_Name: BlockZombie_UpperbodyAvatarMask
   m_Mask: 01000000010000000100000001000000010000000100000001000000010000000100000001000000010000000100000001000000
   m_Elements:
   - m_Path: 
@@ -22,7 +22,7 @@ AvatarMask:
   - m_Path: Body
     m_Weight: 0
   - m_Path: Head
-    m_Weight: 0
+    m_Weight: 1
   - m_Path: Head/HeadBand
     m_Weight: 1
   - m_Path: Leg_L

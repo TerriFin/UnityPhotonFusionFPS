@@ -24,6 +24,7 @@ NetworkObject
 KCC / SimpleKCC movement component
 ZombieCharacter
 ZombieAI
+ZombieAnimator
 Health
 CharacterSensor
 CharacterNavigator
@@ -45,6 +46,9 @@ ZombieAI
 
 ZombieCharacter movement
 -> converts AI input into KCC movement
+
+ZombieAnimator
+-> reads zombie movement/state and updates Animator parameters
 ```
 
 The first implementation folds the motor into `ZombieCharacter` to keep the prefab/component count low. The important rule is that zombies should not inherit all survivor behavior by accident.
@@ -171,6 +175,8 @@ Suggested idle spread behavior:
 5. Move there with `CharacterNavigator`.
 6. Return to idle and repeat.
 
+The first idle wander should happen quickly after spawn so zombies do not look frozen. Later wander attempts can use the longer idle interval. If no reachable wander point is found, retry after a short delay instead of waiting the full idle interval.
+
 This is not full crowd simulation. It should be much cheaper than survivor assigned-area patrol:
 
 - run only every few seconds per idle zombie,
@@ -215,14 +221,14 @@ Rules:
 - Use direct movement only at short range.
 - Alert nearby zombies to the target or target position.
 - Periodically re-check known direct targets, default every `2.5s`.
-- Keep chasing the current target between retarget checks unless it dies or becomes invalid.
+- Move toward the sensor-confirmed last known target position, not the target's live transform through walls.
 - If inside attack range and cooldown is ready, deal damage.
 - If the target dies, choose another known target or switch to idle/investigate.
-- If the target escapes but is not dead, investigate the last known position.
+- If direct vision/proximity is lost and the target is not dead, immediately investigate the last known position.
 
 Zombies do not need cover, weapon logic, strafing, or tactical range behavior.
 
-Attack retargeting should only consider targets the zombie is currently aware of through sensor memory or proximity/vision. It should not perform a global survivor search during normal attacking.
+Attack retargeting should only consider targets the zombie is currently aware of through direct sensor proximity/vision. It should not perform a global survivor search during normal attacking, and it should not keep tracking a survivor's live position after the survivor has escaped behind blocking geometry.
 
 ### Hunting
 
@@ -278,9 +284,28 @@ Suggested pathing rules:
 
 - Repath less often than survivors, for example `0.4-0.8s`.
 - Stagger repath times by spawn index or random offset.
-- Use direct movement only when close to the target or when no path exists and the target is very near.
+- Use direct movement only when extremely close to the target or when no path exists and the target is almost reached.
 - Do not calculate paths while idle unless a real movement target exists.
 - Consider future movement LOD for far-away zombies.
+
+Zombies can still get stuck if the NavMesh is valid for the baked agent but the KCC capsule cannot physically pass the same corner/gap. The implementation handles this with a cheap progress check: if a zombie has a destination but stops making progress, it first tries a short reachable sidestep target, then resumes the real destination. If no sidestep can be found, it forces a repath. Idle and investigation destinations can be abandoned and retried. If many zombies still stick to props, check the prefab KCC radius against the baked NavMesh agent radius and increase `CharacterNavigator.CornerReachDistance` so zombies do not try to thread razor-thin corners.
+
+Current stricter movement defaults:
+
+```text
+ZombieAI.StoppingDistance: 1.35
+ZombieAI.DirectFallbackDistance: 0.25
+ZombieAI.ReachablePointSampleDistance: 6
+ZombieAI.StuckCheckInterval: 0.4
+ZombieAI.StuckMinProgress: 0.2
+ZombieAI.StuckDuration: 0.8
+ZombieAI.StuckRecoveryStepDistance: 2.5
+ZombieAI.StuckRecoveryDuration: 0.75
+ZombieAI.StuckRecoveryCandidateCount: 8
+CharacterNavigator.RepathInterval: 0.35
+CharacterNavigator.CornerReachDistance: 0.75
+CharacterNavigator.DestinationReachDistance: 1.35
+```
 
 ## Attack Model
 
@@ -303,6 +328,33 @@ AttackYawTolerance
 ```
 
 Damage should be applied by the authoritative instance only.
+
+## Animation Hooks
+
+Zombie animation is handled by `ZombieAnimator`, a non-networked visual bridge. It reads replicated KCC/health state and local AI attack events.
+
+`ZombieAnimator` can be placed on the zombie prefab root or on the visual child that owns the `Animator`. It searches parent and child objects for `ZombieCharacter`, `ZombieAI`, and `Animator`, but explicit references on the component are preferred for prefab clarity.
+
+Default Animator parameters:
+
+```text
+MoveSpeed: float
+IsAlive: bool
+IsGrounded: bool
+Attack: trigger
+```
+
+Recommended controller setup:
+
+- `Idle` and `Walk` are driven by `MoveSpeed`.
+- `Attack` is triggered by the `Attack` trigger.
+- `Death` is entered when `IsAlive == false`.
+- `IsGrounded` is available if jump/fall/death transitions need it later.
+- `IsAlive` should default to `true`.
+- `IsGrounded` should default to `true`.
+- The `Any State -> Death` transition must not transition to itself. Otherwise `IsAlive == false` keeps re-entering Death and restarts the death clip forever.
+
+If the death animation plays constantly and the Animator parameter values do not change in play mode, the usual cause is that `ZombieAnimator` cannot find the root `ZombieCharacter` or the visual `Animator`. Check the component references first.
 
 ## Network Model
 

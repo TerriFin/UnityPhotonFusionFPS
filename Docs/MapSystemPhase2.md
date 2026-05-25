@@ -157,13 +157,25 @@ Rules:
 
 This does not change AI pickup collection. AI collection still checks whether the pickup is active before moving toward it.
 
+## Zombie Icons
+
+Zombie icons are a local awareness overlay. They appear when one of the local player's survivors directly senses a zombie through `CharacterSensor`.
+
+Rules:
+
+- Zombie icons are circles, matching pickup icon size.
+- Zombies use a small dark-green circle.
+- Zombie icons are hidden when their last known position is outside the current map camera viewport.
+- Zombie icons are not selectable and do not receive map orders.
+- The map can remember zombie icons briefly through `GameMapAwarenessTracker.ZombieIconForgetDelay`.
+- If the zombie dies or despawns, remove the icon immediately.
+
 ## Future Non-Survivor Icons
 
-This phase does not need zombie or neutral survivor icons.
+This phase now includes spotted zombie icons. Neutral survivors and other non-survivor map markers are still future work.
 
 Later icon types can be added:
 
-- zombies,
 - neutral recruitable survivors,
 - special objectives,
 - evacuation/extraction zones,
@@ -385,6 +397,7 @@ Avoid:
 - Pickup icons appear when local survivors see pickups.
 - Health pickups are green circles, weapon pickups are yellow circles.
 - Inactive seen pickups are shown as translucent circles.
+- Zombie icons appear as small dark-green circles when local survivors see zombies.
 - Player can click, drag-select, and double-click-select own rendered survivor icons.
 - Right-clicking an empty map point sends selected inactive survivors to that point.
 - Holding and dragging right click creates an assigned-area order when the radius is large enough.

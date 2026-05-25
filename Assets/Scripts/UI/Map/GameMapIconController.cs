@@ -12,8 +12,10 @@ namespace SimpleFPS
 		public Vector2 OwnIconSize = new Vector2(18f, 18f);
 		public Vector2 EnemyIconSize = new Vector2(16f, 16f);
 		public Vector2 PickupIconSize = new Vector2(12f, 12f);
+		public Vector2 ZombieIconSize = new Vector2(12f, 12f);
 		public Color FallbackOwnColor = Color.cyan;
 		public Color FallbackEnemyColor = Color.red;
+		public Color ZombieIconColor = new Color(0f, 0.28f, 0.08f, 1f);
 		public Color ActiveWeaponPickupColor = Color.yellow;
 		public Color InactiveWeaponPickupColor = new Color(1f, 0.9f, 0f, 0.35f);
 		public Color ActiveHealthPickupColor = Color.green;
@@ -25,6 +27,7 @@ namespace SimpleFPS
 		private readonly Dictionary<Survivor, GameMapIcon> _ownIcons = new();
 		private readonly Dictionary<Survivor, GameMapIcon> _enemyIcons = new();
 		private readonly Dictionary<NetworkObject, GameMapIcon> _pickupIcons = new();
+		private readonly Dictionary<NetworkObject, GameMapIcon> _zombieIcons = new();
 		private Sprite _pickupCircleSprite;
 
 		public IEnumerable<GameMapIcon> OwnIcons => _ownIcons.Values;
@@ -50,6 +53,7 @@ namespace SimpleFPS
 
 			UpdateOwnIcons(mapView, gameplay, runner);
 			UpdateEnemyIcons(mapView, gameplay);
+			UpdateZombieIcons(mapView);
 			UpdatePickupIcons(mapView);
 		}
 
@@ -196,6 +200,43 @@ namespace SimpleFPS
 			DestroyStaleIcons(_pickupIcons, _staleNetworkObjects);
 		}
 
+		private void UpdateZombieIcons(GameMapView mapView)
+		{
+			_staleNetworkObjects.Clear();
+			_staleNetworkObjects.AddRange(_zombieIcons.Keys);
+
+			if (AwarenessTracker != null)
+			{
+				foreach (var pair in AwarenessTracker.ZombieMemory)
+				{
+					var networkObject = pair.Key;
+					var memory = pair.Value;
+					if (networkObject == null || networkObject.IsValid == false)
+						continue;
+
+					_staleNetworkObjects.Remove(networkObject);
+
+					if (_zombieIcons.TryGetValue(networkObject, out var icon) == false || icon == null)
+					{
+						icon = CreateCircleIcon(networkObject, GameMapIconKind.Zombie, ZombieIconColor, ZombieIconSize, "Zombie Icon");
+						_zombieIcons[networkObject] = icon;
+					}
+
+					icon.SetColor(ZombieIconColor);
+
+					bool visible = mapView.IsWorldPositionVisibleOnMap(memory.LastKnownPosition);
+					icon.gameObject.SetActive(visible);
+					if (visible == false)
+						continue;
+
+					icon.SetMapPosition(mapView.WorldToMapUI(memory.LastKnownPosition));
+					icon.SetRotation(0f);
+				}
+			}
+
+			DestroyStaleIcons(_zombieIcons, _staleNetworkObjects);
+		}
+
 		private GameMapIcon CreateIcon(Survivor survivor, GameMapIconKind kind, Color color, Vector2 size)
 		{
 			var iconObject = new GameObject($"{kind} Icon", typeof(RectTransform), typeof(Image), typeof(GameMapIcon));
@@ -217,7 +258,12 @@ namespace SimpleFPS
 
 		private GameMapIcon CreatePickupIcon(NetworkObject networkObject, Color color, Vector2 size)
 		{
-			var iconObject = new GameObject("Pickup Icon", typeof(RectTransform), typeof(Image), typeof(GameMapIcon));
+			return CreateCircleIcon(networkObject, GameMapIconKind.Pickup, color, size, "Pickup Icon");
+		}
+
+		private GameMapIcon CreateCircleIcon(NetworkObject networkObject, GameMapIconKind kind, Color color, Vector2 size, string name)
+		{
+			var iconObject = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(GameMapIcon));
 			var rectTransform = iconObject.GetComponent<RectTransform>();
 			rectTransform.SetParent(IconRoot, false);
 			rectTransform.sizeDelta = size;
@@ -231,7 +277,7 @@ namespace SimpleFPS
 			var icon = iconObject.GetComponent<GameMapIcon>();
 			icon.RectTransform = rectTransform;
 			icon.Image = image;
-			icon.Initialize(networkObject, GameMapIconKind.Pickup, color);
+			icon.Initialize(networkObject, kind, color);
 			return icon;
 		}
 

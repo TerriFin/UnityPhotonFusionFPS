@@ -1321,6 +1321,7 @@ GameObject:
   - component: {fileID: -4394101241498737787}
   - component: {fileID: 1772856214135365984}
   - component: {fileID: 4286926381959304160}
+  - component: {fileID: -3742765445225703615}
   - component: {fileID: 1558554886111920215}
   - component: {fileID: 3822332377934517607}
   m_Layer: 6
@@ -1558,6 +1559,7 @@ MonoBehaviour:
   ImmortalDurationAfterSpawn: 2
   ImmortalityIndicator: {fileID: 1993090250243549427}
   HitEffectPrefab: {fileID: 3886077773195258213, guid: 8d61043558bc54c7186df551c6a6104f, type: 3}
+  HitEffectLifetime: 3
   _CurrentHealth: 0
 --- !u!114 &7259423219028248817
 MonoBehaviour:
@@ -1639,8 +1641,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8f7a1d3b92d64e6f9c4a58e012bd7341, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  PickupStoppingDistance: 0.2
-  DirectFallbackDistance: 0.33
+  PickupStoppingDistance: 0.1
+  DirectFallbackDistance: 0.25
 --- !u!114 &3140107809847408399
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1759,6 +1761,31 @@ MonoBehaviour:
   ShotgunPreferredRangeMax: 5
   RiflePreferredRangeMin: 6
   RiflePreferredRangeMax: 14
+--- !u!114 &-3742765445225703615
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7812586951838351475}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e30285cfb87341439ccfa6b07e2f4903, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  RepathInterval: 0.35
+  CornerReachDistance: 0.75
+  DestinationReachDistance: 0.5
+  DestinationChangeRepathDistance: 0.5
+  SampleMaxDistance: 2
+  ReachablePointSampleMaxDistance: 8
+  AreaMask: -1
+  LaneOffset: 0
+  MaxLaneOffset: 2.5
+  LaneOffsetTaperDistance: 4
+  LaneOffsetCornerSoftenDistance: 1.5
+  LaneOffsetSampleDistance: 1
+  ValidateLaneOffsetPath: 1
 --- !u!114 &1558554886111920215
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -8,6 +8,7 @@ namespace SimpleFPS
 		OwnSurvivor,
 		EnemySurvivor,
 		Pickup,
+		Zombie,
 	}
 
 	public sealed class GameMapIcon : MonoBehaviour

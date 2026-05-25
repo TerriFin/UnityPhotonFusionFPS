@@ -12,12 +12,17 @@ namespace SimpleFPS
 		public int StartMaxZombies = 100;
 		public int EndMaxZombies = 400;
 		public float MatchDurationSeconds = 0f;
+		public bool ScaleDuringSkirmish;
 
 		[Header("Spawn Rate")]
 		public float StartSpawnRatePerMinute = 12f;
 		public float EndSpawnRatePerMinute = 60f;
 		public float SpawnPulseInterval = 5f;
 		public int MaxSpawnPerPulse = 30;
+
+		[Header("Spawn Validity")]
+		public float SpawnNavMeshSampleDistance = 1.5f;
+		public float MinimumSpawnConnectedNavMeshRadius = 8f;
 
 		[Header("Normal Stats")]
 		public float StartHealth = 40f;
@@ -49,6 +54,8 @@ namespace SimpleFPS
 			EndSpawnRatePerMinute = Mathf.Max(0f, EndSpawnRatePerMinute);
 			SpawnPulseInterval = Mathf.Max(0.25f, SpawnPulseInterval);
 			MaxSpawnPerPulse = Mathf.Max(0, MaxSpawnPerPulse);
+			SpawnNavMeshSampleDistance = Mathf.Max(0.1f, SpawnNavMeshSampleDistance);
+			MinimumSpawnConnectedNavMeshRadius = Mathf.Max(0f, MinimumSpawnConnectedNavMeshRadius);
 			StartHealth = Mathf.Max(1f, StartHealth);
 			EndHealth = Mathf.Max(1f, EndHealth);
 			StartDamage = Mathf.Max(0f, StartDamage);

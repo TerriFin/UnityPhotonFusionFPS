@@ -12,6 +12,7 @@ namespace SimpleFPS
 		public float      ImmortalDurationAfterSpawn = 2f;
 		public GameObject ImmortalityIndicator;
 		public GameObject HitEffectPrefab;
+		public float      HitEffectLifetime = 3f;
 
 		public bool IsAlive => CurrentHealth > 0f;
 		public bool IsImmortal => _immortalTimer.ExpiredOrNotRunning(Runner) == false;
@@ -137,7 +138,9 @@ namespace SimpleFPS
 				var hitPosition = transform.position + _lastHitPosition;
 				var hitRotation = Quaternion.LookRotation(_lastHitDirection);
 
-				Instantiate(HitEffectPrefab, hitPosition, hitRotation);
+				var hitEffect = Instantiate(HitEffectPrefab, hitPosition, hitRotation);
+				if (HitEffectLifetime > 0f)
+					Destroy(hitEffect, HitEffectLifetime);
 			}
 		}
 	}

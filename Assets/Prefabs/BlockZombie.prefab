@@ -999,7 +999,7 @@ GameObject:
   - component: {fileID: 3991566580172985026}
   - component: {fileID: 7195504373959092826}
   - component: {fileID: 3822332377934517607}
-  - component: {fileID: 3034085951752243486}
+  - component: {fileID: 3227757908707635043}
   m_Layer: 6
   m_Name: BlockZombie
   m_TagString: Untagged
@@ -1149,6 +1149,7 @@ MonoBehaviour:
   ImmortalDurationAfterSpawn: 0
   ImmortalityIndicator: {fileID: 0}
   HitEffectPrefab: {fileID: 3886077773195258213, guid: 8d61043558bc54c7186df551c6a6104f, type: 3}
+  HitEffectLifetime: 3
   _CurrentHealth: 0
 --- !u!114 &7259423219028248817
 MonoBehaviour:
@@ -1188,7 +1189,7 @@ MonoBehaviour:
   KCC: {fileID: 3343799980989206046}
   Health: {fileID: 5744676234014132664}
   HitboxRoot: {fileID: 5374299559181985757}
-  Animator: {fileID: 3034085951752243486}
+  Animator: {fileID: 0}
   Stats:
     MaxHealth: 40
     Damage: 8
@@ -1215,17 +1216,26 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: fde03f25aa2ba814d9d4d76ca5b1c406, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  IdleWanderIntervalMin: 10
+  InitialIdleWanderDelayMax: 2
+  IdleWanderIntervalMin: 6
   IdleWanderIntervalMax: 14
-  IdleWanderRadius: 10
-  IdleWanderAvoidZombieRadius: 8
+  IdleWanderRetryDelayMin: 1
+  IdleWanderRetryDelayMax: 2
+  IdleWanderRadius: 16
+  IdleWanderAvoidZombieRadius: 10
   IdleWanderCandidateCount: 5
   AttackRetargetInterval: 2.5
   HuntingRetargetInterval: 2.5
-  StoppingDistance: 1.1
-  DirectFallbackDistance: 0.75
+  StoppingDistance: 0.75
+  DirectFallbackDistance: 0.25
   MaxYawDegreesPerTick: 7
-  ReachablePointSampleDistance: 8
+  ReachablePointSampleDistance: 6
+  StuckCheckInterval: 0.4
+  StuckMinProgress: 0.2
+  StuckDuration: 0.8
+  StuckRecoveryStepDistance: 2.5
+  StuckRecoveryDuration: 0.75
+  StuckRecoveryCandidateCount: 8
   MaxAlertRecipients: 8
   AlertCooldown: 2
 --- !u!114 &3991566580172985026
@@ -1241,16 +1251,16 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   ProximityAwarenessRadius: 5
-  NoiseAwarenessRadius: 22
-  BulletImpactAwarenessRadius: 2
-  VisionDistance: 12
-  VisionAngle: 70
+  NoiseAwarenessRadius: 26
+  BulletImpactAwarenessRadius: 4
+  VisionDistance: 10
+  VisionAngle: 60
   EyeHeight: 1.6
   VisionBlockers:
     serializedVersion: 2
     m_Bits: 1
   DisableWhenPossessed: 1
-  SensorInterval: 1
+  SensorInterval: 0.6
   MemoryDuration: 2
   MaxKnownEntries: 4
   MaxKnownPickups: 1
@@ -1267,8 +1277,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   RepathInterval: 0.25
-  CornerReachDistance: 0.35
-  DestinationReachDistance: 1.25
+  CornerReachDistance: 0.75
+  DestinationReachDistance: 1
   DestinationChangeRepathDistance: 0.5
   SampleMaxDistance: 2
   ReachablePointSampleMaxDistance: 8
@@ -1296,27 +1306,26 @@ MonoBehaviour:
   DesiredDistance: 0.65
   PushSpeed: 1.5
   MaxNeighbors: 8
---- !u!95 &3034085951752243486
-Animator:
-  serializedVersion: 5
+--- !u!114 &3227757908707635043
+MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 7812586951838351475}
   m_Enabled: 1
-  m_Avatar: {fileID: 0}
-  m_Controller: {fileID: 9100000, guid: bf5717dc2f5b96f49a9ef8bde8484672, type: 2}
-  m_CullingMode: 0
-  m_UpdateMode: 0
-  m_ApplyRootMotion: 0
-  m_LinearVelocityBlending: 0
-  m_StabilizeFeet: 0
-  m_WarningMessage: 
-  m_HasTransformHierarchy: 1
-  m_AllowConstantClipSamplingOptimization: 1
-  m_KeepAnimatorStateOnDisable: 0
-  m_WriteDefaultValuesOnDisable: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4b03c6cd4ef64b348b906b9e278b1d5b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  Zombie: {fileID: 5458231818479569712}
+  AI: {fileID: 1337231334519911347}
+  Animator: {fileID: 3626045575151535677}
+  MoveSpeedParameter: MoveSpeed
+  IsAliveParameter: IsAlive
+  IsGroundedParameter: IsGrounded
+  AttackTrigger: Attack
+  MoveSpeedDampTime: 0.1
 --- !u!1 &8685734537112233508
 GameObject:
   m_ObjectHideFlags: 0

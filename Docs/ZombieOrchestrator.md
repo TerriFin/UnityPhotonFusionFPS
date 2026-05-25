@@ -72,11 +72,15 @@ ZombieOrchestratorSettings
 	int StartMaxZombies;
 	int EndMaxZombies;
 	float MatchDurationSeconds;
+	bool ScaleDuringSkirmish;
 
 	float StartSpawnRatePerMinute;
 	float EndSpawnRatePerMinute;
 	float SpawnPulseInterval;
 	int MaxSpawnPerPulse;
+
+	float SpawnNavMeshSampleDistance;
+	float MinimumSpawnConnectedNavMeshRadius;
 
 	float StartHealth;
 	float EndHealth;
@@ -107,6 +111,8 @@ StartSpawnRatePerMinute: 12
 EndSpawnRatePerMinute: 60
 SpawnPulseInterval: 5s
 MaxSpawnPerPulse: 30
+SpawnNavMeshSampleDistance: 1.5
+MinimumSpawnConnectedNavMeshRadius: 8
 UnderpopulatedRegionBias: 0.65
 RegionGridSize: 3 or 4
 ```
@@ -128,6 +134,8 @@ Normal match progress:
 ```text
 progress = clamp01(matchElapsed / MatchDurationSeconds)
 ```
+
+By default, skirmish mode forces progress to `0`. This means skirmish-spawned zombies use the starting cap, starting spawn rate, and starting stats while players wait for the match. `ScaleDuringSkirmish` can be enabled for play-mode testing, causing skirmish zombies to scale using elapsed scene time.
 
 Current max zombies:
 
@@ -228,8 +236,22 @@ A spawn point is valid when:
 - It belongs to the generated world currently in use.
 - Its zombie prefab pool is configured.
 - The point is on or near reachable NavMesh.
+- The NavMesh island under the point is large enough to be useful.
 - The point has not exceeded `MaxSpawnCountPerPulse`.
 - If `NonForcedSurvivorBlockRadius` is above `0`, no alive survivor is inside that radius. Future "neutral" survivors do not count against this.
+
+Spawn point collection filters out markers on tiny disconnected NavMesh islands. This handles generated alleys or building pockets where the marker is technically on NavMesh, but that NavMesh is cut off from the playable city by walls, blocking buildings, or prop arrangements.
+
+The first-pass check is intentionally simple:
+
+```text
+1. Sample the marker position to NavMesh using SpawnNavMeshSampleDistance.
+2. If MinimumSpawnConnectedNavMeshRadius <= 0, accept any sampled NavMesh.
+3. Probe several points around the marker at MinimumSpawnConnectedNavMeshRadius.
+4. Accept the spawn only if at least one probe is on the same connected NavMesh island through a complete NavMesh path.
+```
+
+This is not a perfect island-area calculation. It is a cheap "can this spawn reach a meaningful amount of nearby NavMesh?" test that runs when spawn points are collected and again during spawn candidate construction in case the NavMesh changed.
 
 Non-forced blocker checks should be cheap:
 
@@ -237,7 +259,7 @@ Non-forced blocker checks should be cheap:
 - Use squared distance.
 - Check only during spawn pulses.
 
-Do not use expensive visibility/path checks to decide whether a spawn point is valid in the first version.
+Do not use expensive visibility/path checks against every survivor or zombie to decide whether a spawn point is valid in the first version.
 
 ## Fusion Spawn Model
 
