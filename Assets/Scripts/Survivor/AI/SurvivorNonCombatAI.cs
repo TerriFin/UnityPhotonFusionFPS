@@ -722,18 +722,19 @@ namespace SimpleFPS
 			if (_combat.TryGetDirectTarget(out var enemy, out bool hasLineOfFire))
 			{
 				TryAlertAlliesAboutDirectEnemy(enemy);
+				bool allowLostInvestigationForTarget = allowLostCombatInvestigation && IsLostCombatInvestigationTarget(enemy);
 
 				if (hasLineOfFire)
 				{
-					if (allowLostCombatInvestigation)
+					if (allowLostInvestigationForTarget)
 						RememberCombatEnemy(enemy);
 					if (_combat.TryGetInput(enemy, hasLineOfFire, out input, isMoving, allowCombatMovement))
 						return true;
 				}
 
-				if (allowLostCombatInvestigation)
+				if (allowLostInvestigationForTarget)
 					_combat.NotifyTargetLost();
-				if (allowLostCombatInvestigation && TryStartLostCombatInvestigation(enemy))
+				if (allowLostInvestigationForTarget && TryStartLostCombatInvestigation(enemy))
 					return false;
 
 				return false;
@@ -815,13 +816,25 @@ namespace SimpleFPS
 			_investigation?.AlertNearbyAllies(_survivor, enemy.LastKnownPosition, enemy.Tick, _settings.InvestigateSuspiciousStimuli);
 		}
 
+		private static bool IsLostCombatInvestigationTarget(KnownEnemyInfo enemy)
+		{
+			return enemy.Object != null && enemy.Object.GetComponent<Survivor>() != null;
+		}
+
 		private static bool IsRememberedEnemyAlive(NetworkObject enemy)
 		{
 			if (enemy == null)
 				return false;
 
 			var survivor = enemy.GetComponent<Survivor>();
-			return survivor == null || (survivor.Health != null && survivor.Health.IsAlive);
+			if (survivor != null)
+				return survivor.Health != null && survivor.Health.IsAlive;
+
+			var zombie = enemy.GetComponent<ZombieCharacter>();
+			if (zombie != null)
+				return zombie.Health != null && zombie.Health.IsAlive;
+
+			return false;
 		}
 
 		private static float FlatDistanceSqr(Vector3 a, Vector3 b)

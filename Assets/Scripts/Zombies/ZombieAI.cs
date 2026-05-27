@@ -1,6 +1,7 @@
 using Fusion;
 using UnityEngine;
 using UnityEngine.AI;
+using UnityEngine.Serialization;
 
 namespace SimpleFPS
 {
@@ -27,21 +28,20 @@ namespace SimpleFPS
 
 		[Header("Targeting")]
 		public float AttackRetargetInterval = 2.5f;
-		public float HuntingRetargetInterval = 2.5f;
+		public float HuntingRetargetInterval = 5f;
+		public float HuntingRetargetIntervalJitter = 1f;
+		public float HuntingInitialRetargetStaggerMax = 3f;
 
 		[Header("Movement")]
 		public float StoppingDistance = 1.35f;
-		public float DirectFallbackDistance = 0.25f;
+		[FormerlySerializedAs("DirectFallbackDistance")]
+		public float DirectMoveDistance = 0.25f;
 		public float MaxYawDegreesPerTick = 7f;
 		public float ReachablePointSampleDistance = 6f;
-
-		[Header("Stuck Recovery")]
-		public float StuckCheckInterval = 0.4f;
-		public float StuckMinProgress = 0.2f;
-		public float StuckDuration = 0.8f;
-		public float StuckRecoveryStepDistance = 2.5f;
-		public float StuckRecoveryDuration = 0.75f;
-		public int StuckRecoveryCandidateCount = 8;
+		public float AttackMoveStoppingDistance = 0.2f;
+		public float AttackMoveTargetMaxDistanceFromTarget = 1.5f;
+		public float AttackMoveTargetMaxHeightDifference = 0.75f;
+		public float AttackDestinationRefreshInterval = 0.5f;
 
 		[Header("Alerts")]
 		public int MaxAlertRecipients = 8;
@@ -57,18 +57,15 @@ namespace SimpleFPS
 		private float _nextIdleWanderTime;
 		private float _nextRetargetTime;
 		private float _nextAlertTime;
-		private float _nextStuckCheckTime;
-		private float _stuckTime;
-		private Vector3 _lastStuckCheckPosition;
-		private Vector3 _stuckRecoveryTarget;
-		private float _stuckRecoveryUntil;
+		private Vector3 _attackMoveTarget;
+		private float _nextAttackMoveTargetRefreshTime;
+		private bool _hasAttackMoveTarget;
 		private int _lastStimulusTick;
 
 		public void Activate(ZombieCharacter zombie)
 		{
 			_zombie = zombie != null ? zombie : GetComponent<ZombieCharacter>();
 			State = EZombieAIState.Idle;
-			ResetStuckTracking();
 			ScheduleInitialIdleWander();
 		}
 
@@ -99,7 +96,8 @@ namespace SimpleFPS
 		{
 			State = EZombieAIState.Hunting;
 			_target = null;
-			_nextRetargetTime = 0f;
+			_nextRetargetTime = Time.timeSinceLevelLoad + Random.Range(0f, Mathf.Max(0f, HuntingInitialRetargetStaggerMax));
+			ClearAttackMoveTarget();
 			ClearNavigator();
 		}
 
@@ -111,6 +109,7 @@ namespace SimpleFPS
 				return;
 
 			_lastStimulusTick = stimulusTick;
+			ClearAttackMoveTarget();
 			StartInvestigation(target, stimulusTick, fromAlert);
 		}
 
@@ -132,11 +131,10 @@ namespace SimpleFPS
 				{
 					navigator.ClearDestination();
 					ScheduleNextIdleWander();
-					ResetStuckTracking();
 					return default;
 				}
 
-				return BuildMoveInput(navigator.Destination, StoppingDistance);
+				return BuildMoveInput(navigator.Destination, StoppingDistance, true);
 			}
 
 			if (Time.timeSinceLevelLoad >= _nextIdleWanderTime)
@@ -144,8 +142,7 @@ namespace SimpleFPS
 				if (TryChooseIdleWanderPoint(out Vector3 wanderPoint))
 				{
 					navigator?.SetDestination(wanderPoint);
-					ResetStuckTracking();
-					return BuildMoveInput(wanderPoint, StoppingDistance);
+					return BuildMoveInput(wanderPoint, StoppingDistance, true);
 				}
 				else
 					ScheduleIdleWanderRetry();
@@ -176,11 +173,10 @@ namespace SimpleFPS
 				navigator.ClearDestination();
 				State = EZombieAIState.Idle;
 				ScheduleNextIdleWander();
-				ResetStuckTracking();
 				return default;
 			}
 
-			return BuildMoveInput(_investigationTarget, StoppingDistance);
+			return BuildMoveInput(_investigationTarget, StoppingDistance, true);
 		}
 
 		private NetworkedInput UpdateAttacking()
@@ -224,16 +220,42 @@ namespace SimpleFPS
 				return BuildLookInput(targetPosition);
 			}
 
-			_zombie.Navigator?.SetDestination(targetPosition);
-			return BuildMoveInput(targetPosition, Mathf.Max(0.1f, _zombie.Stats.AttackRange * 0.85f));
+			if (IsCachedAttackMoveTargetReached())
+			{
+				if (IsTargetInsideAttackRange(_target))
+					return BuildLookInput(targetPosition);
+
+				ClearAttackMoveTarget();
+				ClearNavigator();
+
+				if (TryRefreshDirectAttackTarget())
+					targetPosition = _lastKnownTargetPosition;
+				else
+				{
+					ReturnToIdle();
+					return UpdateIdle();
+				}
+			}
+
+			if (TryGetAttackMoveTarget(targetPosition, out Vector3 moveTarget))
+				return BuildAttackMoveInput(moveTarget);
+
+			return BuildLookInput(targetPosition);
 		}
 
 		private NetworkedInput UpdateHunting()
 		{
-			if (Time.timeSinceLevelLoad >= _nextRetargetTime || IsTargetAlive(_target) == false)
+			bool targetAlive = IsTargetAlive(_target);
+			if (_target == null)
 			{
-				_target = FindClosestAliveSurvivor();
-				_nextRetargetTime = Time.timeSinceLevelLoad + Mathf.Max(0.1f, HuntingRetargetInterval);
+				if (Time.timeSinceLevelLoad < _nextRetargetTime)
+					return default;
+
+				RefreshHuntingTarget();
+			}
+			else if (targetAlive == false || Time.timeSinceLevelLoad >= _nextRetargetTime)
+			{
+				RefreshHuntingTarget();
 			}
 
 			if (_target == null)
@@ -246,8 +268,35 @@ namespace SimpleFPS
 				return BuildLookInput(targetPosition);
 			}
 
-			_zombie.Navigator?.SetDestination(targetPosition);
-			return BuildMoveInput(targetPosition, Mathf.Max(0.1f, _zombie.Stats.AttackRange * 0.85f));
+			if (IsCachedAttackMoveTargetReached())
+			{
+				if (IsTargetInsideAttackRange(_target))
+					return BuildLookInput(targetPosition);
+
+				ClearAttackMoveTarget();
+				ClearNavigator();
+
+				RefreshHuntingTarget();
+				if (_target == null)
+					return default;
+
+				targetPosition = _target.transform.position;
+			}
+
+			if (TryGetAttackMoveTarget(targetPosition, out Vector3 moveTarget))
+				return BuildAttackMoveInput(moveTarget);
+
+			return BuildLookInput(targetPosition);
+		}
+
+		private void RefreshHuntingTarget()
+		{
+			NetworkObject previousTarget = _target;
+			_target = FindClosestAliveSurvivor();
+			if (_target != previousTarget)
+				ClearAttackMoveTarget();
+
+			ScheduleNextHuntingRetarget();
 		}
 
 		private void StartAttack(KnownEnemyInfo enemy)
@@ -257,8 +306,7 @@ namespace SimpleFPS
 			_lastStimulusTick = enemy.Tick;
 			State = EZombieAIState.Attacking;
 			_nextRetargetTime = Time.timeSinceLevelLoad + Mathf.Max(0.1f, AttackRetargetInterval);
-			_zombie.Navigator?.SetDestination(_lastKnownTargetPosition);
-			ResetStuckTracking();
+			ClearAttackMoveTarget();
 			AlertNearbyZombies(_lastKnownTargetPosition, enemy.Tick, false);
 		}
 
@@ -275,6 +323,7 @@ namespace SimpleFPS
 			if (targetChanged)
 			{
 				_nextRetargetTime = Time.timeSinceLevelLoad + Mathf.Max(0.1f, AttackRetargetInterval);
+				ClearAttackMoveTarget();
 				AlertNearbyZombies(_lastKnownTargetPosition, enemy.Tick, false);
 			}
 
@@ -292,9 +341,9 @@ namespace SimpleFPS
 
 			_investigationTarget = reachablePoint;
 			_target = null;
+			ClearAttackMoveTarget();
 			State = EZombieAIState.Investigating;
 			navigator.SetDestination(reachablePoint);
-			ResetStuckTracking();
 
 			if (fromAlert == false)
 				AlertNearbyZombies(reachablePoint, stimulusTick, true);
@@ -415,52 +464,113 @@ namespace SimpleFPS
 			_nextAlertTime = Time.timeSinceLevelLoad + Mathf.Max(0.05f, AlertCooldown);
 		}
 
-		private NetworkedInput BuildMoveInput(Vector3 destination, float stoppingDistance)
+		private bool TryGetAttackMoveTarget(Vector3 targetPosition, out Vector3 moveTarget)
+		{
+			moveTarget = default;
+
+			float now = Time.timeSinceLevelLoad;
+			if (_hasAttackMoveTarget && now < _nextAttackMoveTargetRefreshTime)
+			{
+				moveTarget = _attackMoveTarget;
+				return true;
+			}
+
+			_nextAttackMoveTargetRefreshTime = now + Mathf.Max(0.05f, AttackDestinationRefreshInterval);
+
+			var navigator = _zombie != null ? _zombie.Navigator : null;
+			if (navigator != null &&
+			    navigator.TryFindReachablePoint(transform.position, targetPosition, ReachablePointSampleDistance, out Vector3 reachablePoint))
+			{
+				if (IsUsefulAttackMoveTarget(reachablePoint, targetPosition) == false)
+				{
+					_hasAttackMoveTarget = false;
+					navigator.ClearDestination();
+					return false;
+				}
+
+				_attackMoveTarget = reachablePoint;
+				_hasAttackMoveTarget = true;
+				navigator.SetDestination(reachablePoint);
+				moveTarget = reachablePoint;
+				return true;
+			}
+
+			_hasAttackMoveTarget = false;
+			navigator?.ClearDestination();
+			return false;
+		}
+
+		private bool IsUsefulAttackMoveTarget(Vector3 moveTarget, Vector3 targetPosition)
+		{
+			float maxDistance = Mathf.Max(_zombie != null ? _zombie.Stats.AttackRange : 0f, AttackMoveTargetMaxDistanceFromTarget);
+			if (FlatDistanceSqr(moveTarget, targetPosition) > maxDistance * maxDistance)
+				return false;
+
+			return Mathf.Abs(moveTarget.y - targetPosition.y) <= Mathf.Max(0f, AttackMoveTargetMaxHeightDifference);
+		}
+
+		private bool IsCachedAttackMoveTargetReached()
+		{
+			if (_hasAttackMoveTarget == false)
+				return false;
+
+			var navigator = _zombie != null ? _zombie.Navigator : null;
+			if (navigator == null)
+				return FlatDistanceSqr(transform.position, _attackMoveTarget) <= StoppingDistance * StoppingDistance;
+
+			navigator.Tick(transform.position);
+			return navigator.IsDestinationReached;
+		}
+
+		private bool IsTargetInsideAttackRange(NetworkObject target)
+		{
+			if (IsTargetAlive(target) == false || _zombie == null)
+				return false;
+
+			float range = Mathf.Max(0.1f, _zombie.Stats.AttackRange);
+			return FlatDistanceSqr(transform.position, target.transform.position) <= range * range;
+		}
+
+		private void ClearAttackMoveTarget()
+		{
+			_hasAttackMoveTarget = false;
+			_attackMoveTarget = default;
+			_nextAttackMoveTargetRefreshTime = 0f;
+		}
+
+		private NetworkedInput BuildAttackMoveInput(Vector3 destination)
+		{
+			var input = BuildMoveInput(destination, Mathf.Max(0.05f, AttackMoveStoppingDistance), false);
+			if (input.MoveDirection != Vector2.zero)
+				return input;
+
+			ClearAttackMoveTarget();
+			ClearNavigator();
+			return default;
+		}
+
+		private NetworkedInput BuildMoveInput(Vector3 destination, float stoppingDistance, bool allowDirectFallback)
 		{
 			Vector3 currentPosition = transform.position;
 			Vector3 steeringTarget = destination;
 			var navigator = _zombie.Navigator;
 
-			if (TryGetActiveStuckRecoveryTarget(out Vector3 recoveryTarget))
-			{
-				destination = recoveryTarget;
-				steeringTarget = recoveryTarget;
-				stoppingDistance = Mathf.Min(stoppingDistance, 0.35f);
-				navigator?.SetDestination(recoveryTarget);
-			}
-
 			if (navigator != null)
 			{
 				navigator.Tick(currentPosition);
 				if (navigator.IsDestinationReached)
-				{
-					if (Time.timeSinceLevelLoad < _stuckRecoveryUntil)
-						ClearStuckRecovery();
-
 					return default;
-				}
 
 				if (navigator.TryGetSteeringTarget(currentPosition, out Vector3 pathTarget))
 					steeringTarget = pathTarget;
-				else if (FlatDistanceSqr(currentPosition, destination) > DirectFallbackDistance * DirectFallbackDistance)
-				{
-					if (IsStuck(currentPosition))
-						RecoverFromStuck(navigator);
-
+				else if (allowDirectFallback == false || FlatDistanceSqr(currentPosition, destination) > DirectMoveDistance * DirectMoveDistance)
 					return default;
-				}
 			}
 
 			Vector3 toTarget = steeringTarget - currentPosition;
 			toTarget.y = 0f;
 			if (toTarget.sqrMagnitude <= stoppingDistance * stoppingDistance)
 				return BuildLookInput(destination);
-
-			if (IsStuck(currentPosition))
-			{
-				RecoverFromStuck(navigator);
-				return default;
-			}
 
 			return BuildMoveInputFromDirection(toTarget.normalized);
 		}
@@ -531,9 +641,9 @@ namespace SimpleFPS
 		{
 			_target = null;
 			State = EZombieAIState.Idle;
+			ClearAttackMoveTarget();
 			ClearNavigator();
 			ScheduleNextIdleWander();
-			ResetStuckTracking();
 		}
 
 		private void ClearNavigator()
@@ -548,6 +658,13 @@ namespace SimpleFPS
 			_nextIdleWanderTime = Time.timeSinceLevelLoad + Random.Range(min, max);
 		}
 
+		private void ScheduleNextHuntingRetarget()
+		{
+			float interval = Mathf.Max(0.1f, HuntingRetargetInterval);
+			float jitter = Mathf.Max(0f, HuntingRetargetIntervalJitter);
+			_nextRetargetTime = Time.timeSinceLevelLoad + Mathf.Max(0.1f, interval + Random.Range(-jitter, jitter));
+		}
+
 		private void ScheduleInitialIdleWander()
 		{
 			float max = Mathf.Max(0f, InitialIdleWanderDelayMax);
@@ -559,102 +676,6 @@ namespace SimpleFPS
 			float min = Mathf.Max(0.1f, IdleWanderRetryDelayMin);
 			float max = Mathf.Max(min, IdleWanderRetryDelayMax);
 			_nextIdleWanderTime = Time.timeSinceLevelLoad + Random.Range(min, max);
-		}
-
-		private bool IsStuck(Vector3 currentPosition)
-		{
-			if (StuckDuration <= 0f || StuckCheckInterval <= 0f)
-				return false;
-			if (Time.timeSinceLevelLoad < _nextStuckCheckTime)
-				return false;
-
-			float progressSqr = FlatDistanceSqr(currentPosition, _lastStuckCheckPosition);
-			float minProgress = Mathf.Max(0.01f, StuckMinProgress);
-			_stuckTime = progressSqr < minProgress * minProgress ? _stuckTime + StuckCheckInterval : 0f;
-			_lastStuckCheckPosition = currentPosition;
-			_nextStuckCheckTime = Time.timeSinceLevelLoad + StuckCheckInterval;
-
-			return _stuckTime >= StuckDuration;
-		}
-
-		private void ResetStuckTracking()
-		{
-			_stuckTime = 0f;
-			_lastStuckCheckPosition = transform.position;
-			_nextStuckCheckTime = Time.timeSinceLevelLoad + Mathf.Max(0.1f, StuckCheckInterval);
-			ClearStuckRecovery();
-		}
-
-		private void RecoverFromStuck(CharacterNavigator navigator)
-		{
-			ResetStuckTracking();
-
-			if (TryChooseStuckRecoveryPoint(out Vector3 recoveryPoint))
-			{
-				_stuckRecoveryTarget = recoveryPoint;
-				_stuckRecoveryUntil = Time.timeSinceLevelLoad + Mathf.Max(0.1f, StuckRecoveryDuration);
-				navigator?.SetDestination(recoveryPoint);
-				return;
-			}
-
-			navigator?.ForceRepath();
-
-			if (State == EZombieAIState.Idle || State == EZombieAIState.Investigating)
-			{
-				navigator?.ClearDestination();
-				ScheduleIdleWanderRetry();
-			}
-		}
-
-		private bool TryGetActiveStuckRecoveryTarget(out Vector3 target)
-		{
-			target = default;
-			if (Time.timeSinceLevelLoad >= _stuckRecoveryUntil)
-				return false;
-
-			target = _stuckRecoveryTarget;
-			return true;
-		}
-
-		private void ClearStuckRecovery()
-		{
-			_stuckRecoveryUntil = 0f;
-			_stuckRecoveryTarget = default;
-		}
-
-		private bool TryChooseStuckRecoveryPoint(out Vector3 point)
-		{
-			point = default;
-			var navigator = _zombie != null ? _zombie.Navigator : null;
-			if (navigator == null || StuckRecoveryStepDistance <= 0f)
-				return false;
-
-			Vector3 origin = transform.position;
-			Vector3 awayFromZombies = GetAwayFromNearbyZombies(origin);
-			Vector3 back = -transform.forward;
-			back.y = 0f;
-			if (back.sqrMagnitude < 0.001f)
-				back = Random.insideUnitSphere;
-			back.Normalize();
-
-			int candidates = Mathf.Max(1, StuckRecoveryCandidateCount);
-			float stepDistance = Mathf.Max(0.25f, StuckRecoveryStepDistance);
-			for (int i = 0; i < candidates; i++)
-			{
-				float angle = i == 0 ? 0f : (360f / candidates) * i + Random.Range(-15f, 15f);
-				Vector3 direction = Quaternion.Euler(0f, angle, 0f) * back;
-				if (awayFromZombies.sqrMagnitude > 0.001f)
-					direction = (direction + awayFromZombies).normalized;
-
-				Vector3 candidate = origin + direction * stepDistance;
-				if (navigator.TryFindReachablePoint(origin, candidate, Mathf.Max(1f, stepDistance), out Vector3 reachable) == false)
-					continue;
-
-				point = reachable;
-				return true;
-			}
-
-			return false;
 		}
 
 		private float GetCurrentYaw()

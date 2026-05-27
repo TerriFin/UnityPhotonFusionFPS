@@ -182,21 +182,17 @@ Combat movement should be layered on top of ordinary `NetworkedInput`.
 
 ### Zombies
 
-`StandGround`:
+Zombie combat uses a simpler first-pass branch than enemy-survivor combat.
+
+While `CombatMovementEnabled` is on, survivors:
 
 - Aim and shoot from current position.
-- Do not move toward the zombie.
+- Do not use cover sampling, ally spacing, or preferred weapon range movement against zombies.
+- Do not move toward a zombie just because it is far away.
+- Back away only if the zombie enters `SurvivorCombatAI.ZombieRetreatDistance`.
+- Keep aiming/firing while backing away when line of fire and weapon timing allow it.
 
-`AdvanceBeforeShooting`:
-
-- Move closer until within preferred weapon range.
-- Shoot when line of fire and lock-on allow it.
-
-`StandGroundRetreatIfClose`:
-
-- Stand ground while the zombie is at safe distance.
-- Move backwards if the zombie enters a danger radius.
-- Keep aiming/firing while backing up when possible.
+If `CombatMovementEnabled` is off, the survivor still aims/fires according to normal weapon behavior, but does not perform the zombie retreat movement.
 
 ### Enemy Survivors
 
@@ -236,6 +232,8 @@ If an enemy leaves vision but is not confirmed dead:
 - `FollowLastKnownPosition`: move toward the last known position, then release combat AI if no enemy is reacquired.
 
 Following last known positions should use `CharacterNavigator` and should not require networking special state. It is just another state-authority AI movement decision.
+
+Lost-enemy investigation currently applies only to enemy survivors. Zombies do not create lost-combat investigation tasks: if a zombie dies or leaves direct combat awareness, the survivor returns to its normal non-combat assignment unless another live direct enemy is present.
 
 ## Combat Handoff
 

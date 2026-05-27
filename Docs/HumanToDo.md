@@ -7,9 +7,6 @@ feel free to read, might give good context :)
  - World gen should stay layered: height -> roads -> buildings -> loot -> special encounters.
 
 ## To-do list:
-- Zombies
-- Separate human combat AI vs Zombies
-- Zombies get stronger, more numerous as game goes on (after time limit supercharge them and make them home in on survivors)
 - Neutral, recruitable survivors
 - Server startup options (map generation sliders, game modifiers, game duration)
 - Disconnect/Join cleanup (error messages, game crashes, spectate mode)

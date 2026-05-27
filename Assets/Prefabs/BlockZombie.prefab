@@ -1224,19 +1224,19 @@ MonoBehaviour:
   IdleWanderRadius: 16
   IdleWanderAvoidZombieRadius: 10
   IdleWanderCandidateCount: 5
-  AttackRetargetInterval: 2.5
-  HuntingRetargetInterval: 2.5
-  StoppingDistance: 0.75
-  DirectFallbackDistance: 0.25
+  AttackRetargetInterval: 1
+  HuntingRetargetInterval: 5
+  HuntingRetargetIntervalJitter: 1
+  HuntingInitialRetargetStaggerMax: 3
+  StoppingDistance: 0.5
+  DirectMoveDistance: 0.75
   MaxYawDegreesPerTick: 7
   ReachablePointSampleDistance: 6
-  StuckCheckInterval: 0.4
-  StuckMinProgress: 0.2
-  StuckDuration: 0.8
-  StuckRecoveryStepDistance: 2.5
-  StuckRecoveryDuration: 0.75
-  StuckRecoveryCandidateCount: 8
-  MaxAlertRecipients: 8
+  AttackMoveStoppingDistance: 0.2
+  AttackMoveTargetMaxDistanceFromTarget: 0.25
+  AttackMoveTargetMaxHeightDifference: 0.75
+  AttackDestinationRefreshInterval: 0.66
+  MaxAlertRecipients: 16
   AlertCooldown: 2
 --- !u!114 &3991566580172985026
 MonoBehaviour:
@@ -1250,11 +1250,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 51e013f3e0c34dce820371ac0f24f155, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  ProximityAwarenessRadius: 5
+  ProximityAwarenessRadius: 6
   NoiseAwarenessRadius: 26
-  BulletImpactAwarenessRadius: 4
-  VisionDistance: 10
-  VisionAngle: 60
+  BulletImpactAwarenessRadius: 5
+  VisionDistance: 12
+  VisionAngle: 80
   EyeHeight: 1.6
   VisionBlockers:
     serializedVersion: 2
@@ -1263,7 +1263,7 @@ MonoBehaviour:
   SensorInterval: 0.6
   MemoryDuration: 2
   MaxKnownEntries: 4
-  MaxKnownPickups: 1
+  MaxKnownPickups: 0
 --- !u!114 &7195504373959092826
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1276,10 +1276,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e30285cfb87341439ccfa6b07e2f4903, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  RepathInterval: 0.25
+  RepathInterval: 0.5
   CornerReachDistance: 0.75
-  DestinationReachDistance: 1
-  DestinationChangeRepathDistance: 0.5
+  DestinationReachDistance: 0.5
+  DestinationChangeRepathDistance: 0.33
   SampleMaxDistance: 2
   ReachablePointSampleMaxDistance: 8
   AreaMask: -1

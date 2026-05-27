@@ -1437,7 +1437,7 @@ MonoBehaviour:
   FirstPersonRoot: {fileID: 4260200998989714414}
   ThirdPersonRoot: {fileID: 5369756712734312024}
   SprayPrefab: {fileID: 5001271651808748919, guid: b9abe105d5282b64682ef15dace9ba19, type: 3}
-  AIMoveSpeed: 5
+  AIMoveSpeed: 6
   AIFollowFullSpeedRadius: 16
   UpGravity: 18
   DownGravity: 25
@@ -1623,8 +1623,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   DefaultFollowStoppingDistance: 3.5
-  DefaultMoveStoppingDistance: 0.25
-  DirectFallbackDistance: 0.5
+  DefaultMoveStoppingDistance: 0.66
+  DirectFallbackDistance: 0.75
   MaxYawDegreesPerTick: 8
   IdleLookRotationIntervalMin: 3
   IdleLookRotationIntervalMax: 9
@@ -1642,7 +1642,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   PickupStoppingDistance: 0.1
-  DirectFallbackDistance: 0.25
+  DirectFallbackDistance: 0.5
 --- !u!114 &3140107809847408399
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1655,9 +1655,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 61c928d4e57a4fb2b93f0a6c3857de10, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  InvestigationStoppingDistance: 0.25
+  InvestigationStoppingDistance: 0.33
   DirectFallbackDistance: 0.5
-  AllyAlertRadius: 10
+  AllyAlertRadius: 8
   LookDurationMin: 3
   LookDurationMax: 5
   LookRotationIntervalMin: 0.75
@@ -1675,12 +1675,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 47acbc7b6ad442ff935d926bfc730b22, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  AreaStoppingDistance: 0.5
-  PatrolPointStoppingDistance: 0.5
+  AreaStoppingDistance: 0.66
+  PatrolPointStoppingDistance: 0.66
   DirectFallbackDistance: 0.75
   PatrolPointSampleAttempts: 8
-  WaitDurationMin: 8
-  WaitDurationMax: 17
+  WaitDurationMin: 7
+  WaitDurationMax: 16
 --- !u!114 &-4394101241498737787
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1698,11 +1698,13 @@ MonoBehaviour:
   FirstShotDelayMin: 0.5
   FirstShotDelayMax: 0.8
   MovingFirstShotDelayMultiplier: 1.2
-  FollowupShotDelayMin: 0.2
-  FollowupShotDelayMax: 0.6
+  FollowupShotDelayMin: 0.15
+  FollowupShotDelayMax: 0.5
   TriggerHoldDuration: 0.185
-  HorizontalAimErrorDegrees: 6
-  VerticalAimErrorDegrees: 2.5
+  HorizontalAimErrorDegrees: 5
+  VerticalAimErrorDegrees: 2
+  ZombieHorizontalAimErrorDegrees: 3
+  ZombieVerticalAimErrorDegrees: 1.5
   AimTargetHeight: 1.4
   AimErrorRefreshInterval: 0.8
   FireAlignmentAngle: 6
@@ -1721,6 +1723,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   MaxYawDegreesPerTick: 8
+  ZombieRetreatDistance: 5
 --- !u!114 &4286926381959304160
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1733,18 +1736,18 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2478dd1f95a716748a150702958df3c7, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  ReevaluateInterval: 3
+  ReevaluateInterval: 2.5
   CandidateCount: 5
   SearchRadius: 10
   NavMeshSampleDistance: 7
-  StoppingDistance: 0.1
-  MinimumMoveDistance: 1
+  StoppingDistance: 0.33
+  MinimumMoveDistance: 1.25
   DestinationRefreshDistance: 0.75
   DirectFallbackDistance: 0.2
   RequiredScoreImprovement: 0.2
   InitialReevaluationStaggerMax: 0.75
   ReevaluateIntervalJitter: 0.25
-  MaxCachedAllies: 16
+  MaxCachedAllies: 8
   RequireCandidateLineOfFire: 1
   PartialCoverProbeOffset: 0.6
   TargetLossBlacklistDuration: 4
@@ -1773,9 +1776,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e30285cfb87341439ccfa6b07e2f4903, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  RepathInterval: 0.35
-  CornerReachDistance: 0.75
-  DestinationReachDistance: 0.5
+  RepathInterval: 0.5
+  CornerReachDistance: 0.66
+  DestinationReachDistance: 0.66
   DestinationChangeRepathDistance: 0.5
   SampleMaxDistance: 2
   ReachablePointSampleMaxDistance: 8

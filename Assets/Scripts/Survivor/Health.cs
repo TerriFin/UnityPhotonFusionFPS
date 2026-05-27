@@ -87,7 +87,7 @@ namespace SimpleFPS
 
 			CurrentHealth = Mathf.Min(CurrentHealth + health, MaxHealth);
 
-			if (HasInputAuthority && Runner.IsForward)
+			if (IsActiveLocalSurvivor() && Runner.IsForward)
 			{
 				// Heal effect is shown only to local player.
 				// We assume the prediction will be correct most of the time so we don't need to network anything explicitly.
@@ -142,6 +142,12 @@ namespace SimpleFPS
 				if (HitEffectLifetime > 0f)
 					Destroy(hitEffect, HitEffectLifetime);
 			}
+		}
+
+		private bool IsActiveLocalSurvivor()
+		{
+			var survivor = GetComponent<Survivor>();
+			return HasInputAuthority && survivor != null && survivor.IsActiveCharacter();
 		}
 	}
 }

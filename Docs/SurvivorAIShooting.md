@@ -39,6 +39,8 @@ public float TriggerHoldDuration = 0.35f;
 
 public float HorizontalAimErrorDegrees = 8f;
 public float VerticalAimErrorDegrees = 4f;
+public float ZombieHorizontalAimErrorDegrees = 3f;
+public float ZombieVerticalAimErrorDegrees = 1.5f;
 public float AimTargetHeight = 1.4f;
 public float AimErrorRefreshInterval = 0.8f;
 public float FireAlignmentAngle = 10f;
@@ -55,6 +57,7 @@ public float MaxPitchDegreesPerTick = 6f;
 - Reads the closest directly detected enemy from `CharacterSensor` using vision/proximity memories.
 - Refuses dead survivor targets defensively even if sensor memory has not pruned them yet.
 - Rotates toward an intentionally imperfect aim direction near the target's configured aim height.
+- Uses separate aim error values for survivor targets and zombie targets.
 - Waits a random first-shot delay after acquiring a target.
 - Multiplies that first-shot delay by `MovingFirstShotDelayMultiplier` when movement AI asks for combat input while moving.
 - Requires current line of fire before pressing `Fire`, so memory from noise, bullet impacts, or enemies behind blockers can make the survivor look but not shoot.
@@ -99,9 +102,13 @@ Aim error is split into horizontal and vertical values:
 
 - `HorizontalAimErrorDegrees` misses left/right.
 - `VerticalAimErrorDegrees` misses high/low.
+- `ZombieHorizontalAimErrorDegrees` is used instead when the direct target has `ZombieCharacter`.
+- `ZombieVerticalAimErrorDegrees` is used instead when the direct target has `ZombieCharacter`.
 - `AimTargetHeight` offsets the target position upward so AI aims around the torso instead of the ground.
 
 `VerticalAimErrorDegrees` defaults lower than horizontal error so survivors are bad without constantly shooting far above or below the target. This also helps compensate for projectile drop making low shots feel too common when aiming at ground-level transforms.
+
+Zombie targets should usually use smaller error values than survivor targets. Zombies move straight toward survivors at predictable speeds, so the same inaccuracy that feels good in survivor-vs-survivor firefights can make PvE shooting look strangely incompetent.
 
 ## AI Integration
 
@@ -137,6 +144,12 @@ Shooting decisions are not networked as separate AI state.
 - Weapon firing continues through existing authoritative `Weapons.Fire(...)`.
 - Resulting projectiles, hits, and movement replicate through existing systems.
 
+## Local Feedback
+
+Hit-marker visuals, hit-marker sounds, kill-marker sounds, and empty-clip UI-style audio should only play for the local player's currently active survivor. Other survivors on the same team may still shoot and reload, but their successful hits should not trigger the player's crosshair feedback.
+
+Health pickup popups follow the same rule through `Health`: they are shown only when the currently active local survivor receives the heal.
+
 ## Tuning Notes
 
 For worse survivors:
@@ -146,6 +159,7 @@ For worse survivors:
 - Increase `TriggerHoldDuration` for longer automatic bursts.
 - Increase `HorizontalAimErrorDegrees`.
 - Increase `VerticalAimErrorDegrees`.
+- Increase `ZombieHorizontalAimErrorDegrees` / `ZombieVerticalAimErrorDegrees` separately if survivors are too reliable against zombies.
 - Lower `AimTargetHeight` if they should shoot lower, or raise it if they should bias toward chest/head height.
 - Increase `FireAlignmentAngle` only if they should shoot before properly facing the target.
 

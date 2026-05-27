@@ -206,7 +206,8 @@ Handoff rules:
 - If `AllowCombatAIActivation` is disabled, player-given non-combat orders keep running even if the survivor notices enemies.
 - Non-combat AI keeps its current assignment data while suspended.
 - If the enemy dies, combat AI releases control and non-combat AI resumes the previous assignment.
-- If the enemy is alive but breaks line of fire, non-combat AI can investigate the last known enemy position before returning to the previous assignment.
+- If an enemy survivor is alive but breaks line of fire, non-combat AI can investigate the last known enemy survivor position before returning to the previous assignment.
+- Zombies do not create lost-combat investigation tasks. Survivors may alert allies when they directly notice a zombie, but after the zombie is gone or dead they return to their previous assignment instead of walking to the zombie's last known position.
 - Lost-combat investigation is treated as a combat handoff. It may start even if combat pulled the survivor outside an assigned area, as long as investigation is enabled and the enemy is not confirmed dead.
 - Lost-combat investigation does not override an unreached player movement order. If the survivor is still following, moving to a clicked point, or travelling into an assigned defend area for the first time, that order remains the movement priority.
 - Player movement orders also clear any remembered lost-combat target from before the order was issued. This prevents a survivor from obeying a new move/assigned-area command and then resuming an old investigation after arrival.

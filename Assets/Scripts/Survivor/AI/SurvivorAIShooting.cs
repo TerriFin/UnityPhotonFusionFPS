@@ -24,10 +24,16 @@ namespace SimpleFPS
 		public float FollowupShotDelayMax = 1.8f;
 		public float TriggerHoldDuration = 0.35f;
 
-		[Header("Accuracy")]
+		[Header("Accuracy - Survivors")]
 		[FormerlySerializedAs("AimErrorDegrees")]
 		public float HorizontalAimErrorDegrees = 8f;
 		public float VerticalAimErrorDegrees = 4f;
+
+		[Header("Accuracy - Zombies")]
+		public float ZombieHorizontalAimErrorDegrees = 3f;
+		public float ZombieVerticalAimErrorDegrees = 1.5f;
+
+		[Header("Aiming")]
 		public float AimTargetHeight = 1.4f;
 		public float AimErrorRefreshInterval = 0.8f;
 		public float FireAlignmentAngle = 10f;
@@ -211,15 +217,16 @@ namespace SimpleFPS
 		private void RefreshAimError(KnownEnemyInfo enemy)
 		{
 			Vector3 toTarget = GetAimTargetPosition(enemy) - GetAimOrigin();
+			GetAimErrorDegrees(enemy, out float horizontalAimError, out float verticalAimError);
 
-			if (toTarget.sqrMagnitude < 0.001f || (HorizontalAimErrorDegrees <= 0f && VerticalAimErrorDegrees <= 0f))
+			if (toTarget.sqrMagnitude < 0.001f || (horizontalAimError <= 0f && verticalAimError <= 0f))
 			{
 				_aimDirectionOffset = Vector3.zero;
 			}
 			else
 			{
-				float yawError = Random.Range(-HorizontalAimErrorDegrees, HorizontalAimErrorDegrees);
-				float pitchError = Random.Range(-VerticalAimErrorDegrees, VerticalAimErrorDegrees);
+				float yawError = Random.Range(-horizontalAimError, horizontalAimError);
+				float pitchError = Random.Range(-verticalAimError, verticalAimError);
 				Vector3 right = Vector3.Cross(Vector3.up, toTarget.normalized);
 				if (right.sqrMagnitude < 0.001f)
 					right = transform.right;
@@ -231,6 +238,19 @@ namespace SimpleFPS
 			}
 
 			_nextAimErrorRefreshTime = Time.timeSinceLevelLoad + Mathf.Max(0.05f, AimErrorRefreshInterval);
+		}
+
+		private void GetAimErrorDegrees(KnownEnemyInfo enemy, out float horizontalAimError, out float verticalAimError)
+		{
+			if (IsZombieTarget(enemy.Object))
+			{
+				horizontalAimError = ZombieHorizontalAimErrorDegrees;
+				verticalAimError = ZombieVerticalAimErrorDegrees;
+				return;
+			}
+
+			horizontalAimError = HorizontalAimErrorDegrees;
+			verticalAimError = VerticalAimErrorDegrees;
 		}
 
 		private bool HasLineOfFire(KnownEnemyInfo enemy)
@@ -289,6 +309,11 @@ namespace SimpleFPS
 			_nextShotTime = 0f;
 			_nextAimErrorRefreshTime = 0f;
 			_triggerReleaseTime = 0f;
+		}
+
+		private static bool IsZombieTarget(NetworkObject target)
+		{
+			return target != null && target.GetComponent<ZombieCharacter>() != null;
 		}
 	}
 }

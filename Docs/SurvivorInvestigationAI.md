@@ -63,13 +63,15 @@ Investigation consumes immediate events from `CharacterSensor`, especially:
 - Bullet impact.
 - Approximate shooter position.
 - Direct enemy sighting for one-hop ally alerts.
-- Last known enemy position after combat line of fire is lost.
+- Last known enemy survivor position after combat line of fire is lost.
 
 Sound and bullet-impact stimuli are immediate prompts, not remembered investigation targets. If the survivor cannot start investigating when the event happens, it ignores the event.
 
 This prevents stale combat sounds from pulling survivors around later after the situation has changed.
 
 Likewise, a survivor that sees or shoots at an enemy while still travelling to a player-issued move destination, follow target, or first-time assigned-area entry point must not store that enemy as a delayed lost-combat investigation. The survivor may aim and fire while moving, but once the direct combat moment is gone it should continue the player order and forget that old last-known enemy position.
+
+Zombies are a special case. Survivors may alert nearby allies when they directly notice a zombie, but they do not create lost-zombie investigation tasks. Once the zombie is dead or no longer a direct combat target, the survivor returns to its normal assignment instead of walking to the zombie's last known position.
 
 ## Behavior Flow
 
@@ -100,11 +102,11 @@ Alert rules:
 
 ## Lost Combat Investigation
 
-If a survivor had line of fire to an enemy, then loses that line of fire while the enemy is still alive, `SurvivorNonCombatAI` can convert the enemy's last known position into a new investigation target.
+If a survivor had line of fire to an enemy survivor, then loses that line of fire while the enemy survivor is still alive, `SurvivorNonCombatAI` can convert the enemy's last known position into a new investigation target.
 
 This allows survivors to pursue and check the last known enemy position instead of immediately returning to their original assignment.
 
-If the enemy is confirmed dead, the survivor returns to its previous non-combat assignment instead.
+If the enemy is confirmed dead, or if the lost enemy is a zombie, the survivor returns to its previous non-combat assignment instead.
 
 ## Interruption Rules
 

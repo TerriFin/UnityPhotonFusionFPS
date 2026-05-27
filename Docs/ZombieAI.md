@@ -138,6 +138,8 @@ IdleWanderIntervalMin
 IdleWanderIntervalMax
 AttackRetargetInterval
 HuntingRetargetInterval
+HuntingRetargetIntervalJitter
+HuntingInitialRetargetStaggerMax
 ```
 
 Recommended defaults:
@@ -146,7 +148,9 @@ Recommended defaults:
 IdleWanderIntervalMin: 10s
 IdleWanderIntervalMax: 14s
 AttackRetargetInterval: 2.5s
-HuntingRetargetInterval: 2.5s
+HuntingRetargetInterval: 5s
+HuntingRetargetIntervalJitter: 1s
+HuntingInitialRetargetStaggerMax: 3s
 ```
 
 These intervals are intentionally coarse. Zombies should not constantly reconsider every possible target. They should mostly commit to their current action, then periodically reconsider.
@@ -218,10 +222,14 @@ Rules:
 
 - Choose a target, normally the closest direct survivor.
 - Move toward the target using `CharacterNavigator` when pathing is needed.
-- Use direct movement only at short range.
+- Attack movement must use `CharacterNavigator` steering. Zombies should not fall back to raw straight-line chasing when a path/steering target cannot be produced.
 - Alert nearby zombies to the target or target position.
 - Periodically re-check known direct targets, default every `2.5s`.
-- Move toward the sensor-confirmed last known target position, not the target's live transform through walls.
+- Move toward a cached reachable NavMesh point near the sensor-confirmed last known target position, not the target's raw transform.
+- The cached attack move point must be close enough to the survivor and close enough in height to be a plausible melee position.
+- Refresh that reachable attack destination only every `ZombieAI.AttackDestinationRefreshInterval` seconds.
+- If no reachable attack destination can be found, look at the target but do not move directly into intervening geometry.
+- If the zombie reaches its cached attack move point but still cannot attack, immediately discard that point. If it is still aware of a valid target, resolve a new attack move point; if it is not aware of any target, return to idle.
 - If inside attack range and cooldown is ready, deal damage.
 - If the target dies, choose another known target or switch to idle/investigate.
 - If direct vision/proximity is lost and the target is not dead, immediately investigate the last known position.
@@ -230,6 +238,19 @@ Zombies do not need cover, weapon logic, strafing, or tactical range behavior.
 
 Attack retargeting should only consider targets the zombie is currently aware of through direct sensor proximity/vision. It should not perform a global survivor search during normal attacking, and it should not keep tracking a survivor's live position after the survivor has escaped behind blocking geometry.
 
+Useful attack movement tunables:
+
+```text
+DirectMoveDistance
+ReachablePointSampleDistance
+AttackMoveStoppingDistance
+AttackMoveTargetMaxDistanceFromTarget
+AttackMoveTargetMaxHeightDifference
+AttackDestinationRefreshInterval
+```
+
+`DirectMoveDistance` is still used by non-attack path fallback behavior, but attack movement is intentionally stricter. `AttackMoveStoppingDistance` is the distance from the resolved NavMesh attack move point where path movement can stop; it should stay small because `AttackRange` is checked separately by `ZombieCharacter.TryAttack()`. `AttackMoveTargetMaxDistanceFromTarget` prevents zombies from choosing a technically reachable point that is still too far from the survivor to attack from. `AttackMoveTargetMaxHeightDifference` prevents zombies from accepting a point below/above the survivor, such as the bottom of a ledge or beside a car the survivor is standing on.
+
 ### Hunting
 
 Hunting begins in overtime.
@@ -237,7 +258,9 @@ Hunting begins in overtime.
 Rules:
 
 - Ignore normal "do I know about an enemy?" gating.
-- Periodically choose the nearest alive survivor globally, default every `2.5s`.
+- Periodically choose the nearest alive survivor globally, default around every `5s`.
+- Stagger the first hunting target acquisition so every zombie does not scan the full survivor list on the same tick when overtime begins.
+- Add small retarget interval jitter so large hordes do not all refresh targets together forever.
 - Keep chasing the current hunting target between retarget checks unless it dies or becomes invalid.
 - Move toward that survivor.
 - If the target dies, pick the next nearest alive survivor.
@@ -284,24 +307,23 @@ Suggested pathing rules:
 
 - Repath less often than survivors, for example `0.4-0.8s`.
 - Stagger repath times by spawn index or random offset.
-- Use direct movement only when extremely close to the target or when no path exists and the target is almost reached.
+- Use direct movement only when extremely close to the target through `ZombieAI.DirectMoveDistance`.
+- Use `ZombieAI.AttackDestinationRefreshInterval` to control how often a moving survivor target is resolved into a new reachable chase point.
 - Do not calculate paths while idle unless a real movement target exists.
 - Consider future movement LOD for far-away zombies.
 
-Zombies can still get stuck if the NavMesh is valid for the baked agent but the KCC capsule cannot physically pass the same corner/gap. The implementation handles this with a cheap progress check: if a zombie has a destination but stops making progress, it first tries a short reachable sidestep target, then resumes the real destination. If no sidestep can be found, it forces a repath. Idle and investigation destinations can be abandoned and retried. If many zombies still stick to props, check the prefab KCC radius against the baked NavMesh agent radius and increase `CharacterNavigator.CornerReachDistance` so zombies do not try to thread razor-thin corners.
+Zombies can still get stuck if the NavMesh is valid for the baked agent but the KCC capsule cannot physically pass the same corner/gap. The zombie AI currently does not run a local stuck-recovery detour. If many zombies stick to props, ramps, or ledge seams, first check whether the baked NavMesh, generated colliders, and KCC capsule agree about what space is actually walkable.
 
 Current stricter movement defaults:
 
 ```text
 ZombieAI.StoppingDistance: 1.35
-ZombieAI.DirectFallbackDistance: 0.25
+ZombieAI.DirectMoveDistance: 0.25
 ZombieAI.ReachablePointSampleDistance: 6
-ZombieAI.StuckCheckInterval: 0.4
-ZombieAI.StuckMinProgress: 0.2
-ZombieAI.StuckDuration: 0.8
-ZombieAI.StuckRecoveryStepDistance: 2.5
-ZombieAI.StuckRecoveryDuration: 0.75
-ZombieAI.StuckRecoveryCandidateCount: 8
+ZombieAI.AttackDestinationRefreshInterval: 0.5
+ZombieAI.HuntingRetargetInterval: 5
+ZombieAI.HuntingRetargetIntervalJitter: 1
+ZombieAI.HuntingInitialRetargetStaggerMax: 3
 CharacterNavigator.RepathInterval: 0.35
 CharacterNavigator.CornerReachDistance: 0.75
 CharacterNavigator.DestinationReachDistance: 1.35

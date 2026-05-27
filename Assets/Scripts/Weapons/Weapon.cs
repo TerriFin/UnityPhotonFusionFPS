@@ -91,6 +91,7 @@ namespace SimpleFPS
 		private bool _reloadingVisible;
 		private GameObject _muzzleEffectInstance;
 		private SceneObjects _sceneObjects;
+		private Survivor _ownerSurvivor;
 		private readonly List<ActiveProjectile> _activeProjectiles = new List<ActiveProjectile>();
 		private readonly ProjectileVisual[] _activeVisuals = new ProjectileVisual[64];
 
@@ -199,6 +200,7 @@ namespace SimpleFPS
 			_muzzleEffectInstance.SetActive(false);
 
 			_sceneObjects = Runner.GetSingleton<SceneObjects>();
+			_ownerSurvivor = GetComponentInParent<Survivor>();
 		}
 
 		public override void FixedUpdateNetwork()
@@ -328,7 +330,7 @@ namespace SimpleFPS
 					_activeVisuals[fireSlot] = null;
 				}
 
-				if (HasInputAuthority && hitData.ShowEffect == false)
+				if (IsHeldByActiveLocalSurvivor() && hitData.ShowEffect == false)
 				{
 					_sceneObjects.GameUI.PlayerView.Crosshair.ShowHit(hitData.IsKill, hitData.IsCriticalHit);
 				}
@@ -426,10 +428,15 @@ namespace SimpleFPS
 			if (EmptyClipSound == null || EmptyClipSound.isPlaying)
 				return;
 
-			if (Runner.IsForward && HasInputAuthority)
+			if (Runner.IsForward && IsHeldByActiveLocalSurvivor())
 			{
 				EmptyClipSound.Play();
 			}
+		}
+
+		private bool IsHeldByActiveLocalSurvivor()
+		{
+			return HasInputAuthority && _ownerSurvivor != null && _ownerSurvivor.IsActiveCharacter();
 		}
 
 		private Vector3 EvaluateTrajectory(Vector3 origin, Vector3 direction, float elapsed)
