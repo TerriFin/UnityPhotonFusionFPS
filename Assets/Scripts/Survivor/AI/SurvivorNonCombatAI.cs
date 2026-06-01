@@ -241,9 +241,9 @@ namespace SimpleFPS
 				_investigation.ClearTask(true, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
 		}
 
-		public void ReceiveInvestigationAlert(Vector3 target, int stimulusTick)
+		public void ReceiveInvestigationAlert(Vector3 target, int stimulusTick, NetworkObject observedTarget = null)
 		{
-			TryStartInvestigation(target, stimulusTick, false);
+			TryStartInvestigation(target, stimulusTick, false, observedTarget, false, false);
 		}
 
 		public void ReceiveInvestigationStimulus(Vector3 target, int stimulusTick)
@@ -253,10 +253,10 @@ namespace SimpleFPS
 
 		private bool TryStartInvestigation(Vector3 target, int stimulusTick, bool alertAllies)
 		{
-			return TryStartInvestigation(target, stimulusTick, alertAllies, false, false);
+			return TryStartInvestigation(target, stimulusTick, alertAllies, null, false, false);
 		}
 
-		private bool TryStartInvestigation(Vector3 target, int stimulusTick, bool alertAllies, bool allowSameTick, bool force)
+		private bool TryStartInvestigation(Vector3 target, int stimulusTick, bool alertAllies, NetworkObject observedTarget, bool allowSameTick, bool force)
 		{
 			EnsureBehaviorComponents();
 			return _investigation != null &&
@@ -268,6 +268,7 @@ namespace SimpleFPS
 				       target,
 				       stimulusTick,
 				       alertAllies,
+				       observedTarget,
 				       allowSameTick,
 				       force);
 		}
@@ -786,7 +787,7 @@ namespace SimpleFPS
 			_lastCombatEnemyPosition = enemy.LastKnownPosition;
 			_lastCombatEnemyTick = enemy.Tick;
 			_hasLastCombatEnemy = false;
-			return TryStartInvestigation(_lastCombatEnemyPosition, _lastCombatEnemyTick, true, true, true);
+			return TryStartInvestigation(_lastCombatEnemyPosition, _lastCombatEnemyTick, true, _lastCombatEnemy, true, true);
 		}
 
 		private bool TryStartLostCombatInvestigation()
@@ -800,7 +801,7 @@ namespace SimpleFPS
 			}
 
 			_hasLastCombatEnemy = false;
-			return TryStartInvestigation(_lastCombatEnemyPosition, _lastCombatEnemyTick, true, true, true);
+			return TryStartInvestigation(_lastCombatEnemyPosition, _lastCombatEnemyTick, true, _lastCombatEnemy, true, true);
 		}
 
 		private void TryAlertAlliesAboutDirectEnemy(KnownEnemyInfo enemy)
@@ -813,7 +814,7 @@ namespace SimpleFPS
 				return;
 
 			_lastAlertedDirectEnemyTick = enemy.Tick;
-			_investigation?.AlertNearbyAllies(_survivor, enemy.LastKnownPosition, enemy.Tick, _settings.InvestigateSuspiciousStimuli);
+			_investigation?.AlertNearbyAllies(_survivor, enemy.LastKnownPosition, enemy.Tick, _settings.InvestigateSuspiciousStimuli, enemy.Object);
 		}
 
 		private static bool IsLostCombatInvestigationTarget(KnownEnemyInfo enemy)

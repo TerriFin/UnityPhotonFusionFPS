@@ -242,6 +242,14 @@ namespace SimpleFPS
 				for (int i = _activeProjectiles.Count - 1; i >= 0; i--)
 				{
 					var proj = _activeProjectiles[i];
+
+					// Skip the spawn tick. Survivor runs FixedUpdateNetwork before Weapon, so the
+					// just-fired projectile would otherwise be stepped with tPrev = -dt, which makes
+					// prevPos lie behind the muzzle and the first lag-compensated raycast scan
+					// geometry the bullet never actually crossed — typically a wall behind the shooter.
+					if (Runner.Tick <= proj.SpawnTick)
+						continue;
+
 					float tPrev = (Runner.Tick - 1 - proj.SpawnTick) * dt;
 					float tCurr = (Runner.Tick     - proj.SpawnTick) * dt;
 

@@ -110,6 +110,8 @@ Aim error is split into horizontal and vertical values:
 
 Zombie targets should usually use smaller error values than survivor targets. Zombies move straight toward survivors at predictable speeds, so the same inaccuracy that feels good in survivor-vs-survivor firefights can make PvE shooting look strangely incompetent.
 
+Aim error is stored as an angular offset (yaw and pitch in degrees) refreshed every `AimErrorRefreshInterval`, not as a positional offset in world space. The current direction to the target is computed each tick and the stored yaw/pitch rotation is applied on top of it. This keeps the angular error bounded by the configured values regardless of how far the target has moved since the last refresh — a target rushing from long range to point blank no longer turns a small error angle into a huge effective miss.
+
 ## AI Integration
 
 `SurvivorNonCombatAI` hold assignments use shooting input whenever there is a direct target with line of fire. If there is no such target and investigation is enabled, it falls back to `CharacterSensor` look input, which lets the survivor rotate toward noises, bullet impacts, and last known positions.

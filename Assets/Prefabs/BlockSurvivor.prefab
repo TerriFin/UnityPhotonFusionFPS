@@ -1605,9 +1605,9 @@ MonoBehaviour:
   VisionBlockers:
     serializedVersion: 2
     m_Bits: 1
-  DisableWhenPossessed: 0
+  DisableWhenPossessed: 1
   SensorInterval: 0.3
-  MemoryDuration: 2
+  MemoryDuration: 3
   MaxKnownEntries: 8
   MaxKnownPickups: 8
 --- !u!114 &5017329814356762074

@@ -6,7 +6,7 @@ using UnityEngine.UI;
 
 namespace SimpleFPS
 {
-	public sealed class GameMapView : MonoBehaviour
+	public sealed class GameMapView : MonoBehaviour, IGameMapView
 	{
 		[Header("Setup")]
 		public GameObject MapRoot;
@@ -119,6 +119,8 @@ namespace SimpleFPS
 			Cursor.lockState = _previousCursorLockState;
 			Cursor.visible = _previousCursorVisible;
 		}
+
+		public RawImage GetMapImage() => MapImage;
 
 		public Vector2 WorldToMapUI(Vector3 worldPosition)
 		{

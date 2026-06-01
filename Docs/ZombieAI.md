@@ -229,6 +229,7 @@ Rules:
 - The cached attack move point must be close enough to the survivor and close enough in height to be a plausible melee position.
 - Refresh that reachable attack destination only every `ZombieAI.AttackDestinationRefreshInterval` seconds.
 - If no reachable attack destination can be found, look at the target but do not move directly into intervening geometry.
+- If the target is on a low unreachable prop, such as a car with no NavMesh on top, path to the closest reachable ground beside it and climb when close enough.
 - If the zombie reaches its cached attack move point but still cannot attack, immediately discard that point. If it is still aware of a valid target, resolve a new attack move point; if it is not aware of any target, return to idle.
 - If inside attack range and cooldown is ready, deal damage.
 - If the target dies, choose another known target or switch to idle/investigate.
@@ -247,9 +248,25 @@ AttackMoveStoppingDistance
 AttackMoveTargetMaxDistanceFromTarget
 AttackMoveTargetMaxHeightDifference
 AttackDestinationRefreshInterval
+CanClimbUnreachableTargets
+ClimbSpeedMultiplier
+ClimbApproachMaxDistanceFromTarget
+ClimbStartDistance
+ClimbMinHeightDifference
+ClimbMaxHeightDifference
+ClimbMantleSnapDistance
+ClimbMantleHeightTolerance
+ClimbMantleForwardDistance
+ClimbMantleProbeHeight
+ClimbMantleProbeDistance
+ClimbMantleMinSurfaceNormalY
 ```
 
 `DirectMoveDistance` is still used by non-attack path fallback behavior, but attack movement is intentionally stricter. `AttackMoveStoppingDistance` is the distance from the resolved NavMesh attack move point where path movement can stop; it should stay small because `AttackRange` is checked separately by `ZombieCharacter.TryAttack()`. `AttackMoveTargetMaxDistanceFromTarget` prevents zombies from choosing a technically reachable point that is still too far from the survivor to attack from. `AttackMoveTargetMaxHeightDifference` prevents zombies from accepting a point below/above the survivor, such as the bottom of a ledge or beside a car the survivor is standing on.
+
+Climbing is a first-pass pressure behavior for props that players can jump onto but zombies cannot path onto. It does not replace normal pathfinding. The zombie first resolves a reachable approach point near the target. If that point is within `ClimbApproachMaxDistanceFromTarget` horizontally but too low vertically, and the height gap fits the climb min/max range, the zombie moves beside the object and then climbs upward once it is within `ClimbStartDistance` of the approach point. Climb movement uses `ClimbSpeedMultiplier` of normal movement speed, and `ZombieCharacter` routes the upward motion through the KCC jump/impulse path while climb gravity is disabled. This is intended for cars and small props, not tall rooftops unless the max height and approach distance are deliberately increased.
+
+The mantle settings finish the last lip of the climb. When a climbing zombie is close enough to the target horizontally and almost at the target height, it probes a short distance forward/down for a mostly flat surface. If found, the authoritative `ZombieCharacter` snaps the KCC to that surface and immediately re-evaluates attack/pathing from there. This prevents zombies from hanging on prop edges forever when the KCC cannot naturally crest the lip.
 
 ### Hunting
 
@@ -312,7 +329,75 @@ Suggested pathing rules:
 - Do not calculate paths while idle unless a real movement target exists.
 - Consider future movement LOD for far-away zombies.
 
-Zombies can still get stuck if the NavMesh is valid for the baked agent but the KCC capsule cannot physically pass the same corner/gap. The zombie AI currently does not run a local stuck-recovery detour. If many zombies stick to props, ramps, or ledge seams, first check whether the baked NavMesh, generated colliders, and KCC capsule agree about what space is actually walkable.
+Zombies can still get stuck if the NavMesh is valid for the baked agent but the KCC capsule cannot physically pass the same corner/gap. The zombie AI currently does not run a local stuck-recovery detour for NavMesh-walkable seams. If many zombies stick to props, ramps, or ledge seams, first check whether the baked NavMesh, generated colliders, and KCC capsule agree about what space is actually walkable.
+
+## Off-NavMesh Stuck Recovery
+
+Zombies that climb onto a prop the NavMesh does not cover (cars, crates, small structures) cannot pathfind off it. The behavior splits by AI state so zombies finish climbs and keep pressuring targets they can still reach, but eventually leave perches once they have nothing to do there.
+
+Idle state (no target, no investigation):
+
+1. Periodically sample the NavMesh at the zombie's current position using `NavMesh.SamplePosition` with `StuckSampleRadius`.
+2. The zombie is treated as elevated/stuck when either the sample fails or the sampled NavMesh point is more than `StuckMinHeightAboveNavMesh` below the zombie.
+3. While stuck, the zombie picks a random horizontal direction, clears any cached attack-move target and navigator destination, and moves in that direction for `StuckRandomWanderDurationMin..Max` seconds.
+4. A new random direction is chosen each time the previous wander duration expires while still stuck.
+5. As soon as the zombie returns to NavMesh-covered ground (sample succeeds and the height difference is within tolerance), the state machine resumes and normal idle wandering takes over.
+
+Attacking and Hunting state (has a target):
+
+- The elevated stuck check does NOT override active combat. Mid-climb zombies finish their climb, and zombies that successfully mantled onto a prop can keep attacking targets they can already reach from up there.
+- If the zombie has a target but every navigator query and climb cache fails AND it is currently elevated off the NavMesh, it falls back to a direct horizontal move toward the target instead of just looking at it. This walks the zombie off the perch in the direction of its target rather than picking a random direction.
+- Once back on the NavMesh, normal path-based attack movement resumes.
+
+Investigation state intentionally cannot start from an off-NavMesh position (`StartInvestigation` requires `CharacterNavigator.TryFindReachablePoint` to succeed first), so investigation never traps a zombie on a perch.
+
+When a zombie loses direct sight of its attack target — typically because the target jumped off a ledge — the transition from Attacking to Investigating runs `TryExtendInvestigationTargetPastLedge` on the cached last-known position before calling `StartInvestigation`. The helper probes one step at a time in the zombie's approach direction (same step / probe / fall tunables as the in-state ledge drop check). If the path forward from the last-known spot is clear and there is lower geometry within `LedgeDropMaxFallHeight`, the investigation target is rewritten to that lower hit point. The zombie then enters investigation already pointed at the lower terrain, and the existing per-state ledge drop check fires on the first investigation tick, committing the zombie off the ledge instead of stalling on top.
+
+If no drop is found in the approach direction, the investigation target stays at the original last-known position and the zombie investigates normally.
+
+Random wander (not "move toward target") is used in idle because the goal is to fall off the prop and re-enter the navmesh, not to find a path the NavMesh has already rejected. Direct-move toward target is preferred in combat because the zombie has a meaningful direction to commit to.
+
+Suggested defaults:
+
+```text
+ZombieAI.StuckSampleRadius: 0.6
+ZombieAI.StuckMinHeightAboveNavMesh: 0.6
+ZombieAI.StuckCheckInterval: 0.5
+ZombieAI.StuckRandomWanderDurationMin: 1
+ZombieAI.StuckRandomWanderDurationMax: 2.5
+```
+
+## Ledge Drop Shortcut
+
+Survivors prefer to route around ledges through ramps because falling is unsafe for them. Zombies have no such concern, so when a zombie has a goal on lower terrain it should drop straight off the ledge instead of routing through the same ramp the survivor would. This shortcut runs in Attacking, Hunting, and Investigating — the three states with a concrete goal point (attack target, hunting target, or investigation point seeded by noise/bullet impact/alert).
+
+The check runs every tick on the goal point and decides:
+
+1. Goal must be at least `LedgeDropMinHeightDrop` below the zombie's current Y. Same-level or higher goals route normally.
+2. Step forward in the goal's horizontal direction in fixed `LedgeDropStepSize` increments, up to `LedgeDropProbeDistance` total. At each step:
+   - `Physics.Raycast` at chest height from the zombie to the step point must be clear (no wall). A wall ends the search — the zombie can't reach a drop through it.
+   - `Physics.Raycast` straight down from just above the step point. If the hit ground is at least `LedgeDropMinHeightDrop` below the zombie's Y (and at most `LedgeDropMaxFallHeight + 1` meters away), the step is the start of a drop and the check returns true.
+3. If no step finds a drop within the probe distance, the check returns false and normal NavMesh path-finding takes over.
+
+When the check succeeds, the zombie's cached attack-move target and navigator destination are cleared and the AI emits a direct horizontal move toward the goal. The KCC then steps the zombie off the ledge, gravity handles the fall, and on landing the normal NavMesh path-finding resumes from the lower terrain.
+
+The check is physics-only — it does not call `NavMesh.Raycast`. NavMesh raycasts depend on subtle polygon-connectivity details and don't reliably stop at cliff edges when the upper and lower NavMesh are part of the same baked mesh. The Physics ground probe is also less sensitive to NavMesh sample radii.
+
+The physics layer mask covers both `Default` and `MapNonVisible`. Some building geometry is on the `MapNonVisible` layer so that the minimap camera can cull it; both layers must be included or the ground probe will silently miss those buildings and report no drop.
+
+The map generator guarantees that ledges with NavMesh on top are also connected to lower-terrain NavMesh, so once the zombie has dropped it can re-acquire a path.
+
+Survivor AI does not use this shortcut. Survivors should continue to prefer ramps; if fall damage is added later, this stays the same.
+
+Suggested defaults:
+
+```text
+ZombieAI.LedgeDropEnabled: true
+ZombieAI.LedgeDropMinHeightDrop: 1
+ZombieAI.LedgeDropProbeDistance: 4
+ZombieAI.LedgeDropStepSize: 0.75
+ZombieAI.LedgeDropMaxFallHeight: 8
+```
 
 Current stricter movement defaults:
 

@@ -121,10 +121,11 @@ public float EnemyIconForgetDelay = 2f;
 
 Rules:
 
-- Seeing the same enemy again refreshes the icon position and delay.
-- The icon position should be the enemy's latest sensed position.
-- If the enemy dies, remove the icon immediately.
-- If the delay expires, remove/fade the icon.
+- Seeing the same enemy again refreshes the icon position, rotation, and delay. The "newer sighting" check uses the sensor's per-enemy `Tick` value, so anything the awareness tracker stores about an enemy stays frozen between sense ticks even if the live target keeps moving and rotating in the world.
+- The icon position should be the enemy's last directly sensed position.
+- The icon rotation should be the enemy's facing yaw captured at that same last-sighting tick. Reading the live `Survivor.transform.eulerAngles` would let the marker keep spinning after the target ducked out of view.
+- If the enemy dies, remove the icon immediately (no fade).
+- Otherwise, while the icon is in memory the awareness tracker stores `LastSenseTime` (real time of last sighting). Every render frame the icon controller derives opacity from `1 - (now - LastSenseTime) / ForgetDelay`. The marker stays fully opaque while at least one local sensor still reports the enemy via its known-list, then fades linearly to zero over `ForgetDelay` once nothing perceives it. The tracker removes the entry when opacity reaches zero.
 
 This UI memory is client-local. It does not need to be `[Networked]`.
 

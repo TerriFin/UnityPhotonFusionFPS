@@ -139,6 +139,14 @@ if (HasStateAuthority)
     for (int i = _activeProjectiles.Count - 1; i >= 0; i--)
     {
         var proj    = _activeProjectiles[i];
+
+        // Skip the spawn tick. Survivor.FixedUpdateNetwork runs before Weapon's, so the just-fired
+        // projectile would otherwise be stepped with tPrev = -dt — prevPos lands behind the muzzle
+        // and the first raycast scans geometry the bullet never crossed (usually a wall behind the
+        // shooter). The bullet starts moving on spawnTick + 1.
+        if (currentTick <= proj.SpawnTick)
+            continue;
+
         float tPrev = (currentTick - 1 - proj.SpawnTick) * dt;
         float tCurr = (currentTick     - proj.SpawnTick) * dt;
 

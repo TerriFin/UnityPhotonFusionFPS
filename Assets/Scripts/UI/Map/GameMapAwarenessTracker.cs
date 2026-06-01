@@ -55,7 +55,19 @@ namespace SimpleFPS
 						if (IsSpawnedSurvivor(enemySurvivor) == false || enemySurvivor.Health == null || enemySurvivor.Health.IsAlive == false)
 							continue;
 
-						_enemyMemory[enemy.Object] = new EnemyMapMemory(enemySurvivor, enemy.LastKnownPosition, now + Mathf.Max(0f, EnemyIconForgetDelay));
+						// Only refresh position / rotation / timestamp when the sensor has a newer
+						// sighting tick than the existing memory. Between sightings every field stays
+						// frozen — that's what stops the enemy marker from spinning while the target
+						// rotates out of view.
+						if (_enemyMemory.TryGetValue(enemy.Object, out var existing) && existing.LastSenseTick >= enemy.Tick)
+							continue;
+
+						_enemyMemory[enemy.Object] = new EnemyMapMemory(
+							enemySurvivor,
+							enemy.LastKnownPosition,
+							enemySurvivor.transform.eulerAngles.y,
+							enemy.Tick,
+							now);
 						continue;
 					}
 
@@ -63,7 +75,10 @@ namespace SimpleFPS
 					if (IsSpawnedZombie(zombie) == false || zombie.Health == null || zombie.Health.IsAlive == false)
 						continue;
 
-					_zombieMemory[enemy.Object] = new ZombieMapMemory(zombie, enemy.LastKnownPosition, now + Mathf.Max(0f, ZombieIconForgetDelay));
+					if (_zombieMemory.TryGetValue(enemy.Object, out var existingZombie) && existingZombie.LastSenseTick >= enemy.Tick)
+						continue;
+
+					_zombieMemory[enemy.Object] = new ZombieMapMemory(zombie, enemy.LastKnownPosition, enemy.Tick, now);
 				}
 
 				_visiblePickups.Clear();
@@ -75,7 +90,25 @@ namespace SimpleFPS
 					if (pickup.Object == null || IsPickupDestroyed(pickup))
 						continue;
 
-					_pickupMemory[pickup.Object] = new PickupMapMemory(pickup.Position, pickup.Type, IsPickupActive(pickup), now + Mathf.Max(0f, PickupIconForgetDelay));
+					if (_pickupMemory.TryGetValue(pickup.Object, out var existingPickup) && existingPickup.LastSenseTick >= pickup.Tick)
+					{
+						// Still update IsActive / type bookkeeping each tick so a depleted pickup gets
+						// the inactive color immediately, but preserve the fade timestamp.
+						_pickupMemory[pickup.Object] = new PickupMapMemory(
+							existingPickup.Position,
+							pickup.Type,
+							IsPickupActive(pickup),
+							existingPickup.LastSenseTick,
+							existingPickup.LastSenseTime);
+						continue;
+					}
+
+					_pickupMemory[pickup.Object] = new PickupMapMemory(
+						pickup.Position,
+						pickup.Type,
+						IsPickupActive(pickup),
+						pickup.Tick,
+						now);
 				}
 			}
 
@@ -83,7 +116,7 @@ namespace SimpleFPS
 			foreach (var pair in _enemyMemory)
 			{
 				var memory = pair.Value;
-				if (IsSpawnedSurvivor(memory.Survivor) == false || memory.Survivor.Health == null || memory.Survivor.Health.IsAlive == false || memory.ExpiresAt <= now)
+				if (IsSpawnedSurvivor(memory.Survivor) == false || memory.Survivor.Health == null || memory.Survivor.Health.IsAlive == false || IsFaded(now, memory.LastSenseTime, EnemyIconForgetDelay))
 					_expired.Add(pair.Key);
 			}
 
@@ -94,7 +127,7 @@ namespace SimpleFPS
 			foreach (var pair in _zombieMemory)
 			{
 				var memory = pair.Value;
-				if (IsSpawnedZombie(memory.Zombie) == false || memory.Zombie.Health == null || memory.Zombie.Health.IsAlive == false || memory.ExpiresAt <= now)
+				if (IsSpawnedZombie(memory.Zombie) == false || memory.Zombie.Health == null || memory.Zombie.Health.IsAlive == false || IsFaded(now, memory.LastSenseTime, ZombieIconForgetDelay))
 					_expired.Add(pair.Key);
 			}
 
@@ -105,12 +138,25 @@ namespace SimpleFPS
 			foreach (var pair in _pickupMemory)
 			{
 				var memory = pair.Value;
-				if (pair.Key == null || pair.Key.IsValid == false || memory.ExpiresAt <= now)
+				if (pair.Key == null || pair.Key.IsValid == false || IsFaded(now, memory.LastSenseTime, PickupIconForgetDelay))
 					_expired.Add(pair.Key);
 			}
 
 			for (int i = 0; i < _expired.Count; i++)
 				_pickupMemory.Remove(_expired[i]);
+		}
+
+		public static float ComputeOpacity(float now, float lastSenseTime, float forgetDelay)
+		{
+			if (forgetDelay <= 0f)
+				return 1f;
+
+			return 1f - Mathf.Clamp01((now - lastSenseTime) / forgetDelay);
+		}
+
+		private static bool IsFaded(float now, float lastSenseTime, float forgetDelay)
+		{
+			return forgetDelay > 0f && (now - lastSenseTime) > forgetDelay;
 		}
 
 		private static bool IsSpawnedSurvivor(Survivor survivor)
@@ -147,13 +193,17 @@ namespace SimpleFPS
 		{
 			public readonly Survivor Survivor;
 			public readonly Vector3 LastKnownPosition;
-			public readonly float ExpiresAt;
+			public readonly float LastKnownRotationY;
+			public readonly int LastSenseTick;
+			public readonly float LastSenseTime;
 
-			public EnemyMapMemory(Survivor survivor, Vector3 lastKnownPosition, float expiresAt)
+			public EnemyMapMemory(Survivor survivor, Vector3 lastKnownPosition, float lastKnownRotationY, int lastSenseTick, float lastSenseTime)
 			{
 				Survivor = survivor;
 				LastKnownPosition = lastKnownPosition;
-				ExpiresAt = expiresAt;
+				LastKnownRotationY = lastKnownRotationY;
+				LastSenseTick = lastSenseTick;
+				LastSenseTime = lastSenseTime;
 			}
 		}
 
@@ -162,14 +212,16 @@ namespace SimpleFPS
 			public readonly Vector3 Position;
 			public readonly EVisiblePickupType Type;
 			public readonly bool IsActive;
-			public readonly float ExpiresAt;
+			public readonly int LastSenseTick;
+			public readonly float LastSenseTime;
 
-			public PickupMapMemory(Vector3 position, EVisiblePickupType type, bool isActive, float expiresAt)
+			public PickupMapMemory(Vector3 position, EVisiblePickupType type, bool isActive, int lastSenseTick, float lastSenseTime)
 			{
 				Position = position;
 				Type = type;
 				IsActive = isActive;
-				ExpiresAt = expiresAt;
+				LastSenseTick = lastSenseTick;
+				LastSenseTime = lastSenseTime;
 			}
 		}
 
@@ -177,13 +229,15 @@ namespace SimpleFPS
 		{
 			public readonly ZombieCharacter Zombie;
 			public readonly Vector3 LastKnownPosition;
-			public readonly float ExpiresAt;
+			public readonly int LastSenseTick;
+			public readonly float LastSenseTime;
 
-			public ZombieMapMemory(ZombieCharacter zombie, Vector3 lastKnownPosition, float expiresAt)
+			public ZombieMapMemory(ZombieCharacter zombie, Vector3 lastKnownPosition, int lastSenseTick, float lastSenseTime)
 			{
 				Zombie = zombie;
 				LastKnownPosition = lastKnownPosition;
-				ExpiresAt = expiresAt;
+				LastSenseTick = lastSenseTick;
+				LastSenseTime = lastSenseTime;
 			}
 		}
 	}

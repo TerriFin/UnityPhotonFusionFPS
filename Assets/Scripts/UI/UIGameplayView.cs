@@ -5,5 +5,6 @@ namespace SimpleFPS
 	public class UIGameplayView : MonoBehaviour
 	{
 		public UIKillFeed KillFeed;
+		public GameMinimapView MinimapView;
 	}
 }

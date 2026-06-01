@@ -43,12 +43,41 @@ namespace SimpleFPS
 		public float AttackMoveTargetMaxHeightDifference = 0.75f;
 		public float AttackDestinationRefreshInterval = 0.5f;
 
+		[Header("Climbing")]
+		public bool CanClimbUnreachableTargets = true;
+		public float ClimbSpeedMultiplier = 0.5f;
+		public float ClimbApproachMaxDistanceFromTarget = 4f;
+		public float ClimbStartDistance = 1.25f;
+		public float ClimbMinHeightDifference = 0.45f;
+		public float ClimbMaxHeightDifference = 2.5f;
+		public float ClimbMantleSnapDistance = 2.5f;
+		public float ClimbMantleHeightTolerance = 1.25f;
+		public float ClimbMantleForwardDistance = 0.9f;
+		public float ClimbMantleProbeHeight = 1.5f;
+		public float ClimbMantleProbeDistance = 3f;
+		public float ClimbMantleMinSurfaceNormalY = 0.55f;
+
 		[Header("Alerts")]
 		public int MaxAlertRecipients = 8;
 		public float AlertCooldown = 2f;
 
+		[Header("Stuck Recovery")]
+		public float StuckSampleRadius = 0.6f;
+		public float StuckMinHeightAboveNavMesh = 0.6f;
+		public float StuckCheckInterval = 0.5f;
+		public float StuckRandomWanderDurationMin = 1f;
+		public float StuckRandomWanderDurationMax = 2.5f;
+
+		[Header("Ledge Drop")]
+		public bool LedgeDropEnabled = true;
+		public float LedgeDropMinHeightDrop = 1f;
+		public float LedgeDropProbeDistance = 4f;
+		public float LedgeDropStepSize = 0.75f;
+		public float LedgeDropMaxFallHeight = 8f;
+
 		public EZombieAIState State { get; private set; }
 		public float LastAttackTime { get; private set; } = -1f;
+		public bool WantsToClimb { get; private set; }
 
 		private ZombieCharacter _zombie;
 		private NetworkObject _target;
@@ -60,7 +89,13 @@ namespace SimpleFPS
 		private Vector3 _attackMoveTarget;
 		private float _nextAttackMoveTargetRefreshTime;
 		private bool _hasAttackMoveTarget;
+		private Vector3 _climbApproachTarget;
+		private bool _hasClimbApproachTarget;
 		private int _lastStimulusTick;
+		private float _nextStuckCheckTime;
+		private bool _isStuckElevated;
+		private Vector3 _stuckWanderDirection;
+		private float _stuckWanderEndTime;
 
 		public void Activate(ZombieCharacter zombie)
 		{
@@ -71,6 +106,8 @@ namespace SimpleFPS
 
 		public NetworkedInput GetInput(NetworkRunner runner)
 		{
+			WantsToClimb = false;
+
 			if (_zombie == null)
 				Activate(GetComponent<ZombieCharacter>());
 			if (_zombie == null || _zombie.Health == null || _zombie.Health.IsAlive == false)
@@ -78,6 +115,9 @@ namespace SimpleFPS
 
 			if (_zombie.IsOvertime && State != EZombieAIState.Hunting)
 				EnterHunting();
+
+			if (State == EZombieAIState.Idle && TryGetStuckRandomMoveInput(out NetworkedInput stuckInput))
+				return stuckInput;
 
 			switch (State)
 			{
@@ -90,6 +130,192 @@ namespace SimpleFPS
 				default:
 					return UpdateIdle();
 			}
+		}
+
+		private bool TryGetStuckRandomMoveInput(out NetworkedInput input)
+		{
+			input = default;
+
+			float now = Time.timeSinceLevelLoad;
+
+			if (now >= _nextStuckCheckTime)
+			{
+				_nextStuckCheckTime = now + Mathf.Max(0.1f, StuckCheckInterval);
+				_isStuckElevated = IsElevatedOffNavMesh();
+			}
+
+			if (_isStuckElevated == false)
+				return false;
+
+			if (now >= _stuckWanderEndTime)
+			{
+				Vector2 random = Random.insideUnitCircle.normalized;
+				_stuckWanderDirection = new Vector3(random.x, 0f, random.y);
+
+				float min = Mathf.Max(0.1f, StuckRandomWanderDurationMin);
+				float max = Mathf.Max(min, StuckRandomWanderDurationMax);
+				_stuckWanderEndTime = now + Random.Range(min, max);
+			}
+
+			ClearAttackMoveTarget();
+			ClearNavigator();
+
+			input = BuildMoveInputFromDirection(_stuckWanderDirection);
+			return input.MoveDirection != Vector2.zero;
+		}
+
+		private bool IsElevatedOffNavMesh()
+		{
+			Vector3 position = transform.position;
+			float radius = Mathf.Max(0.1f, StuckSampleRadius);
+
+			if (NavMesh.SamplePosition(position, out var hit, radius, NavMesh.AllAreas) == false)
+				return true;
+
+			return (position.y - hit.position.y) > Mathf.Max(0.1f, StuckMinHeightAboveNavMesh);
+		}
+
+		private bool TryBuildOffNavMeshDirectMoveInput(Vector3 targetPosition, out NetworkedInput input)
+		{
+			input = default;
+
+			if (IsElevatedOffNavMesh() == false)
+				return false;
+
+			Vector3 toTarget = targetPosition - transform.position;
+			toTarget.y = 0f;
+			if (toTarget.sqrMagnitude < 0.001f)
+				return false;
+
+			input = BuildMoveInputFromDirection(toTarget.normalized);
+			return input.MoveDirection != Vector2.zero;
+		}
+
+		private bool TryExtendInvestigationTargetPastLedge(Vector3 lastKnown, out Vector3 extendedTarget)
+		{
+			extendedTarget = default;
+
+			if (LedgeDropEnabled == false)
+				return false;
+
+			// Approach direction: from the zombie toward where it last saw the target. If the target
+			// jumped off a ledge, the drop is usually in this same direction just past the last-known
+			// spot. Extending the investigation target onto the lower terrain lets the existing ledge
+			// drop check fire during UpdateInvestigating instead of the zombie stopping at the lip.
+			Vector3 toLastKnown = lastKnown - transform.position;
+			toLastKnown.y = 0f;
+			if (toLastKnown.sqrMagnitude < 0.001f)
+				return false;
+
+			Vector3 direction = toLastKnown.normalized;
+
+			int mask = LayerMask.GetMask("Default", "MapNonVisible");
+			if (mask == 0)
+				mask = Physics.DefaultRaycastLayers;
+
+			var physicsScene = _zombie != null && _zombie.Runner != null
+				? _zombie.Runner.GetPhysicsScene()
+				: Physics.defaultPhysicsScene;
+
+			float minDrop = Mathf.Max(0.1f, LedgeDropMinHeightDrop);
+			float maxFall = Mathf.Max(minDrop, LedgeDropMaxFallHeight);
+			float stepSize = Mathf.Max(0.5f, LedgeDropStepSize);
+			float maxProbe = Mathf.Max(stepSize, LedgeDropProbeDistance);
+			int maxSteps = Mathf.Max(1, Mathf.CeilToInt(maxProbe / stepSize));
+
+			Vector3 forwardRayOrigin = lastKnown + Vector3.up * 0.8f;
+
+			for (int i = 1; i <= maxSteps; i++)
+			{
+				float distance = Mathf.Min(stepSize * i, maxProbe);
+
+				if (physicsScene.Raycast(forwardRayOrigin, direction, distance, mask, QueryTriggerInteraction.Ignore))
+					return false;
+
+				Vector3 probePoint = lastKnown + direction * distance;
+				probePoint.y = lastKnown.y + 0.5f;
+
+				if (physicsScene.Raycast(probePoint, Vector3.down, out RaycastHit groundHit,
+					    maxFall + 1f, mask, QueryTriggerInteraction.Ignore) == false)
+					continue;
+
+				float drop = lastKnown.y - groundHit.point.y;
+				if (drop < minDrop)
+					continue;
+
+				extendedTarget = groundHit.point;
+				return true;
+			}
+
+			return false;
+		}
+
+		private bool TryBuildLedgeDropDirectMoveInput(Vector3 targetPosition, out NetworkedInput input)
+		{
+			input = default;
+
+			if (LedgeDropEnabled == false)
+				return false;
+
+			Vector3 currentPosition = transform.position;
+
+			// Goal must be meaningfully below the zombie. Same-level or above goals route normally.
+			float minDrop = Mathf.Max(0.1f, LedgeDropMinHeightDrop);
+			if (currentPosition.y - targetPosition.y < minDrop)
+				return false;
+
+			Vector3 toTarget = targetPosition - currentPosition;
+			toTarget.y = 0f;
+			if (toTarget.sqrMagnitude < 0.001f)
+				return false;
+
+			Vector3 direction = toTarget.normalized;
+
+			int mask = LayerMask.GetMask("Default", "MapNonVisible");
+			if (mask == 0)
+				mask = Physics.DefaultRaycastLayers;
+
+			var physicsScene = _zombie != null && _zombie.Runner != null
+				? _zombie.Runner.GetPhysicsScene()
+				: Physics.defaultPhysicsScene;
+
+			float maxFall = Mathf.Max(minDrop, LedgeDropMaxFallHeight);
+			float probeDistance = Mathf.Max(0.1f, LedgeDropProbeDistance);
+
+			// Step forward in fixed increments. For each step, check that the path forward is clear
+			// (no wall at chest height), then probe straight down. The first step where the ground is
+			// meaningfully below the zombie is treated as a ledge drop. This makes detection work the
+			// same whether the zombie is 0.5m or 5m back from the edge, as long as nothing blocks the
+			// path between zombie and the edge.
+			float stepSize = Mathf.Max(0.5f, LedgeDropStepSize);
+			int maxSteps = Mathf.Max(1, Mathf.CeilToInt(probeDistance / stepSize));
+			Vector3 forwardRayOrigin = currentPosition + Vector3.up * 0.8f;
+
+			for (int i = 1; i <= maxSteps; i++)
+			{
+				float distance = Mathf.Min(stepSize * i, probeDistance);
+
+				// Wall check from zombie to this step. If anything blocks before reaching the step,
+				// we can't walk straight ahead — no ledge drop.
+				if (physicsScene.Raycast(forwardRayOrigin, direction, distance, mask, QueryTriggerInteraction.Ignore))
+					return false;
+
+				Vector3 probePoint = currentPosition + direction * distance;
+				probePoint.y = currentPosition.y + 0.5f;
+
+				if (physicsScene.Raycast(probePoint, Vector3.down, out RaycastHit groundHit,
+					    maxFall + 1f, mask, QueryTriggerInteraction.Ignore) == false)
+					continue; // No ground in range at this step — keep stepping (drop might be deeper)
+
+				float drop = currentPosition.y - groundHit.point.y;
+				if (drop < minDrop)
+					continue; // Same level here — keep stepping
+
+				input = BuildMoveInputFromDirection(direction);
+				return input.MoveDirection != Vector2.zero;
+			}
+
+			return false;
 		}
 
 		public void EnterHunting()
@@ -176,6 +402,12 @@ namespace SimpleFPS
 				return default;
 			}
 
+			if (TryBuildLedgeDropDirectMoveInput(_investigationTarget, out NetworkedInput ledgeInput))
+			{
+				ClearNavigator();
+				return ledgeInput;
+			}
+
 			return BuildMoveInput(_investigationTarget, StoppingDistance, true);
 		}
 
@@ -193,7 +425,11 @@ namespace SimpleFPS
 			{
 				if (IsTargetAlive(_target))
 				{
-					StartInvestigation(_lastKnownTargetPosition, _lastStimulusTick, false);
+					Vector3 investigationTarget = _lastKnownTargetPosition;
+					if (TryExtendInvestigationTargetPastLedge(investigationTarget, out Vector3 extended))
+						investigationTarget = extended;
+
+					StartInvestigation(investigationTarget, _lastStimulusTick, false);
 					return UpdateInvestigating();
 				}
 
@@ -237,8 +473,21 @@ namespace SimpleFPS
 				}
 			}
 
+			if (TryBuildLedgeDropDirectMoveInput(targetPosition, out NetworkedInput ledgeInput))
+			{
+				ClearAttackMoveTarget();
+				ClearNavigator();
+				return ledgeInput;
+			}
+
 			if (TryGetAttackMoveTarget(targetPosition, out Vector3 moveTarget))
 				return BuildAttackMoveInput(moveTarget);
+
+			if (TryBuildClimbInput(targetPosition, out NetworkedInput climbInput))
+				return climbInput;
+
+			if (TryBuildOffNavMeshDirectMoveInput(targetPosition, out NetworkedInput directInput))
+				return directInput;
 
 			return BuildLookInput(targetPosition);
 		}
@@ -283,8 +532,21 @@ namespace SimpleFPS
 				targetPosition = _target.transform.position;
 			}
 
+			if (TryBuildLedgeDropDirectMoveInput(targetPosition, out NetworkedInput ledgeInput))
+			{
+				ClearAttackMoveTarget();
+				ClearNavigator();
+				return ledgeInput;
+			}
+
 			if (TryGetAttackMoveTarget(targetPosition, out Vector3 moveTarget))
 				return BuildAttackMoveInput(moveTarget);
+
+			if (TryBuildClimbInput(targetPosition, out NetworkedInput climbInput))
+				return climbInput;
+
+			if (TryBuildOffNavMeshDirectMoveInput(targetPosition, out NetworkedInput directInput))
+				return directInput;
 
 			return BuildLookInput(targetPosition);
 		}
@@ -476,6 +738,7 @@ namespace SimpleFPS
 			}
 
 			_nextAttackMoveTargetRefreshTime = now + Mathf.Max(0.05f, AttackDestinationRefreshInterval);
+			ClearClimbApproachTarget();
 
 			var navigator = _zombie != null ? _zombie.Navigator : null;
 			if (navigator != null &&
@@ -484,7 +747,11 @@ namespace SimpleFPS
 				if (IsUsefulAttackMoveTarget(reachablePoint, targetPosition) == false)
 				{
 					_hasAttackMoveTarget = false;
-					navigator.ClearDestination();
+					if (TryCacheClimbApproachTarget(reachablePoint, targetPosition))
+						navigator.SetDestination(reachablePoint);
+					else
+						navigator.ClearDestination();
+
 					return false;
 				}
 
@@ -498,6 +765,95 @@ namespace SimpleFPS
 			_hasAttackMoveTarget = false;
 			navigator?.ClearDestination();
 			return false;
+		}
+
+		private bool TryCacheClimbApproachTarget(Vector3 reachablePoint, Vector3 targetPosition)
+		{
+			if (CanClimbUnreachableTargets == false)
+				return false;
+
+			float heightDifference = targetPosition.y - reachablePoint.y;
+			if (heightDifference < Mathf.Max(0f, ClimbMinHeightDifference))
+				return false;
+			if (heightDifference > Mathf.Max(ClimbMinHeightDifference, ClimbMaxHeightDifference))
+				return false;
+
+			float maxFlatDistance = Mathf.Max(ClimbApproachMaxDistanceFromTarget, ClimbStartDistance, AttackMoveTargetMaxDistanceFromTarget, _zombie != null ? _zombie.Stats.AttackRange : 0f);
+			if (FlatDistanceSqr(reachablePoint, targetPosition) > maxFlatDistance * maxFlatDistance)
+				return false;
+
+			_climbApproachTarget = reachablePoint;
+			_hasClimbApproachTarget = true;
+			return true;
+		}
+
+		private bool TryBuildClimbInput(Vector3 targetPosition, out NetworkedInput input)
+		{
+			input = default;
+			if (_hasClimbApproachTarget == false || _zombie == null || _zombie.Navigator == null)
+				return false;
+
+			float startDistance = Mathf.Max(0.1f, ClimbStartDistance);
+			if (FlatDistanceSqr(transform.position, _climbApproachTarget) > startDistance * startDistance)
+			{
+				input = BuildMoveInput(_climbApproachTarget, Mathf.Max(0.05f, AttackMoveStoppingDistance), false);
+				return input.MoveDirection != Vector2.zero;
+			}
+
+			float heightDifference = targetPosition.y - transform.position.y;
+			if (heightDifference <= 0.05f)
+				return false;
+			if (heightDifference > Mathf.Max(ClimbMinHeightDifference, ClimbMaxHeightDifference))
+				return false;
+
+			Vector3 climbDirection = targetPosition - transform.position;
+			climbDirection.y = 0f;
+			if (climbDirection.sqrMagnitude < 0.001f)
+				climbDirection = transform.forward;
+			else
+				climbDirection.Normalize();
+
+			if (TryMantleOntoClimbTarget(targetPosition, climbDirection))
+				return false;
+
+			WantsToClimb = true;
+			input = BuildMoveInputFromDirection(climbDirection);
+			return true;
+		}
+
+		private bool TryMantleOntoClimbTarget(Vector3 targetPosition, Vector3 climbDirection)
+		{
+			if (_zombie == null || _zombie.KCC == null)
+				return false;
+
+			float snapDistance = Mathf.Max(0.1f, ClimbMantleSnapDistance);
+			if (FlatDistanceSqr(transform.position, targetPosition) > snapDistance * snapDistance)
+				return false;
+
+			float heightDifference = targetPosition.y - transform.position.y;
+			if (heightDifference < -0.1f || heightDifference > Mathf.Max(0.1f, ClimbMantleHeightTolerance))
+				return false;
+
+			Vector3 probeCenter = transform.position + climbDirection * Mathf.Max(0.05f, ClimbMantleForwardDistance);
+			probeCenter.y = targetPosition.y;
+
+			Vector3 rayOrigin = probeCenter + Vector3.up * Mathf.Max(0.1f, ClimbMantleProbeHeight);
+			float rayDistance = Mathf.Max(0.1f, ClimbMantleProbeHeight + ClimbMantleProbeDistance);
+			var physicsScene = _zombie.Runner != null ? _zombie.Runner.GetPhysicsScene() : Physics.defaultPhysicsScene;
+			int mantleMask = LayerMask.GetMask("Default");
+			if (mantleMask == 0)
+				mantleMask = Physics.DefaultRaycastLayers;
+			if (physicsScene.Raycast(rayOrigin, Vector3.down, out RaycastHit hit, rayDistance, mantleMask, QueryTriggerInteraction.Ignore) == false)
+				return false;
+			if (hit.normal.y < Mathf.Clamp01(ClimbMantleMinSurfaceNormalY))
+				return false;
+			if (Mathf.Abs(hit.point.y - targetPosition.y) > Mathf.Max(0.1f, ClimbMantleHeightTolerance))
+				return false;
+
+			_zombie.MantleTo(hit.point);
+			ClearAttackMoveTarget();
+			ClearNavigator();
+			return true;
 		}
 
 		private bool IsUsefulAttackMoveTarget(Vector3 moveTarget, Vector3 targetPosition)
@@ -536,6 +892,13 @@ namespace SimpleFPS
 			_hasAttackMoveTarget = false;
 			_attackMoveTarget = default;
 			_nextAttackMoveTargetRefreshTime = 0f;
+			ClearClimbApproachTarget();
+		}
+
+		private void ClearClimbApproachTarget()
+		{
+			_hasClimbApproachTarget = false;
+			_climbApproachTarget = default;
 		}
 
 		private NetworkedInput BuildAttackMoveInput(Vector3 destination)

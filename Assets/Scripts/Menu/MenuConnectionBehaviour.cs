@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -25,6 +26,16 @@ namespace SimpleFPS
 				return ConnectionPlugin.Create(this);
 
 			return new MenuConnection(this);
+		}
+
+		private IEnumerator Start()
+		{
+			// OnShutdown stashes the disconnect reason here before reloading the Startup scene;
+			// yield one frame so the menu UI has finished initializing, then surface the popup.
+			yield return null;
+
+			if (PendingDisconnectMessage.TryConsume(out string message) && UIController != null)
+				_ = UIController.PopupAsync(message, "Disconnected");
 		}
 	}
 
@@ -201,29 +212,37 @@ namespace SimpleFPS
 			public readonly MenuUIController Controller;
 			public readonly string SceneName;
 
+			private bool _handled;
+
 			public MenuConnectionCallbacks(MenuUIController controller, string sceneName)
 			{
 				Controller = controller;
 				SceneName = sceneName;
 			}
 
-			public async void OnShutdown(NetworkRunner runner, ShutdownReason shutdownReason)
+			public void OnShutdown(NetworkRunner runner, ShutdownReason shutdownReason)
 			{
-				if (shutdownReason == ShutdownReason.DisconnectedByPluginLogic)
-				{
-					Controller.OnGameStopped();
-					Controller.Show<FusionMenuUIMain>();
-					Controller.PopupAsync("Disconnected from the server.", "Disconnected");
+				if (_handled)
+					return;
+				_handled = true;
 
-					if (runner.SceneManager != null)
-					{
-						if (runner.SceneManager.MainRunnerScene.IsValid() == true)
-						{
-							SceneRef sceneRef = runner.SceneManager.GetSceneRef(runner.SceneManager.MainRunnerScene.name);
-							runner.SceneManager.UnloadScene(sceneRef);
-						}
-					}
-				}
+				Cursor.lockState = CursorLockMode.None;
+				Cursor.visible = true;
+
+				if (shutdownReason != ShutdownReason.Ok && shutdownReason != ShutdownReason.OperationCanceled)
+					PendingDisconnectMessage.Set($"Disconnected from the server ({shutdownReason}).");
+
+				SceneManager.LoadScene("Startup");
+
+				// DestroyImmediate, not Destroy. When the host disconnects this callback fires from
+				// deep inside Photon's CloudCommunicator.Service() loop on the main thread; returning
+				// normally lets that loop keep draining its peer queue against a dead connection and
+				// hangs the main thread before end-of-frame fires the queued LoadScene. Destroy also
+				// defers to end-of-frame, so it has the same problem. Tearing the runner down in
+				// place removes every Fusion / Photon component the Service loop is iterating, so
+				// the call stack unwinds cleanly and LoadScene runs as scheduled.
+				if (runner != null && runner.gameObject != null)
+					UnityEngine.Object.DestroyImmediate(runner.gameObject);
 			}
 
 			public void OnObjectExitAOI(NetworkRunner runner, NetworkObject obj, PlayerRef player) {}

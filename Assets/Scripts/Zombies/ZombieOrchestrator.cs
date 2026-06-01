@@ -445,7 +445,23 @@ namespace SimpleFPS
 
 			int budget = Mathf.FloorToInt(_spawnRemainder);
 			_spawnRemainder -= budget;
-			return Mathf.Min(Mathf.Max(0, budget), Mathf.Max(0, Settings.MaxSpawnPerPulse));
+
+			int pulseCap = Mathf.Max(0, Settings.MaxSpawnPerPulsePerPlayer) * Mathf.Max(1, GetConnectedPlayerCount());
+			return Mathf.Min(Mathf.Max(0, budget), pulseCap);
+		}
+
+		private int GetConnectedPlayerCount()
+		{
+			if (Gameplay == null)
+				return 0;
+
+			int count = 0;
+			foreach (var pair in Gameplay.PlayerData)
+			{
+				if (pair.Value.IsConnected)
+					count++;
+			}
+			return count;
 		}
 
 		private int GetCurrentMaxZombies()

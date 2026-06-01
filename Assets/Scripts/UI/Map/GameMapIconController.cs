@@ -9,6 +9,8 @@ namespace SimpleFPS
 	{
 		public RectTransform IconRoot;
 		public GameMapAwarenessTracker AwarenessTracker;
+		[Tooltip("Sprite drawn for survivor icons (both own team and detected enemies). The sprite is tinted with the team color, so it should be a light/white silhouette with transparent background and point upward so SetRotation maps yaw=0 to map-up. Leave empty to fall back to the legacy solid square.")]
+		public Sprite SurvivorIconSprite;
 		public Vector2 OwnIconSize = new Vector2(18f, 18f);
 		public Vector2 EnemyIconSize = new Vector2(16f, 16f);
 		public Vector2 PickupIconSize = new Vector2(12f, 12f);
@@ -41,7 +43,7 @@ namespace SimpleFPS
 				&& icon.gameObject.activeSelf;
 		}
 
-		public void Tick(GameMapView mapView, Gameplay gameplay, NetworkRunner runner)
+		public void Tick(IGameMapView mapView, Gameplay gameplay, NetworkRunner runner)
 		{
 			if (mapView == null || gameplay == null || runner == null)
 				return;
@@ -77,13 +79,13 @@ namespace SimpleFPS
 				icon.SetSelected(selected);
 		}
 
-		private void EnsureSetup(GameMapView mapView)
+		private void EnsureSetup(IGameMapView mapView)
 		{
 			if (IconRoot == null)
 			{
 				var rootObject = new GameObject("IconRoot", typeof(RectTransform));
 				IconRoot = rootObject.GetComponent<RectTransform>();
-				IconRoot.SetParent(mapView.MapImage.rectTransform, false);
+				IconRoot.SetParent(mapView.GetMapImage().rectTransform, false);
 				IconRoot.anchorMin = Vector2.zero;
 				IconRoot.anchorMax = Vector2.one;
 				IconRoot.offsetMin = Vector2.zero;
@@ -94,7 +96,7 @@ namespace SimpleFPS
 				AwarenessTracker = GetComponent<GameMapAwarenessTracker>() ?? gameObject.AddComponent<GameMapAwarenessTracker>();
 		}
 
-		private void UpdateOwnIcons(GameMapView mapView, Gameplay gameplay, NetworkRunner runner)
+		private void UpdateOwnIcons(IGameMapView mapView, Gameplay gameplay, NetworkRunner runner)
 		{
 			CollectSurvivors(_survivors);
 			_staleSurvivors.Clear();
@@ -129,13 +131,16 @@ namespace SimpleFPS
 			DestroyStaleIcons(_ownIcons, _staleSurvivors);
 		}
 
-		private void UpdateEnemyIcons(GameMapView mapView, Gameplay gameplay)
+		private void UpdateEnemyIcons(IGameMapView mapView, Gameplay gameplay)
 		{
 			_staleSurvivors.Clear();
 			_staleSurvivors.AddRange(_enemyIcons.Keys);
 
 			if (AwarenessTracker != null)
 			{
+				float now = Time.time;
+				float forgetDelay = AwarenessTracker.EnemyIconForgetDelay;
+
 				foreach (var pair in AwarenessTracker.EnemyMemory)
 				{
 					var memory = pair.Value;
@@ -156,20 +161,24 @@ namespace SimpleFPS
 					if (visible == false)
 						continue;
 
-					UpdateIconTransform(mapView, icon, memory.LastKnownPosition, survivor.transform.eulerAngles.y);
+					UpdateIconTransform(mapView, icon, memory.LastKnownPosition, memory.LastKnownRotationY);
+					icon.SetOpacity(GameMapAwarenessTracker.ComputeOpacity(now, memory.LastSenseTime, forgetDelay));
 				}
 			}
 
 			DestroyStaleIcons(_enemyIcons, _staleSurvivors);
 		}
 
-		private void UpdatePickupIcons(GameMapView mapView)
+		private void UpdatePickupIcons(IGameMapView mapView)
 		{
 			_staleNetworkObjects.Clear();
 			_staleNetworkObjects.AddRange(_pickupIcons.Keys);
 
 			if (AwarenessTracker != null)
 			{
+				float now = Time.time;
+				float forgetDelay = AwarenessTracker.PickupIconForgetDelay;
+
 				foreach (var pair in AwarenessTracker.PickupMemory)
 				{
 					var networkObject = pair.Key;
@@ -194,19 +203,23 @@ namespace SimpleFPS
 
 					icon.SetMapPosition(mapView.WorldToMapUI(memory.Position));
 					icon.SetRotation(0f);
+					icon.SetOpacity(GameMapAwarenessTracker.ComputeOpacity(now, memory.LastSenseTime, forgetDelay));
 				}
 			}
 
 			DestroyStaleIcons(_pickupIcons, _staleNetworkObjects);
 		}
 
-		private void UpdateZombieIcons(GameMapView mapView)
+		private void UpdateZombieIcons(IGameMapView mapView)
 		{
 			_staleNetworkObjects.Clear();
 			_staleNetworkObjects.AddRange(_zombieIcons.Keys);
 
 			if (AwarenessTracker != null)
 			{
+				float now = Time.time;
+				float forgetDelay = AwarenessTracker.ZombieIconForgetDelay;
+
 				foreach (var pair in AwarenessTracker.ZombieMemory)
 				{
 					var networkObject = pair.Key;
@@ -231,6 +244,7 @@ namespace SimpleFPS
 
 					icon.SetMapPosition(mapView.WorldToMapUI(memory.LastKnownPosition));
 					icon.SetRotation(0f);
+					icon.SetOpacity(GameMapAwarenessTracker.ComputeOpacity(now, memory.LastSenseTime, forgetDelay));
 				}
 			}
 
@@ -248,6 +262,8 @@ namespace SimpleFPS
 
 			var image = iconObject.GetComponent<Image>();
 			image.raycastTarget = false;
+			if (SurvivorIconSprite != null)
+				image.sprite = SurvivorIconSprite;
 
 			var icon = iconObject.GetComponent<GameMapIcon>();
 			icon.RectTransform = rectTransform;
@@ -289,7 +305,7 @@ namespace SimpleFPS
 			return memory.IsActive ? ActiveWeaponPickupColor : InactiveWeaponPickupColor;
 		}
 
-		private void UpdateIconTransform(GameMapView mapView, GameMapIcon icon, Vector3 worldPosition, float yaw)
+		private void UpdateIconTransform(IGameMapView mapView, GameMapIcon icon, Vector3 worldPosition, float yaw)
 		{
 			icon.SetMapPosition(mapView.WorldToMapUI(worldPosition));
 			icon.SetRotation(yaw);

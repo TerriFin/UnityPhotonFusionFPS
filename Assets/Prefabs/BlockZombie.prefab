@@ -1203,7 +1203,7 @@ MonoBehaviour:
   GroundDeceleration: 20
   AirAcceleration: 20
   AirDeceleration: 1.3
-  DespawnAfterDeath: 8
+  DespawnAfterDeath: 20
 --- !u!114 &1337231334519911347
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1229,15 +1229,37 @@ MonoBehaviour:
   HuntingRetargetIntervalJitter: 1
   HuntingInitialRetargetStaggerMax: 3
   StoppingDistance: 0.5
-  DirectMoveDistance: 0.75
+  DirectMoveDistance: 0.66
   MaxYawDegreesPerTick: 7
   ReachablePointSampleDistance: 6
   AttackMoveStoppingDistance: 0.2
   AttackMoveTargetMaxDistanceFromTarget: 0.25
   AttackMoveTargetMaxHeightDifference: 0.75
   AttackDestinationRefreshInterval: 0.66
-  MaxAlertRecipients: 16
+  CanClimbUnreachableTargets: 1
+  ClimbSpeedMultiplier: 0.33
+  ClimbApproachMaxDistanceFromTarget: 4
+  ClimbStartDistance: 1.25
+  ClimbMinHeightDifference: 0.25
+  ClimbMaxHeightDifference: 3.5
+  ClimbMantleSnapDistance: 2.5
+  ClimbMantleHeightTolerance: 1.25
+  ClimbMantleForwardDistance: 0.9
+  ClimbMantleProbeHeight: 1.5
+  ClimbMantleProbeDistance: 3
+  ClimbMantleMinSurfaceNormalY: 0.55
+  MaxAlertRecipients: 32
   AlertCooldown: 2
+  StuckSampleRadius: 0.6
+  StuckMinHeightAboveNavMesh: 0.6
+  StuckCheckInterval: 0.5
+  StuckRandomWanderDurationMin: 1
+  StuckRandomWanderDurationMax: 2.5
+  LedgeDropEnabled: 1
+  LedgeDropMinHeightDrop: 1
+  LedgeDropProbeDistance: 5
+  LedgeDropStepSize: 0.75
+  LedgeDropMaxFallHeight: 12
 --- !u!114 &3991566580172985026
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1250,18 +1272,18 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 51e013f3e0c34dce820371ac0f24f155, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  ProximityAwarenessRadius: 6
-  NoiseAwarenessRadius: 26
+  ProximityAwarenessRadius: 7
+  NoiseAwarenessRadius: 28
   BulletImpactAwarenessRadius: 5
-  VisionDistance: 12
-  VisionAngle: 80
+  VisionDistance: 10
+  VisionAngle: 90
   EyeHeight: 1.6
   VisionBlockers:
     serializedVersion: 2
     m_Bits: 1
   DisableWhenPossessed: 1
-  SensorInterval: 0.6
-  MemoryDuration: 2
+  SensorInterval: 0.45
+  MemoryDuration: 3
   MaxKnownEntries: 4
   MaxKnownPickups: 0
 --- !u!114 &7195504373959092826
@@ -1276,10 +1298,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e30285cfb87341439ccfa6b07e2f4903, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  RepathInterval: 0.5
-  CornerReachDistance: 0.75
-  DestinationReachDistance: 0.5
-  DestinationChangeRepathDistance: 0.33
+  RepathInterval: 0.4
+  CornerReachDistance: 0.66
+  DestinationReachDistance: 0.66
+  DestinationChangeRepathDistance: 0.2
   SampleMaxDistance: 2
   ReachablePointSampleMaxDistance: 8
   AreaMask: -1

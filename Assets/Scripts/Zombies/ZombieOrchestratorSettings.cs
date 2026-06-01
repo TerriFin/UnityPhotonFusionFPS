@@ -1,5 +1,6 @@
 using Fusion;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 namespace SimpleFPS
 {
@@ -18,7 +19,8 @@ namespace SimpleFPS
 		public float StartSpawnRatePerMinute = 12f;
 		public float EndSpawnRatePerMinute = 60f;
 		public float SpawnPulseInterval = 5f;
-		public int MaxSpawnPerPulse = 30;
+		[FormerlySerializedAs("MaxSpawnPerPulse")]
+		public int MaxSpawnPerPulsePerPlayer = 8;
 
 		[Header("Spawn Validity")]
 		public float SpawnNavMeshSampleDistance = 1.5f;
@@ -53,7 +55,7 @@ namespace SimpleFPS
 			StartSpawnRatePerMinute = Mathf.Max(0f, StartSpawnRatePerMinute);
 			EndSpawnRatePerMinute = Mathf.Max(0f, EndSpawnRatePerMinute);
 			SpawnPulseInterval = Mathf.Max(0.25f, SpawnPulseInterval);
-			MaxSpawnPerPulse = Mathf.Max(0, MaxSpawnPerPulse);
+			MaxSpawnPerPulsePerPlayer = Mathf.Max(0, MaxSpawnPerPulsePerPlayer);
 			SpawnNavMeshSampleDistance = Mathf.Max(0.1f, SpawnNavMeshSampleDistance);
 			MinimumSpawnConnectedNavMeshRadius = Mathf.Max(0f, MinimumSpawnConnectedNavMeshRadius);
 			StartHealth = Mathf.Max(1f, StartHealth);

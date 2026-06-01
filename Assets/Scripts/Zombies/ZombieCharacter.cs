@@ -170,19 +170,39 @@ namespace SimpleFPS
 			return true;
 		}
 
+		public void MantleTo(Vector3 groundPosition)
+		{
+			if (HasStateAuthority == false || KCC == null)
+				return;
+
+			_moveVelocity = Vector3.zero;
+			Navigator?.ClearDestination();
+			KCC.SetPosition(groundPosition + Vector3.up * 0.05f);
+		}
+
 		private void ProcessInput(NetworkedInput input)
 		{
 			if (KCC == null)
 				return;
 
+			bool isClimbing = AI != null && AI.WantsToClimb;
 			KCC.AddLookRotation(input.LookRotationDelta, -89f, 89f);
-			KCC.SetGravity(KCC.RealVelocity.y >= 0f ? -UpGravity : -DownGravity);
+			KCC.SetGravity(isClimbing ? 0f : KCC.RealVelocity.y >= 0f ? -UpGravity : -DownGravity);
 
 			var inputDirection = KCC.TransformRotation * new Vector3(input.MoveDirection.x, 0f, input.MoveDirection.y);
-			MoveZombie(inputDirection * Stats.MoveSpeed);
+			Vector3 desiredMoveVelocity = inputDirection * Stats.MoveSpeed;
+			float climbImpulse = 0f;
+			if (isClimbing)
+			{
+				float climbSpeed = Stats.MoveSpeed * Mathf.Max(0f, AI.ClimbSpeedMultiplier);
+				desiredMoveVelocity = inputDirection * climbSpeed;
+				climbImpulse = climbSpeed;
+			}
+
+			MoveZombie(desiredMoveVelocity, climbImpulse);
 		}
 
-		private void MoveZombie(Vector3 desiredMoveVelocity = default)
+		private void MoveZombie(Vector3 desiredMoveVelocity = default, float jumpImpulse = default)
 		{
 			if (HasStateAuthority && Separation != null)
 				desiredMoveVelocity += Separation.GetSeparationVelocity();
@@ -192,7 +212,7 @@ namespace SimpleFPS
 				: (KCC.IsGrounded ? GroundAcceleration : AirAcceleration);
 
 			_moveVelocity = Vector3.Lerp(_moveVelocity, desiredMoveVelocity, acceleration * Runner.DeltaTime);
-			KCC.Move(_moveVelocity);
+			KCC.Move(_moveVelocity, jumpImpulse);
 		}
 
 		private void HandleDead()

@@ -18,22 +18,22 @@ MonoBehaviour:
   MatchDurationSeconds: 0
   ScaleDuringSkirmish: 1
   StartSpawnRatePerMinute: 16
-  EndSpawnRatePerMinute: 75
-  SpawnPulseInterval: 8
-  MaxSpawnPerPulse: 26
+  EndSpawnRatePerMinute: 82
+  SpawnPulseInterval: 14
+  MaxSpawnPerPulsePerPlayer: 22
   SpawnNavMeshSampleDistance: 1.5
   MinimumSpawnConnectedNavMeshRadius: 10
-  StartHealth: 65
-  EndHealth: 160
-  StartDamage: 8
-  EndDamage: 17
-  StartMoveSpeed: 2.2
-  EndMoveSpeed: 4.5
+  StartHealth: 55
+  EndHealth: 145
+  StartDamage: 7
+  EndDamage: 14
+  StartMoveSpeed: 2.5
+  EndMoveSpeed: 5.5
   StartAlertRadius: 8
   EndAlertRadius: 24
-  OvertimeHealth: 180
-  OvertimeDamage: 19
-  OvertimeMoveSpeed: 7.1
-  UnderpopulatedRegionBias: 0.55
+  OvertimeHealth: 165
+  OvertimeDamage: 16
+  OvertimeMoveSpeed: 7.25
+  UnderpopulatedRegionBias: 0.525
   RegionGridSize: 4
   SeedOffset: 30000

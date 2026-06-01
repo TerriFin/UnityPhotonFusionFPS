@@ -53,6 +53,11 @@ namespace SimpleFPS
 			if (MapView != null)
 				MapView.Initialize();
 
+			if (GameplayView != null && GameplayView.MinimapView == null)
+				GameplayView.MinimapView = GameplayView.GetComponentInChildren<GameMinimapView>(true);
+			if (GameplayView != null && GameplayView.MinimapView != null && GameplayView.MinimapView.MainMapView == null)
+				GameplayView.MinimapView.MainMapView = MapView;
+
 			PlayerView.gameObject.SetActive(false);
 			MenuView.SetActive(false);
 			SettingsView.gameObject.SetActive(false);
@@ -79,6 +84,8 @@ namespace SimpleFPS
 			bool gameplayActive = Gameplay.State < EGameplayState.Finished;
 			if (MapView != null)
 				MapView.Tick(gameplayActive, Runner, Gameplay);
+			if (GameplayView != null && GameplayView.MinimapView != null)
+				GameplayView.MinimapView.Tick(gameplayActive, Runner, Gameplay);
 
 			ScoreboardView.SetActive(gameplayActive && keyboard != null && keyboard.tabKey.isPressed);
 

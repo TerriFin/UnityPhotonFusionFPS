@@ -31,6 +31,8 @@ namespace SimpleFPS
 		private float _nextInvestigationLookRotationTime;
 		private float _investigationLookYaw;
 		private int _lastHandledInvestigationTick;
+		private NetworkObject _observedTarget;
+		private bool _hasObservedTarget;
 
 		public bool HasTask => _hasInvestigationTarget;
 		public bool IsReturning => _returningFromInvestigation;
@@ -43,10 +45,13 @@ namespace SimpleFPS
 			Vector3 target,
 			int stimulusTick,
 			bool alertAllies,
+			NetworkObject observedTarget = null,
 			bool allowSameTick = false,
 			bool force = false)
 		{
 			if (investigateEnabled == false)
+				return false;
+			if (observedTarget != null && IsObservedTargetAlive(observedTarget) == false)
 				return false;
 			if (canStart == false)
 				return false;
@@ -57,7 +62,7 @@ namespace SimpleFPS
 			if (TryResolveInvestigationTarget(survivor, target, out var investigationDestination) == false)
 				return false;
 
-			StartInvestigation(survivor, investigationDestination, stimulusTick, alertAllies);
+			StartInvestigation(survivor, investigationDestination, stimulusTick, alertAllies, observedTarget);
 			return true;
 		}
 
@@ -67,6 +72,12 @@ namespace SimpleFPS
 			Func<Vector3, bool, float, NetworkedInput> createMoveInput,
 			Func<NetworkedInput> getReturnToAnchorInput)
 		{
+			if (_hasObservedTarget && IsObservedTargetAlive(_observedTarget) == false)
+			{
+				ClearTask(true, anchor, survivor.Navigator);
+				return getReturnToAnchorInput();
+			}
+
 			if (_isLookingAroundInvestigationTarget)
 				return GetLookAroundInput(survivor, anchor, getReturnToAnchorInput);
 
@@ -83,6 +94,12 @@ namespace SimpleFPS
 					navigator.SetDestination(_investigationTarget);
 
 				navigator.Tick(survivor.transform.position);
+				if (navigator.IsDestinationReached)
+				{
+					BeginLookAround(survivor);
+					return GetLookAroundInput(survivor, anchor, getReturnToAnchorInput);
+				}
+
 				if (navigator.TryGetSteeringTarget(survivor.transform.position, out var steeringTarget))
 					return createMoveInput(steeringTarget, false, InvestigationStoppingDistance);
 			}
@@ -103,6 +120,8 @@ namespace SimpleFPS
 			_investigationLookEndTime = 0f;
 			_nextInvestigationLookRotationTime = 0f;
 			_investigationLookYaw = 0f;
+			_observedTarget = null;
+			_hasObservedTarget = false;
 
 			if (returnToAnchor)
 				navigator?.SetDestination(anchor);
@@ -113,9 +132,11 @@ namespace SimpleFPS
 			_returningFromInvestigation = false;
 		}
 
-		public void AlertNearbyAllies(Survivor survivor, Vector3 target, int stimulusTick, bool investigateEnabled)
+		public void AlertNearbyAllies(Survivor survivor, Vector3 target, int stimulusTick, bool investigateEnabled, NetworkObject observedTarget = null)
 		{
 			if (survivor == null || investigateEnabled == false || AllyAlertRadius <= 0f)
+				return;
+			if (observedTarget != null && IsObservedTargetAlive(observedTarget) == false)
 				return;
 			if (survivor.IsActiveCharacter())
 				return;
@@ -149,23 +170,26 @@ namespace SimpleFPS
 
 			for (int i = 0; i < _alertedAllies.Count; i++)
 			{
-				_alertedAllies[i].ReceiveInvestigationAlert(target, stimulusTick);
+				var nonCombatAI = _alertedAllies[i].GetComponent<SurvivorNonCombatAI>();
+				nonCombatAI?.ReceiveInvestigationAlert(target, stimulusTick, observedTarget);
 			}
 
 			_alertedAllies.Clear();
 		}
 
-		private void StartInvestigation(Survivor survivor, Vector3 target, int stimulusTick, bool alertAllies)
+		private void StartInvestigation(Survivor survivor, Vector3 target, int stimulusTick, bool alertAllies, NetworkObject observedTarget)
 		{
 			_investigationTarget = target;
 			_hasInvestigationTarget = true;
 			_isLookingAroundInvestigationTarget = false;
 			_returningFromInvestigation = false;
 			_lastHandledInvestigationTick = stimulusTick;
+			_observedTarget = observedTarget;
+			_hasObservedTarget = observedTarget != null;
 			survivor.Navigator?.SetDestination(target);
 
 			if (alertAllies)
-				AlertNearbyAllies(survivor, target, stimulusTick, true);
+				AlertNearbyAllies(survivor, target, stimulusTick, true, observedTarget);
 		}
 
 		private void BeginLookAround(Survivor survivor)
@@ -224,6 +248,22 @@ namespace SimpleFPS
 			       survivor.AIShooting != null &&
 			       survivor.AIShooting.TryGetDirectTarget(out _, out bool hasLineOfFire) &&
 			       hasLineOfFire;
+		}
+
+		private static bool IsObservedTargetAlive(NetworkObject target)
+		{
+			if (target == null)
+				return false;
+
+			var survivor = target.GetComponent<Survivor>();
+			if (survivor != null)
+				return survivor.Health != null && survivor.Health.IsAlive;
+
+			var zombie = target.GetComponent<ZombieCharacter>();
+			if (zombie != null)
+				return zombie.Health != null && zombie.Health.IsAlive;
+
+			return true;
 		}
 
 		private static float FlatDistanceSqr(Vector3 a, Vector3 b)

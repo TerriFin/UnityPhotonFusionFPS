@@ -77,7 +77,7 @@ ZombieOrchestratorSettings
 	float StartSpawnRatePerMinute;
 	float EndSpawnRatePerMinute;
 	float SpawnPulseInterval;
-	int MaxSpawnPerPulse;
+	int MaxSpawnPerPulsePerPlayer;
 
 	float SpawnNavMeshSampleDistance;
 	float MinimumSpawnConnectedNavMeshRadius;
@@ -110,7 +110,7 @@ MatchDurationSeconds: match setting
 StartSpawnRatePerMinute: 12
 EndSpawnRatePerMinute: 60
 SpawnPulseInterval: 5s
-MaxSpawnPerPulse: 30
+MaxSpawnPerPulsePerPlayer: 8
 SpawnNavMeshSampleDistance: 1.5
 MinimumSpawnConnectedNavMeshRadius: 8
 UnderpopulatedRegionBias: 0.65
@@ -183,10 +183,12 @@ Each pulse:
 1. Count alive zombies.
 2. Compute current max zombies.
 3. If alive zombies are at or above the current max, do nothing.
-4. Compute spawn budget from spawn rate and remaining cap.
+4. Compute spawn budget from spawn rate, capped by `MaxSpawnPerPulsePerPlayer × current connected player count`.
 5. Gather valid forced and non-forced spawn points.
 6. Score valid spawn points by regional underpopulation.
 7. Spawn up to the budget, respecting each spawn point's `MaxSpawnCountPerPulse`.
+
+The per-pulse spawn cap scales linearly with the number of currently connected players. A two-player match uses half the per-pulse cap of a four-player match using the same settings asset, and a twenty-player match uses five times the cap. The spawn rate itself (`Start/EndSpawnRatePerMinute`) is not affected — it stays constant. This means the per-player cap only kicks in once the spawn rate produces more zombies per pulse than would be appropriate for the smaller match. Disconnected players are not counted; the cap follows the live match population so a player drop reduces pressure rather than continuing to spawn the original headcount's worth of zombies.
 
 Example:
 

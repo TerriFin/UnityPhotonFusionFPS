@@ -42,7 +42,8 @@ namespace SimpleFPS
 
 		private Survivor _survivor;
 		private NetworkObject _currentTarget;
-		private Vector3 _aimDirectionOffset;
+		private float _aimYawError;
+		private float _aimPitchError;
 		private float _nextShotTime;
 		private float _nextAimErrorRefreshTime;
 		private float _triggerReleaseTime;
@@ -199,7 +200,22 @@ namespace SimpleFPS
 
 		private Vector3 GetAimDirection(KnownEnemyInfo enemy)
 		{
-			return GetAimTargetPosition(enemy) - GetAimOrigin() + _aimDirectionOffset;
+			Vector3 toTarget = GetAimTargetPosition(enemy) - GetAimOrigin();
+			if (toTarget.sqrMagnitude < 0.001f)
+				return toTarget;
+
+			if (_aimYawError == 0f && _aimPitchError == 0f)
+				return toTarget;
+
+			Vector3 direction = toTarget.normalized;
+			Vector3 right = Vector3.Cross(Vector3.up, direction);
+			if (right.sqrMagnitude < 0.001f)
+				right = transform.right;
+
+			Vector3 badDirection = Quaternion.AngleAxis(_aimYawError, Vector3.up) *
+			                       Quaternion.AngleAxis(_aimPitchError, right.normalized) *
+			                       direction;
+			return badDirection * toTarget.magnitude;
 		}
 
 		private Vector3 GetAimTargetPosition(KnownEnemyInfo enemy)
@@ -216,27 +232,9 @@ namespace SimpleFPS
 
 		private void RefreshAimError(KnownEnemyInfo enemy)
 		{
-			Vector3 toTarget = GetAimTargetPosition(enemy) - GetAimOrigin();
 			GetAimErrorDegrees(enemy, out float horizontalAimError, out float verticalAimError);
-
-			if (toTarget.sqrMagnitude < 0.001f || (horizontalAimError <= 0f && verticalAimError <= 0f))
-			{
-				_aimDirectionOffset = Vector3.zero;
-			}
-			else
-			{
-				float yawError = Random.Range(-horizontalAimError, horizontalAimError);
-				float pitchError = Random.Range(-verticalAimError, verticalAimError);
-				Vector3 right = Vector3.Cross(Vector3.up, toTarget.normalized);
-				if (right.sqrMagnitude < 0.001f)
-					right = transform.right;
-
-				Vector3 badDirection = Quaternion.AngleAxis(yawError, Vector3.up) *
-				                       Quaternion.AngleAxis(pitchError, right.normalized) *
-				                       toTarget.normalized;
-				_aimDirectionOffset = badDirection * toTarget.magnitude - toTarget;
-			}
-
+			_aimYawError = horizontalAimError > 0f ? Random.Range(-horizontalAimError, horizontalAimError) : 0f;
+			_aimPitchError = verticalAimError > 0f ? Random.Range(-verticalAimError, verticalAimError) : 0f;
 			_nextAimErrorRefreshTime = Time.timeSinceLevelLoad + Mathf.Max(0.05f, AimErrorRefreshInterval);
 		}
 
@@ -305,7 +303,8 @@ namespace SimpleFPS
 		private void ResetTargetState()
 		{
 			_currentTarget = null;
-			_aimDirectionOffset = Vector3.zero;
+			_aimYawError = 0f;
+			_aimPitchError = 0f;
 			_nextShotTime = 0f;
 			_nextAimErrorRefreshTime = 0f;
 			_triggerReleaseTime = 0f;

@@ -21,6 +21,7 @@ namespace SimpleFPS
 		public bool IsSelected { get; private set; }
 
 		private Color _baseColor;
+		private float _opacity = 1f;
 
 		public void Initialize(Survivor survivor, GameMapIconKind kind, Color color)
 		{
@@ -28,6 +29,7 @@ namespace SimpleFPS
 			NetworkObject = survivor != null ? survivor.Object : null;
 			Kind = kind;
 			_baseColor = color;
+			_opacity = 1f;
 
 			if (RectTransform == null)
 				RectTransform = transform as RectTransform;
@@ -44,6 +46,7 @@ namespace SimpleFPS
 			NetworkObject = networkObject;
 			Kind = kind;
 			_baseColor = color;
+			_opacity = 1f;
 
 			if (RectTransform == null)
 				RectTransform = transform as RectTransform;
@@ -57,7 +60,13 @@ namespace SimpleFPS
 		public void SetColor(Color color)
 		{
 			_baseColor = color;
-			SetSelected(IsSelected);
+			RefreshColor();
+		}
+
+		public void SetOpacity(float opacity)
+		{
+			_opacity = Mathf.Clamp01(opacity);
+			RefreshColor();
 		}
 
 		public void SetMapPosition(Vector2 anchoredPosition)
@@ -87,22 +96,24 @@ namespace SimpleFPS
 		public void SetSelected(bool selected)
 		{
 			IsSelected = selected;
+			RefreshColor();
+		}
 
+		private void RefreshColor()
+		{
 			if (Image == null)
 				return;
 
-			if (selected)
-			{
-				Image.color = Color.Lerp(_baseColor, Color.white, 0.45f);
-			}
+			Color color;
+			if (IsSelected)
+				color = Color.Lerp(_baseColor, Color.white, 0.45f);
 			else if (Kind == GameMapIconKind.EnemySurvivor)
-			{
-				Image.color = Color.Lerp(_baseColor, Color.red, 0.35f);
-			}
+				color = Color.Lerp(_baseColor, Color.red, 0.35f);
 			else
-			{
-				Image.color = _baseColor;
-			}
+				color = _baseColor;
+
+			color.a *= _opacity;
+			Image.color = color;
 		}
 
 		public bool ContainsScreenPoint(Vector2 screenPosition, Camera eventCamera)

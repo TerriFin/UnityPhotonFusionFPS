@@ -84,6 +84,8 @@ Zombies are a special case. Survivors may alert nearby allies when they directly
 
 The reachable point search is important for shots fired from unreachable places, such as the top of cars. The survivor should investigate nearby reachable ground instead of silently giving up.
 
+Arrival can be detected either by direct distance to the investigation target or by `CharacterNavigator.IsDestinationReached`. This matters because the navigator may resolve the raw stimulus to a nearby sampled NavMesh destination; reaching that sampled destination should still trigger the look-around phase instead of immediately returning.
+
 ## Ally Alerts
 
 The same `InvestigateSuspiciousStimuli` setting controls same-team alerting. There is no separate `AlertNearbyAllies` setting.
@@ -99,6 +101,7 @@ Alert rules:
 - Allies with only vague or proximity knowledge can still be alerted.
 - Alerts are one-hop only to prevent alert chains from crossing the whole map.
 - Alert range is controlled by `SurvivorInvestigationAI.AllyAlertRadius`.
+- Direct enemy alerts may carry the observed enemy object. If that enemy dies before or during the investigation, the investigation is cancelled and the survivor returns to its saved assignment instead of walking to the corpse.
 
 ## Lost Combat Investigation
 
