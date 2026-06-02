@@ -81,6 +81,7 @@ public void SetDestination(Vector3 destination);
 public void ClearDestination();
 public bool TryGetSteeringTarget(Vector3 currentPosition, out Vector3 steeringTarget);
 public bool TryFindReachablePoint(Vector3 currentPosition, Vector3 targetPosition, out Vector3 reachablePoint);
+public bool TryFindReachablePoint(Vector3 currentPosition, Vector3 targetPosition, float maxSampleDistance, out Vector3 reachablePoint, out float pathLength);
 public void Tick(Vector3 currentPosition);
 ```
 
@@ -95,6 +96,8 @@ public void Tick(Vector3 currentPosition);
 7. Advance the corner index when close enough to the current corner.
 
 `TryFindReachablePoint(...)` is used before setting destinations for suspicious investigation targets. It samples nearby NavMesh around the raw target and verifies a complete path from the survivor. This is useful when a player creates a stimulus from a position that is valid for players but not AI-walkable, such as firing from the top of a car.
+
+The overload returning `pathLength` is used by zombie explicit-goal routing. It lets zombies compare the normal NavMesh route against direct distance and choose whether to follow the path or traverse directly by climbing and dropping through obstacles.
 
 `NavMeshPath` must be created in `Awake()` or another Unity lifecycle method, not in a field initializer or MonoBehaviour constructor. Unity's native NavMesh path initialization is not allowed during script construction.
 

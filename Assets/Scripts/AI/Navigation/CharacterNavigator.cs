@@ -181,7 +181,14 @@ namespace SimpleFPS
 
 		public bool TryFindReachablePoint(Vector3 currentPosition, Vector3 targetPosition, float maxSampleDistance, out Vector3 reachablePoint)
 		{
+			return TryFindReachablePoint(currentPosition, targetPosition, maxSampleDistance, out reachablePoint, out _);
+		}
+
+		public bool TryFindReachablePoint(Vector3 currentPosition, Vector3 targetPosition, float maxSampleDistance,
+			out Vector3 reachablePoint, out float pathLength)
+		{
 			reachablePoint = default;
+			pathLength = 0f;
 
 			if (_scratchPath == null)
 				_scratchPath = new NavMeshPath();
@@ -200,6 +207,7 @@ namespace SimpleFPS
 				    _scratchPath.status == NavMeshPathStatus.PathComplete)
 				{
 					reachablePoint = targetHit.position;
+					pathLength = GetPathLength(_scratchPath);
 					return true;
 				}
 
@@ -209,6 +217,18 @@ namespace SimpleFPS
 			}
 
 			return false;
+		}
+
+		private static float GetPathLength(NavMeshPath path)
+		{
+			if (path == null || path.corners == null || path.corners.Length < 2)
+				return 0f;
+
+			float length = 0f;
+			for (int i = 1; i < path.corners.Length; i++)
+				length += Vector3.Distance(path.corners[i - 1], path.corners[i]);
+
+			return length;
 		}
 
 		private void CalculatePath(Vector3 currentPosition)

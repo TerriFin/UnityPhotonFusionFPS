@@ -1204,6 +1204,7 @@ MonoBehaviour:
   AirAcceleration: 20
   AirDeceleration: 1.3
   DespawnAfterDeath: 20
+  MantleAnimationDuration: 0.35
 --- !u!114 &1337231334519911347
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1217,49 +1218,38 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   InitialIdleWanderDelayMax: 2
-  IdleWanderIntervalMin: 6
-  IdleWanderIntervalMax: 14
+  IdleWanderIntervalMin: 4
+  IdleWanderIntervalMax: 9
   IdleWanderRetryDelayMin: 1
   IdleWanderRetryDelayMax: 2
   IdleWanderRadius: 16
-  IdleWanderAvoidZombieRadius: 10
+  IdleWanderAvoidZombieRadius: 8
   IdleWanderCandidateCount: 5
   AttackRetargetInterval: 1
-  HuntingRetargetInterval: 5
-  HuntingRetargetIntervalJitter: 1
+  HuntingRetargetInterval: 6
+  HuntingRetargetIntervalJitter: 2
   HuntingInitialRetargetStaggerMax: 3
   StoppingDistance: 0.5
   DirectMoveDistance: 0.66
-  MaxYawDegreesPerTick: 7
-  ReachablePointSampleDistance: 6
-  AttackMoveStoppingDistance: 0.2
-  AttackMoveTargetMaxDistanceFromTarget: 0.25
-  AttackMoveTargetMaxHeightDifference: 0.75
-  AttackDestinationRefreshInterval: 0.66
-  CanClimbUnreachableTargets: 1
-  ClimbSpeedMultiplier: 0.33
-  ClimbApproachMaxDistanceFromTarget: 4
-  ClimbStartDistance: 1.25
-  ClimbMinHeightDifference: 0.25
-  ClimbMaxHeightDifference: 3.5
-  ClimbMantleSnapDistance: 2.5
-  ClimbMantleHeightTolerance: 1.25
-  ClimbMantleForwardDistance: 0.9
-  ClimbMantleProbeHeight: 1.5
-  ClimbMantleProbeDistance: 3
-  ClimbMantleMinSurfaceNormalY: 0.55
-  MaxAlertRecipients: 32
+  MaxYawDegreesPerTick: 6
+  ReachablePointSampleDistance: 8
+  ExplicitGoalStoppingDistance: 0.2
+  ExplicitGoalRouteRefreshInterval: 0.5
+  DirectRouteLengthMultiplier: 1.75
+  MaxDirectTraversalDistance: 30
+  ExplicitGoalHeightTolerance: 0.75
+  CanClimbDirectGoals: 1
+  ClimbSpeedMultiplier: 0.45
+  ClimbObstacleProbeDistance: 1.25
+  ClimbCommitDuration: 0.75
+  ClimbMantleMaxSnapHeight: 1.75
+  MaxAlertRecipients: 16
   AlertCooldown: 2
   StuckSampleRadius: 0.6
   StuckMinHeightAboveNavMesh: 0.6
   StuckCheckInterval: 0.5
   StuckRandomWanderDurationMin: 1
   StuckRandomWanderDurationMax: 2.5
-  LedgeDropEnabled: 1
-  LedgeDropMinHeightDrop: 1
-  LedgeDropProbeDistance: 5
-  LedgeDropStepSize: 0.75
-  LedgeDropMaxFallHeight: 12
 --- !u!114 &3991566580172985026
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1282,7 +1272,7 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 1
   DisableWhenPossessed: 1
-  SensorInterval: 0.45
+  SensorInterval: 0.33
   MemoryDuration: 3
   MaxKnownEntries: 4
   MaxKnownPickups: 0

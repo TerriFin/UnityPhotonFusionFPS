@@ -38,8 +38,17 @@ namespace SimpleFPS
 		[Header("Death")]
 		public float DespawnAfterDeath = 8f;
 
+		[Header("Mantle")]
+		public float MantleAnimationDuration = 0.25f;
+
 		[Networked]
 		private Vector3 _moveVelocity { get; set; }
+		[Networked]
+		private Vector3 _mantleStart { get; set; }
+		[Networked]
+		private Vector3 _mantleEnd { get; set; }
+		[Networked]
+		private TickTimer _mantleTimer { get; set; }
 
 		private TickTimer _despawnTimer;
 		private float _nextAttackTime;
@@ -108,6 +117,12 @@ namespace SimpleFPS
 				return;
 			}
 
+			if (_mantleTimer.IsRunning)
+			{
+				AdvanceMantleAnimation();
+				return;
+			}
+
 			NetworkedInput input = AI != null ? AI.GetInput(Runner) : default;
 			ProcessInput(input);
 		}
@@ -159,15 +174,29 @@ namespace SimpleFPS
 				return false;
 
 			Vector3 toTarget = survivor.transform.position - transform.position;
-			toTarget.y = 0f;
 			float range = Mathf.Max(0.1f, Stats.AttackRange);
-			if (toTarget.sqrMagnitude > range * range)
+			if (toTarget.sqrMagnitude > range * range && CanReachTargetWhileClimbing(toTarget, range) == false)
 				return false;
 
-			Vector3 direction = toTarget.sqrMagnitude > 0.001f ? toTarget.normalized : transform.forward;
+			Vector3 flatDirection = toTarget;
+			flatDirection.y = 0f;
+			Vector3 direction = flatDirection.sqrMagnitude > 0.001f ? flatDirection.normalized : transform.forward;
 			survivor.Health.ApplyDamage(PlayerRef.None, Stats.Damage, survivor.transform.position, direction, default, false);
 			_nextAttackTime = Time.timeSinceLevelLoad + Mathf.Max(0.05f, Stats.AttackCooldown);
 			return true;
+		}
+
+		private bool CanReachTargetWhileClimbing(Vector3 toTarget, float range)
+		{
+			if (AI == null || AI.IsClimbing == false || toTarget.y <= 0f)
+				return false;
+
+			float verticalReach = Mathf.Max(range, AI.ClimbMantleMaxSnapHeight);
+			if (toTarget.y > verticalReach)
+				return false;
+
+			toTarget.y = 0f;
+			return toTarget.sqrMagnitude <= range * range;
 		}
 
 		public void MantleTo(Vector3 groundPosition)
@@ -177,7 +206,54 @@ namespace SimpleFPS
 
 			_moveVelocity = Vector3.zero;
 			Navigator?.ClearDestination();
-			KCC.SetPosition(groundPosition + Vector3.up * 0.05f);
+
+			Vector3 endPosition = groundPosition + Vector3.up * 0.05f;
+
+			// MantleAnimationDuration == 0 keeps the legacy "instant teleport" behaviour for cases
+			// where a designer wants the snap. Any positive duration runs the actual displacement
+			// over multiple ticks so the body visibly hoists onto the ledge instead of popping
+			// straight onto it — especially helpful when the climb impulse stalls the zombie a
+			// meter or so below the surface and the heightDifference that MantleTo needs to cover
+			// is large enough to look like a teleport.
+			if (MantleAnimationDuration <= 0f)
+			{
+				KCC.SetPosition(endPosition);
+				_mantleTimer = default;
+				return;
+			}
+
+			_mantleStart = KCC.Position;
+			_mantleEnd = endPosition;
+			_mantleTimer = TickTimer.CreateFromSeconds(Runner, MantleAnimationDuration);
+		}
+
+		private void AdvanceMantleAnimation()
+		{
+			if (KCC == null)
+			{
+				_mantleTimer = default;
+				return;
+			}
+
+			// Suspend gravity for the duration so the lerp owns the trajectory; otherwise KCC's
+			// own velocity integration fights the SetPosition call.
+			KCC.SetGravity(0f);
+
+			float duration = Mathf.Max(0.05f, MantleAnimationDuration);
+			float remaining = _mantleTimer.RemainingTime(Runner).GetValueOrDefault();
+			float progress = Mathf.Clamp01(1f - remaining / duration);
+
+			// Ease-out cubic so the hoist starts at climb speed and decelerates as the zombie
+			// settles onto the surface, instead of rising in an unnatural straight line.
+			float eased = 1f - Mathf.Pow(1f - progress, 3f);
+			KCC.SetPosition(Vector3.Lerp(_mantleStart, _mantleEnd, eased));
+
+			if (_mantleTimer.Expired(Runner))
+			{
+				KCC.SetPosition(_mantleEnd);
+				_mantleTimer = default;
+				_moveVelocity = Vector3.zero;
+			}
 		}
 
 		private void ProcessInput(NetworkedInput input)
@@ -220,10 +296,17 @@ namespace SimpleFPS
 			if (HitboxRoot != null)
 				HitboxRoot.HitboxRootActive = false;
 
+			// If the zombie died mid-climb or mid-mantle the live ProcessInput path was the only
+			// place that reset KCC gravity from the climb's 0 back to normal, and a scheduled
+			// mantle animation would still SetPosition the body each tick. Cancel both so the
+			// corpse actually falls instead of floating off where the climb left it.
+			_mantleTimer = default;
+
 			if (KCC != null)
 			{
 				KCC.SetColliderLayer(LayerMask.NameToLayer("Ignore Raycast"));
 				KCC.SetCollisionLayerMask(LayerMask.GetMask("Default"));
+				KCC.SetGravity(KCC.RealVelocity.y >= 0f ? -UpGravity : -DownGravity);
 				MoveZombie();
 			}
 
