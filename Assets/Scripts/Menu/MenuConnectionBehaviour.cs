@@ -19,6 +19,9 @@ namespace SimpleFPS
 		public NetworkRunner        RunnerPrefab;
 		public MenuUIController     UIController;
 		public MenuConnectionPlugin ConnectionPlugin;
+		public MatchHostingSettingsCatalog MatchSettingsCatalog;
+
+		private MatchHostingSettings _pendingHostedSettings;
 
 		public override IFusionMenuConnection Create()
 		{
@@ -26,6 +29,40 @@ namespace SimpleFPS
 				return ConnectionPlugin.Create(this);
 
 			return new MenuConnection(this);
+		}
+
+		public async Task<ConnectResult> StartConfiguredHostAsync(MatchHostingSettings settings, IFusionMenuConnectArgs connectionArgs)
+		{
+			if (UIController == null || UIController.Config == null)
+				return new ConnectResult { FailReason = ConnectFailReason.Disconnect, DebugMessage = "Menu connection is missing its UI controller or config." };
+
+			if (connectionArgs == null)
+			{
+				connectionArgs = UIController.CreateConnectArgs;
+				connectionArgs.SetDefaults(UIController.Config);
+			}
+
+			connectionArgs.Session = UIController.Config.CodeGenerator.Create();
+			connectionArgs.Creating = true;
+			connectionArgs.Region = connectionArgs.PreferredRegion;
+
+			_pendingHostedSettings = settings?.Clone() ?? new MatchHostingSettings();
+			_pendingHostedSettings.Validate(MatchSettingsCatalog);
+
+			try
+			{
+				return await ConnectAsync(connectionArgs);
+			}
+			finally
+			{
+				_pendingHostedSettings = null;
+			}
+		}
+
+		internal bool TryGetPendingHostedSettings(out MatchHostingSettings settings)
+		{
+			settings = _pendingHostedSettings;
+			return settings != null;
 		}
 
 		private IEnumerator Start()
@@ -93,6 +130,9 @@ namespace SimpleFPS
 				CustomPhotonAppSettings = appSettings
 			};
 
+			if (_connectionBehaviour.TryGetPendingHostedSettings(out MatchHostingSettings hostedSettings))
+				startGameArgs.SessionProperties = hostedSettings.ToSessionProperties();
+
 			if (connectionArgs.Creating == false && string.IsNullOrEmpty(connectionArgs.Session) == true)
 			{
 				startGameArgs.EnableClientSessionCreation = false;
@@ -117,11 +157,16 @@ namespace SimpleFPS
 			if (result.Success)
 				return await StartGame(connectionArgs.Scene.SceneName);
 
-			await DisconnectAsync(result.FailReason);
-			return ConnectionFail(result.FailReason);
+			await DisconnectAsync(result.FailReason, false);
+			return result;
 		}
 
 		public virtual async Task DisconnectAsync(int reason)
+		{
+			await DisconnectAsync(reason, true);
+		}
+
+		private async Task DisconnectAsync(int reason, bool showPopup)
 		{
 			var runner = _runner;
 			_runner = null;
@@ -137,7 +182,7 @@ namespace SimpleFPS
 						await runner.UnloadScene(sceneRef);
 					}
 				}
-				else
+				else if (runner.SceneManager != null)
 				{
 					sceneToUnload = runner.SceneManager.MainRunnerScene;
 				}
@@ -151,11 +196,12 @@ namespace SimpleFPS
 				}
 			}
 
-			if (reason != ConnectFailReason.UserRequest)
+			if (showPopup && reason != ConnectFailReason.UserRequest)
 			{
 				await _connectionBehaviour.UIController.PopupAsync(reason.ToString(), "Disconnected");
 			}
 
+			MatchRuntimeSettings.Clear();
 			_connectionBehaviour.UIController.OnGameStopped();
 		}
 
@@ -181,13 +227,22 @@ namespace SimpleFPS
 		private async Task<ConnectResult> StartRunner(StartGameArgs args)
 		{
 			var result = await _runner.StartGame(args);
-			return new ConnectResult() { Success = _runner.IsRunning, FailReason = ConnectFailReason.Disconnect };
+			if (result.Ok && _runner.IsRunning)
+				return ConnectionSuccess();
+
+			string message = string.IsNullOrWhiteSpace(result.ErrorMessage)
+				? result.ShutdownReason.ToString()
+				: $"{result.ShutdownReason}: {result.ErrorMessage}";
+
+			Debug.LogWarning($"Fusion StartGame failed: {message}");
+			return ConnectionFail(ConnectFailReason.Disconnect, message);
 		}
 
 		private async Task<ConnectResult> StartGame(string sceneName)
 		{
 			try
 			{
+				MatchRuntimeSettings.Configure(_connectionBehaviour.MatchSettingsCatalog, _runner.SessionInfo.Properties);
 				_runner.AddCallbacks(new MenuConnectionCallbacks(_connectionBehaviour.UIController, sceneName));
 				if (_runner.IsSceneAuthority)
 				{
@@ -205,7 +260,7 @@ namespace SimpleFPS
 		}
 
 		private static ConnectResult ConnectionSuccess() => new ConnectResult() { Success = true };
-		private static ConnectResult ConnectionFail(int failReason) => new ConnectResult() { FailReason = failReason };
+		private static ConnectResult ConnectionFail(int failReason, string debugMessage = null) => new ConnectResult() { FailReason = failReason, DebugMessage = debugMessage };
 
 		private class MenuConnectionCallbacks : INetworkRunnerCallbacks
 		{
@@ -228,6 +283,7 @@ namespace SimpleFPS
 
 				Cursor.lockState = CursorLockMode.None;
 				Cursor.visible = true;
+				MatchRuntimeSettings.Clear();
 
 				if (shutdownReason != ShutdownReason.Ok && shutdownReason != ShutdownReason.OperationCanceled)
 					PendingDisconnectMessage.Set($"Disconnected from the server ({shutdownReason}).");

@@ -8,6 +8,8 @@ The height generator decides cell elevation and ledges. The road generator decid
 
 The first implementation does not need final building art. It can use placeholder block prefabs to validate placement quality.
 
+Configured hosted matches may override the scene's `BuildingPlacementSettings` reference before this pass starts. The hosting menu selects an authored preset from `MatchHostingSettingsCatalog`.
+
 ## Goals
 
 - Place buildings only in cells that are not roads.

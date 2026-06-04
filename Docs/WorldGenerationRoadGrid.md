@@ -13,6 +13,8 @@ When `HeightMapGenerator` is present, road generation consumes its height snapsh
 
 Height generation is documented separately in `Docs/WorldGenerationHeightMap.md`.
 
+Configured hosted matches may override the scene's `RoadGenerationSettings` reference and map dimensions before this pass starts. The menu selects an authored preset from `MatchHostingSettingsCatalog`; road generation itself remains deterministic from its settings and networked world seed.
+
 The generator should be configurable enough that future systems can add tile variations, special environments such as military quarantine zones, building placement, and additional elevation traversal without replacing the whole architecture.
 
 ## Core Approach

@@ -4,6 +4,8 @@
 
 Height generation is the new first world-generation pass.
 
+Configured hosted matches may override the scene's `HeightGenerationSettings` reference and map dimensions before this pass starts. The hosting menu selects an authored preset from `MatchHostingSettingsCatalog`; the generator itself remains unaware of menus and networking.
+
 Current world generation order should become:
 
 ```text

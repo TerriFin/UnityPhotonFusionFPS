@@ -1,0 +1,26 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3a750214b2d615a47b3b8f3328a9a929, type: 3}
+  m_Name: SmallRoads
+  m_EditorClassIdentifier: 
+  RequestedExitCount: 5
+  MinExitSpacing: 6
+  MinRoadSpacing: 1
+  MaxRoadSpacing: 2
+  PreventSolidRoadBlocks: 1
+  MaxRoadCellsIn3x3: 5
+  ExtraRoadDensity: 0.3
+  StubRoadStartDensity: 0
+  RequireDiagonalSpaceForStubRoads: 1
+  MinConnectingRoadLength: 4
+  MaxPathAttempts: 200
+  RoadTiles: {fileID: 11400000, guid: 84fecd68a06eab94bb71907caf18be39, type: 2}

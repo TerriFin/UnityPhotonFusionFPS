@@ -28,6 +28,8 @@ Generated environment = regular Unity Instantiate
 Gameplay entities = Fusion Runner.Spawn
 ```
 
+Configured hosted matches may override the scene's `WorldLootSpawnSettings` reference before loot is generated. The hosting menu selects an authored preset from `MatchHostingSettingsCatalog`.
+
 ## Pickup Spawn Markers
 
 Add a marker component to empty child objects inside building prefabs:

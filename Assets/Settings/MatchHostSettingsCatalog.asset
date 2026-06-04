@@ -1,0 +1,53 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d6af0b830edae7e45bfe55b0dff56ac3, type: 3}
+  m_Name: MatchHostSettingsCatalog
+  m_EditorClassIdentifier: 
+  DefaultHostedSettings:
+    MapWidth: 16
+    MapHeight: 16
+    StartingSurvivorsPerPlayer: 12
+    GameLengthMinutes: 10
+    FogDensity: 0.06
+    RaidMode: 0
+    RaidModeClientStartingSurvivors: 1
+    HeightGenerationPreset: 2
+    RoadGenerationPreset: 4
+    BuildingPlacementPreset: 2
+    LootSpawnPreset: 2
+    ZombieOrchestratorPreset: 0
+  HeightGenerationPresets:
+  - {fileID: 11400000, guid: c2fee7c2a84edf7459956cb76320b880, type: 2}
+  - {fileID: 11400000, guid: 191979fc0ac5d934d8644767285edf9e, type: 2}
+  - {fileID: 11400000, guid: 2d372f46facb4d849907a3b7f5b4ed3c, type: 2}
+  - {fileID: 11400000, guid: dd44f1a170200e8449e8dde1607ab6ff, type: 2}
+  - {fileID: 11400000, guid: f5e171b811a96a846bfdf54b32acb40a, type: 2}
+  RoadGenerationPresets:
+  - {fileID: 11400000, guid: cf7e302dfc190694d8b1fa48fbfd8aac, type: 2}
+  - {fileID: 11400000, guid: e0bdc1111d5f59c4d9cf459f3995f907, type: 2}
+  - {fileID: 11400000, guid: e8ba2c7be5f7523439df0c2d2fe59ade, type: 2}
+  - {fileID: 11400000, guid: 1e2cf4478dc3e2b4b9de09be5e3277e5, type: 2}
+  - {fileID: 11400000, guid: 81d6a36a99aa0c74dba6d0b2d7e6cf04, type: 2}
+  - {fileID: 11400000, guid: 457f8c31871a04b48b15687b0c3572f7, type: 2}
+  - {fileID: 11400000, guid: 067e94ede5442bc44abdb1707ff24a67, type: 2}
+  BuildingPlacementPresets:
+  - {fileID: 11400000, guid: 31ca1efd4bbf1614eb70ed71c78c9643, type: 2}
+  - {fileID: 11400000, guid: 05dd448806f7aac43bef6f4bf6db8c91, type: 2}
+  - {fileID: 11400000, guid: 8b791c21fc415a248af43c355a9176ed, type: 2}
+  - {fileID: 11400000, guid: e33c0c2e5ed390c49bed2dde40194de5, type: 2}
+  LootSpawnPresets:
+  - {fileID: 11400000, guid: 2a4a624e807c35c47886fbb370595b9a, type: 2}
+  - {fileID: 11400000, guid: 147748cf79428894e88e8946e48225a3, type: 2}
+  - {fileID: 11400000, guid: bec873865fdf8f8479ac650e4cfb9eb1, type: 2}
+  - {fileID: 11400000, guid: eab0746a77250d140be1904ddaf10867, type: 2}
+  ZombieOrchestratorPresets:
+  - {fileID: 11400000, guid: 88933dedb786d73419a5ad1524406256, type: 2}

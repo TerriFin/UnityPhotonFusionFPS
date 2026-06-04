@@ -340,6 +340,8 @@ namespace SimpleFPS
 
 		public override void Spawned()
 		{
+			MatchRuntimeSettings.ApplyToScene(gameObject.scene);
+
 			if (Runner.Mode == SimulationModes.Server)
 			{
 				Application.targetFrameRate = TickRate.Resolve(Runner.Config.Simulation.TickRateSelection).Server;

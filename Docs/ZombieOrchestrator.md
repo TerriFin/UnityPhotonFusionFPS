@@ -15,6 +15,8 @@ The orchestrator owns global zombie pressure:
 
 Individual zombie movement and attacking behavior is documented in `Docs/ZombieAI.md`.
 
+Configured hosted matches may override the scene's `ZombieOrchestratorSettings` reference before spawning starts. The hosting menu selects an authored preset from `MatchHostingSettingsCatalog`.
+
 ## Core Rules
 
 - Zombie spawning runs only on scene/state authority.

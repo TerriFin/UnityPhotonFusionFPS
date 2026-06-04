@@ -1204,7 +1204,7 @@ MonoBehaviour:
   AirAcceleration: 20
   AirDeceleration: 1.3
   DespawnAfterDeath: 20
-  MantleAnimationDuration: 0.35
+  MantleAnimationDuration: 0.45
 --- !u!114 &1337231334519911347
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1240,7 +1240,7 @@ MonoBehaviour:
   ExplicitGoalHeightTolerance: 0.75
   CanClimbDirectGoals: 1
   ClimbSpeedMultiplier: 0.45
-  ClimbObstacleProbeDistance: 1.25
+  ClimbObstacleProbeDistance: 1.35
   ClimbCommitDuration: 0.75
   ClimbMantleMaxSnapHeight: 1.75
   MaxAlertRecipients: 16
