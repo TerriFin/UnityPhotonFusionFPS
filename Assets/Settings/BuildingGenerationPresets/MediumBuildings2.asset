@@ -18,3 +18,6 @@ MonoBehaviour:
   SeedOffset: 10000
   FillMapEdgesWithBlockingBuildings: 1
   FillRemainingEmptyCellsWithBlockingBuildings: 1
+  PreserveBuriedLedgeTunnels: 1
+  MaxDeadEndBuriedLedgeLength: 3
+  MaxBuriedLedgeTunnelLength: 6

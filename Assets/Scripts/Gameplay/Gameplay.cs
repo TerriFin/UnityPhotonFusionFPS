@@ -86,7 +86,8 @@ namespace SimpleFPS
 		private List<Survivor> _spawnedPlayers = new(16);
 		private List<PlayerRef> _pendingPlayers = new(16);
 		private List<PlayerData> _tempPlayerData = new(16);
-		private List<Transform> _recentSpawnPoints = new(4);
+		private readonly Dictionary<PlayerRef, Transform> _spawnPointsByPlayer = new();
+		private readonly List<PlayerRef> _tempSpawnAssignmentRemovals = new(16);
 
 		// Non-networked survivor lookup, populated via Register/Unregister from Survivor.Spawned/Despawned
 		// on every peer. Stays in sync because spawn/despawn events fire everywhere via state replication.
@@ -492,6 +493,7 @@ namespace SimpleFPS
 			}
 
 			DespawnTeam(playerRef);
+			_spawnPointsByPlayer.Remove(playerRef);
 			_lastSwitchTicks.Remove(playerRef);
 
 			RecalculateStatisticPositions();
@@ -500,7 +502,7 @@ namespace SimpleFPS
 		private void SpawnTeam(PlayerRef playerRef)
 		{
 			int count = GetStartingCharacterCount(playerRef);
-			var spawnPoint = GetSpawnPoint();
+			var spawnPoint = GetSpawnPoint(playerRef);
 			var offsets = GetClusterOffsets(count, SpawnClusterRadius);
 
 			for (int i = 0; i < count; i++)
@@ -705,36 +707,133 @@ namespace SimpleFPS
 			}
 		}
 
-		private Transform GetSpawnPoint()
+		private Transform GetSpawnPoint(PlayerRef playerRef)
 		{
-			Transform spawnPoint = default;
-
-			// Iterate over all spawn points in the scene.
 			var spawnPoints = Runner.SimulationUnityScene.GetComponents<SpawnPoint>(false);
-			for (int i = 0, offset = Random.Range(0, spawnPoints.Length); i < spawnPoints.Length; i++)
-			{
-				spawnPoint = spawnPoints[(offset + i) % spawnPoints.Length].transform;
+			if (spawnPoints == null || spawnPoints.Length == 0)
+				return transform;
 
-				if (_recentSpawnPoints.Contains(spawnPoint) == false)
-					break;
-			}
+			PruneMissingAssignedSpawnPoints(spawnPoints);
 
-			// Add spawn point to list of recently used spawn points.
-			_recentSpawnPoints.Add(spawnPoint);
+			if (_spawnPointsByPlayer.TryGetValue(playerRef, out Transform existing) && IsSpawnPointAvailable(existing, spawnPoints))
+				return existing;
 
-			// Ignore only last 3 spawn points.
-			if (_recentSpawnPoints.Count > 3)
-			{
-				_recentSpawnPoints.RemoveAt(0);
-			}
-
+			Transform spawnPoint = ChooseSpreadSpawnPoint(spawnPoints);
+			_spawnPointsByPlayer[playerRef] = spawnPoint;
 			return spawnPoint;
+		}
+
+		private Transform ChooseSpreadSpawnPoint(SpawnPoint[] spawnPoints)
+		{
+			if (_spawnPointsByPlayer.Count == 0)
+				return spawnPoints[Random.Range(0, spawnPoints.Length)].transform;
+
+			Transform best = null;
+			Transform secondBest = null;
+			float bestScore = float.NegativeInfinity;
+			float secondBestScore = float.NegativeInfinity;
+			float bestTieBreaker = 0f;
+			float secondBestTieBreaker = 0f;
+
+			for (int i = 0; i < spawnPoints.Length; i++)
+			{
+				Transform candidate = spawnPoints[i].transform;
+				if (IsSpawnAlreadyAssigned(candidate))
+					continue;
+
+				float score = GetMinimumAssignedSpawnDistanceSqr(candidate.position);
+				float tieBreaker = Random.value;
+
+				if (score > bestScore || Mathf.Approximately(score, bestScore) && tieBreaker > bestTieBreaker)
+				{
+					secondBest = best;
+					secondBestScore = bestScore;
+					secondBestTieBreaker = bestTieBreaker;
+					best = candidate;
+					bestScore = score;
+					bestTieBreaker = tieBreaker;
+				}
+				else if (score > secondBestScore || Mathf.Approximately(score, secondBestScore) && tieBreaker > secondBestTieBreaker)
+				{
+					secondBest = candidate;
+					secondBestScore = score;
+					secondBestTieBreaker = tieBreaker;
+				}
+			}
+
+			if (best == null)
+				return spawnPoints[Random.Range(0, spawnPoints.Length)].transform;
+			if (secondBest == null)
+				return best;
+
+			return Random.value < 0.5f ? best : secondBest;
+		}
+
+		private float GetMinimumAssignedSpawnDistanceSqr(Vector3 candidatePosition)
+		{
+			float minDistanceSqr = float.PositiveInfinity;
+
+			foreach (var pair in _spawnPointsByPlayer)
+			{
+				if (pair.Value == null)
+					continue;
+
+				float distanceSqr = FlatDistanceSqr(candidatePosition, pair.Value.position);
+				if (distanceSqr < minDistanceSqr)
+					minDistanceSqr = distanceSqr;
+			}
+
+			return minDistanceSqr;
+		}
+
+		private bool IsSpawnAlreadyAssigned(Transform spawnPoint)
+		{
+			foreach (var pair in _spawnPointsByPlayer)
+			{
+				if (pair.Value == spawnPoint)
+					return true;
+			}
+
+			return false;
+		}
+
+		private void PruneMissingAssignedSpawnPoints(SpawnPoint[] spawnPoints)
+		{
+			_tempSpawnAssignmentRemovals.Clear();
+
+			foreach (var pair in _spawnPointsByPlayer)
+			{
+				if (pair.Value == null || IsSpawnPointAvailable(pair.Value, spawnPoints) == false)
+					_tempSpawnAssignmentRemovals.Add(pair.Key);
+			}
+
+			for (int i = 0; i < _tempSpawnAssignmentRemovals.Count; i++)
+			{
+				_spawnPointsByPlayer.Remove(_tempSpawnAssignmentRemovals[i]);
+			}
+
+			_tempSpawnAssignmentRemovals.Clear();
+		}
+
+		private static bool IsSpawnPointAvailable(Transform spawnPoint, SpawnPoint[] spawnPoints)
+		{
+			if (spawnPoint == null || spawnPoints == null)
+				return false;
+
+			for (int i = 0; i < spawnPoints.Length; i++)
+			{
+				if (spawnPoints[i] != null && spawnPoints[i].transform == spawnPoint)
+					return true;
+			}
+
+			return false;
 		}
 
 		private void StartGameplay()
 		{
 			State = EGameplayState.Running;
 			RemainingTime = TickTimer.CreateFromSeconds(Runner, GameDuration);
+			_spawnPointsByPlayer.Clear();
 
 			// Collect keys first — SpawnTeam / DespawnTeam mutate networked state we iterate over.
 			_pendingPlayers.Clear();

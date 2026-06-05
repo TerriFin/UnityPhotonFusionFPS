@@ -19,6 +19,9 @@ namespace SimpleFPS
 		public TMP_Text FogDensityValue;
 		public Toggle RaidMode;
 		public TMP_InputField RaidModeClientStartingSurvivors;
+		public Toggle PreserveBuriedLedgeTunnels;
+		public TMP_InputField MaxDeadEndBuriedLedgeLength;
+		public TMP_InputField MaxBuriedLedgeTunnelLength;
 
 		[Header("Preset Dropdowns")]
 		public TMP_Dropdown HeightGenerationPreset;
@@ -125,6 +128,10 @@ namespace SimpleFPS
 			if (RaidMode != null)
 				RaidMode.SetIsOnWithoutNotify(settings.RaidMode);
 			SetText(RaidModeClientStartingSurvivors, settings.RaidModeClientStartingSurvivors);
+			if (PreserveBuriedLedgeTunnels != null)
+				PreserveBuriedLedgeTunnels.SetIsOnWithoutNotify(settings.PreserveBuriedLedgeTunnels);
+			SetText(MaxDeadEndBuriedLedgeLength, settings.MaxDeadEndBuriedLedgeLength);
+			SetText(MaxBuriedLedgeTunnelLength, settings.MaxBuriedLedgeTunnelLength);
 
 			SetPresetDropdown(HeightGenerationPreset, settings.HeightGenerationPreset);
 			SetPresetDropdown(RoadGenerationPreset, settings.RoadGenerationPreset);
@@ -146,6 +153,9 @@ namespace SimpleFPS
 				FogDensity = FogDensity != null ? FogDensity.value : defaults.FogDensity,
 				RaidMode = RaidMode != null ? RaidMode.isOn : defaults.RaidMode,
 				RaidModeClientStartingSurvivors = ReadInt(RaidModeClientStartingSurvivors, defaults.RaidModeClientStartingSurvivors),
+				PreserveBuriedLedgeTunnels = PreserveBuriedLedgeTunnels != null ? PreserveBuriedLedgeTunnels.isOn : defaults.PreserveBuriedLedgeTunnels,
+				MaxDeadEndBuriedLedgeLength = ReadInt(MaxDeadEndBuriedLedgeLength, defaults.MaxDeadEndBuriedLedgeLength),
+				MaxBuriedLedgeTunnelLength = ReadInt(MaxBuriedLedgeTunnelLength, defaults.MaxBuriedLedgeTunnelLength),
 				HeightGenerationPreset = ReadPresetDropdown(HeightGenerationPreset),
 				RoadGenerationPreset = ReadPresetDropdown(RoadGenerationPreset),
 				BuildingPlacementPreset = ReadPresetDropdown(BuildingPlacementPreset),

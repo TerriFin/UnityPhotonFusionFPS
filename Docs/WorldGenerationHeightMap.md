@@ -159,7 +159,9 @@ Inner corner rotation 0: high sides are North + East
 Outer corner rotation 0: higher elevation touches the North-East diagonal
 ```
 
-The generator rotates those definitions to match the local height pattern. Outer corners are created for low cells that touch higher elevation only diagonally. This fills the visible gap between two neighboring inner-corner transitions.
+The generator rotates those definitions to match the local height pattern. Inner corners are selected when exactly two adjacent cardinal sides are higher. Outer corners are created for low cells that touch higher elevation only diagonally. This fills the visible gap between two neighboring inner-corner transitions.
+
+During pathfinding, the generator rejects one-cell offshoots where a ledge steps diagonally out from a mostly straight run and immediately diagonally back to that same run. These tiny nubs are not useful terrain, are too small for roads or buildings, and can leave malformed ledge geometry.
 
 When an elevation transition reaches the map edge, use boundary ledge tiles. For the first version, map-edge ledges should be straight. The height transition is considered to continue out of the map.
 

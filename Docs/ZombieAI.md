@@ -208,6 +208,8 @@ Direct traversal is deliberately crude and threatening:
 - A single forward raycast at approximately knee height in front of a directly moving zombie detects walls, low props, and ledge faces and enables climbing.
 - Climb and mantle probes ignore colliders that belong to zombies or survivors. Packed hordes should press against each other through ordinary separation, not mistake another character for climbable geometry or hoist onto one.
 - A nearby higher goal also enables climbing.
+- While Attacking or Hunting, a zombie that is already inside `ZombieStats.AttackRange` holds position and faces the target during attack cooldown instead of continuing to push forward. This prevents packed zombies from trying to climb the wall behind a survivor they can already hit.
+- Climb obstacle probes are capped before the current goal point. A wall behind the survivor is not treated as climbable progress toward the survivor.
 - A short commitment timer prevents the climb impulse from flickering off while the zombie rises past an obstacle edge. The commit deliberately persists across state transitions (Investigating → Attacking when the zombie crests the ledge and finally sees the survivor, for example). Resetting it on the state change would cause the climb impulse to switch off the same tick the survivor becomes visible, the zombie would drop back below the ledge, re-engage the climb on the next obstacle hit, and loop.
 - A forward/down mantle probe lets the authoritative KCC hoist the body onto the ledge once a valid top surface is reachable.
 
@@ -241,6 +243,12 @@ ClimbObstacleProbeDistance
 ClimbCommitDuration
 ClimbMantleMaxSnapHeight
 ```
+
+`ExplicitGoalStoppingDistance` is treated as a final-goal/attack-position tuning value.
+While following a NavMesh path, `ZombieAI` clamps the steering-corner stop distance below
+`CharacterNavigator.CornerReachDistance`. This prevents zombies from stopping just short
+of a corner that the navigator has not advanced yet, which otherwise looks like the zombie
+is staring through a wall until another zombie bumps it forward.
 
 Recommended first-pass defaults:
 

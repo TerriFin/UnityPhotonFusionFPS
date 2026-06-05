@@ -1,0 +1,39 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fda0bbb5fb532f74088749f1de623d4d, type: 3}
+  m_Name: FastSprinters
+  m_EditorClassIdentifier: 
+  ZombiePrefab: {fileID: 3297568450549869079, guid: 1f02166891b80b94eb78a0c324123106, type: 3}
+  StartMaxZombies: 20
+  EndMaxZombies: 100
+  MatchDurationSeconds: 0
+  ScaleDuringSkirmish: 0
+  StartSpawnRatePerMinute: 12
+  EndSpawnRatePerMinute: 68
+  SpawnPulseInterval: 12
+  MaxSpawnPerPulsePerPlayer: 14
+  SpawnNavMeshSampleDistance: 1.5
+  MinimumSpawnConnectedNavMeshRadius: 10
+  StartHealth: 45
+  EndHealth: 75
+  StartDamage: 14
+  EndDamage: 22
+  StartMoveSpeed: 5.5
+  EndMoveSpeed: 8.5
+  StartAlertRadius: 6
+  EndAlertRadius: 16
+  OvertimeHealth: 100
+  OvertimeDamage: 32
+  OvertimeMoveSpeed: 10
+  UnderpopulatedRegionBias: 0.5
+  RegionGridSize: 4
+  SeedOffset: 30000

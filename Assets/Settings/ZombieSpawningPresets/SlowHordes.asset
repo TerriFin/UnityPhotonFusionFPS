@@ -1,0 +1,39 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fda0bbb5fb532f74088749f1de623d4d, type: 3}
+  m_Name: SlowHordes
+  m_EditorClassIdentifier: 
+  ZombiePrefab: {fileID: 3297568450549869079, guid: 1f02166891b80b94eb78a0c324123106, type: 3}
+  StartMaxZombies: 80
+  EndMaxZombies: 200
+  MatchDurationSeconds: 0
+  ScaleDuringSkirmish: 0
+  StartSpawnRatePerMinute: 30
+  EndSpawnRatePerMinute: 120
+  SpawnPulseInterval: 22
+  MaxSpawnPerPulsePerPlayer: 42
+  SpawnNavMeshSampleDistance: 1.5
+  MinimumSpawnConnectedNavMeshRadius: 10
+  StartHealth: 20
+  EndHealth: 75
+  StartDamage: 4
+  EndDamage: 8
+  StartMoveSpeed: 2
+  EndMoveSpeed: 4
+  StartAlertRadius: 6
+  EndAlertRadius: 10
+  OvertimeHealth: 100
+  OvertimeDamage: 12
+  OvertimeMoveSpeed: 5
+  UnderpopulatedRegionBias: 0.5
+  RegionGridSize: 4
+  SeedOffset: 30000

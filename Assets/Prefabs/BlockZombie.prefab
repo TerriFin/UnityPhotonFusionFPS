@@ -1195,7 +1195,7 @@ MonoBehaviour:
     Damage: 8
     MoveSpeed: 2.2
     AlertRadius: 8
-    AttackRange: 1.2
+    AttackRange: 1.3
     AttackCooldown: 1.1
   UpGravity: 15
   DownGravity: 25
@@ -1229,18 +1229,18 @@ MonoBehaviour:
   HuntingRetargetInterval: 6
   HuntingRetargetIntervalJitter: 2
   HuntingInitialRetargetStaggerMax: 3
-  StoppingDistance: 0.5
-  DirectMoveDistance: 0.66
+  StoppingDistance: 0.66
+  DirectMoveDistance: 0.75
   MaxYawDegreesPerTick: 6
   ReachablePointSampleDistance: 8
-  ExplicitGoalStoppingDistance: 0.2
+  ExplicitGoalStoppingDistance: 0.66
   ExplicitGoalRouteRefreshInterval: 0.5
-  DirectRouteLengthMultiplier: 1.75
+  DirectRouteLengthMultiplier: 1.65
   MaxDirectTraversalDistance: 30
   ExplicitGoalHeightTolerance: 0.75
   CanClimbDirectGoals: 1
   ClimbSpeedMultiplier: 0.45
-  ClimbObstacleProbeDistance: 1.35
+  ClimbObstacleProbeDistance: 1.25
   ClimbCommitDuration: 0.75
   ClimbMantleMaxSnapHeight: 1.75
   MaxAlertRecipients: 16
@@ -1263,7 +1263,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   ProximityAwarenessRadius: 7
-  NoiseAwarenessRadius: 28
+  NoiseAwarenessRadius: 26
   BulletImpactAwarenessRadius: 5
   VisionDistance: 10
   VisionAngle: 90
@@ -1291,7 +1291,7 @@ MonoBehaviour:
   RepathInterval: 0.4
   CornerReachDistance: 0.66
   DestinationReachDistance: 0.66
-  DestinationChangeRepathDistance: 0.2
+  DestinationChangeRepathDistance: 0.33
   SampleMaxDistance: 2
   ReachablePointSampleMaxDistance: 8
   AreaMask: -1

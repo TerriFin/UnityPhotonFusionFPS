@@ -137,12 +137,21 @@ _accumulatedInput.Buttons.Set(EInputButton.NextCharacter, Keyboard.current.leftC
 
 Each `SpawnPoint` in the scene is placed so that a ~3m radius area around it is free of static obstacles. **All characters for a team spawn within this guaranteed area.** No per-character overlap checks are needed.
 
+Spawn points are assigned per player on state authority:
+
+- The first player receives a random spawn point.
+- Later players score every unassigned spawn by its distance to the nearest already assigned player spawn.
+- The best two candidates are selected, and one of those two is chosen randomly.
+- This keeps teams far apart for two-player and multi-player starts while preserving enough randomness that spawn positions are not perfectly predictable.
+- When the real match starts and all connected skirmish teams are respawned, the assignment cache is cleared so the match receives a fresh spread.
+- Disconnected players release their assigned spawn.
+
 ### Modify SpawnPlayer (Gameplay.cs)
 
 Replace the single `Runner.Spawn` call with a loop:
 
 ```
-basePoint = GetSpawnPoint()    // existing selection logic, unchanged
+basePoint = GetSpawnPoint(playerRef)
 offsets   = GetClusterOffsets(StartingCharacterCount, clusterRadius: 1.5f)
 
 for i in 0 .. StartingCharacterCount - 1:

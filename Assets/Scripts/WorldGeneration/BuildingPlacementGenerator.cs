@@ -43,9 +43,21 @@ namespace SimpleFPS
 		private Transform _generatedRoot;
 		private WorldGridSnapshot _lastRoadGrid;
 		private Coroutine _navMeshRebuildCoroutine;
+		private bool _hasRuntimeLedgeTunnelPruningSettings;
+		private bool _runtimePreserveBuriedLedgeTunnels;
+		private int _runtimeMaxDeadEndBuriedLedgeLength;
+		private int _runtimeMaxBuriedLedgeTunnelLength;
 
 		public Transform GeneratedRoot => _generatedRoot;
 		public bool IsGenerationComplete { get; private set; }
+
+		public void SetRuntimeLedgeTunnelPruningSettings(bool preserveBuriedLedgeTunnels, int maxDeadEndBuriedLedgeLength, int maxBuriedLedgeTunnelLength)
+		{
+			_hasRuntimeLedgeTunnelPruningSettings = true;
+			_runtimePreserveBuriedLedgeTunnels = preserveBuriedLedgeTunnels;
+			_runtimeMaxDeadEndBuriedLedgeLength = Mathf.Max(0, maxDeadEndBuriedLedgeLength);
+			_runtimeMaxBuriedLedgeTunnelLength = Mathf.Max(0, maxBuriedLedgeTunnelLength);
+		}
 
 		private IEnumerator Start()
 		{
@@ -257,20 +269,33 @@ namespace SimpleFPS
 
 			// Interior ledges resolve first, then pit-corner cleanup may add more blockers, and finally
 			// boundary ledges run against the finished blocker layout.
+			bool preserveBuriedLedgeTunnels = GetPreserveBuriedLedgeTunnels();
+			int maxDeadEndBuriedLedgeLength = GetMaxDeadEndBuriedLedgeLength();
+			int maxBuriedLedgeTunnelLength = GetMaxBuriedLedgeTunnelLength();
 			int replaced = 0;
-			replaced += SweepLedges(grid, placements, replacement, hasHeightSnapshot, heightSnapshot, boundaryPhase: false);
-			replaced += ReplacePitCornerLedges(grid, placements, replacement, heightSnapshot);
-			replaced += SweepLedges(grid, placements, replacement, hasHeightSnapshot, heightSnapshot, boundaryPhase: true);
+			replaced += SweepLedges(grid, placements, replacement, hasHeightSnapshot, heightSnapshot, boundaryPhase: false, preserveBuriedLedgeTunnels, maxDeadEndBuriedLedgeLength, maxBuriedLedgeTunnelLength);
+			replaced += ReplacePitCornerLedges(grid, placements, replacement, heightSnapshot, preserveBuriedLedgeTunnels, maxDeadEndBuriedLedgeLength, maxBuriedLedgeTunnelLength);
+			// Boundary ledges are map-edge sealing pieces, not tunnel candidates.
+			replaced += SweepLedges(grid, placements, replacement, hasHeightSnapshot, heightSnapshot, boundaryPhase: true, preserveBuriedLedgeTunnels: false, maxDeadEndBuriedLedgeLength: 0, maxBuriedLedgeTunnelLength: 0);
 
 			if (replaced > 0)
 				Debug.Log($"{nameof(BuildingPlacementGenerator)} replaced {replaced} buried ledge cell(s) with blocking buildings.", this);
 		}
 
-		private int SweepLedges(BuildingCell[,] grid, List<PlacedBuilding> placements, BuildingDefinition replacement, bool hasHeightSnapshot, WorldHeightSnapshot heightSnapshot, bool boundaryPhase)
+		private int SweepLedges(
+			BuildingCell[,] grid,
+			List<PlacedBuilding> placements,
+			BuildingDefinition replacement,
+			bool hasHeightSnapshot,
+			WorldHeightSnapshot heightSnapshot,
+			bool boundaryPhase,
+			bool preserveBuriedLedgeTunnels,
+			int maxDeadEndBuriedLedgeLength,
+			int maxBuriedLedgeTunnelLength)
 		{
 			int width = grid.GetLength(0);
 			int height = grid.GetLength(1);
-			int replaced = 0;
+			var candidates = new List<Vector2Int>();
 
 			for (int x = 0; x < width; x++)
 			{
@@ -285,12 +310,11 @@ namespace SimpleFPS
 					if (ShouldReplaceLedge(grid, position, hasHeightSnapshot, heightSnapshot, boundaryPhase) == false)
 						continue;
 
-					ReplaceLedgeWithBlocker(grid, placements, replacement, position);
-					replaced++;
+					candidates.Add(position);
 				}
 			}
 
-			return replaced;
+			return ReplaceCandidateLedgeGroups(grid, placements, replacement, candidates, preserveBuriedLedgeTunnels, maxDeadEndBuriedLedgeLength, maxBuriedLedgeTunnelLength);
 		}
 
 		private bool ShouldReplaceLedge(BuildingCell[,] grid, Vector2Int position, bool hasHeightSnapshot, WorldHeightSnapshot heightSnapshot, bool boundaryPhase)
@@ -325,14 +349,8 @@ namespace SimpleFPS
 					return false;
 
 				BuildingCell neighbor = grid[neighborPosition.x, neighborPosition.y];
-				if (neighbor.IsRoad && neighbor.IsHeightChangeRoad == false)
+				if (neighbor.IsRoad)
 					return false;
-
-				if (neighbor.IsHeightChangeRoad)
-				{
-					touchesBlockingBuilding = true;
-					continue;
-				}
 
 				if (neighbor.Building != null)
 				{
@@ -365,14 +383,21 @@ namespace SimpleFPS
 					continue;
 				}
 
-				if (IsSealedByBlockerOrRampAt(grid, neighborPosition))
+				if (IsBlockingBuildingAt(grid, neighborPosition))
 					sealedNeighborCount++;
 			}
 
 			return outOfBoundsCount == 1 && sealedNeighborCount == 3;
 		}
 
-		private int ReplacePitCornerLedges(BuildingCell[,] grid, List<PlacedBuilding> placements, BuildingDefinition replacement, WorldHeightSnapshot heightSnapshot)
+		private int ReplacePitCornerLedges(
+			BuildingCell[,] grid,
+			List<PlacedBuilding> placements,
+			BuildingDefinition replacement,
+			WorldHeightSnapshot heightSnapshot,
+			bool preserveBuriedLedgeTunnels,
+			int maxDeadEndBuriedLedgeLength,
+			int maxBuriedLedgeTunnelLength)
 		{
 			if (heightSnapshot.IsValid == false)
 				return 0;
@@ -384,6 +409,7 @@ namespace SimpleFPS
 			do
 			{
 				changed = false;
+				var candidates = new List<Vector2Int>();
 				for (int x = 0; x < grid.GetLength(0); x++)
 				{
 					for (int y = 0; y < grid.GetLength(1); y++)
@@ -395,12 +421,13 @@ namespace SimpleFPS
 						if (IsPitCornerLedgeFacingBlockers(grid, heightSnapshot, position) == false)
 							continue;
 
-						ReplaceLedgeWithBlocker(grid, placements, replacement, position);
-						replaced++;
-						changed = true;
+						candidates.Add(position);
 					}
 				}
 
+				int replacedThisPass = ReplaceCandidateLedgeGroups(grid, placements, replacement, candidates, preserveBuriedLedgeTunnels, maxDeadEndBuriedLedgeLength, maxBuriedLedgeTunnelLength);
+				replaced += replacedThisPass;
+				changed = replacedThisPass > 0;
 				guard--;
 			} while (changed && guard > 0);
 
@@ -418,6 +445,224 @@ namespace SimpleFPS
 			RoadDirection lowSideB = (RoadDirection)((cell.LedgeRotationSteps + 3) % DirectionOffsets.Length);
 			return IsSealedForPitCornerAt(grid, heightSnapshot, position + DirectionOffsets[(int)lowSideA])
 			       && IsSealedForPitCornerAt(grid, heightSnapshot, position + DirectionOffsets[(int)lowSideB]);
+		}
+
+		private int ReplaceCandidateLedgeGroups(
+			BuildingCell[,] grid,
+			List<PlacedBuilding> placements,
+			BuildingDefinition replacement,
+			List<Vector2Int> candidates,
+			bool preserveBuriedLedgeTunnels,
+			int maxDeadEndBuriedLedgeLength,
+			int maxBuriedLedgeTunnelLength)
+		{
+			if (candidates.Count == 0)
+				return 0;
+
+			var remaining = new HashSet<Vector2Int>(candidates);
+			int replaced = 0;
+			while (remaining.Count > 0)
+			{
+				Vector2Int start = default;
+				foreach (Vector2Int candidate in remaining)
+				{
+					start = candidate;
+					break;
+				}
+
+				List<Vector2Int> group = CollectCandidateLedgeGroup(remaining, start);
+				if (ShouldPreserveCandidateLedgeGroup(grid, group, preserveBuriedLedgeTunnels, maxDeadEndBuriedLedgeLength, maxBuriedLedgeTunnelLength))
+					continue;
+
+				for (int i = 0; i < group.Count; i++)
+				{
+					ReplaceLedgeWithBlocker(grid, placements, replacement, group[i]);
+					replaced++;
+				}
+			}
+
+			return replaced;
+		}
+
+		private List<Vector2Int> CollectCandidateLedgeGroup(HashSet<Vector2Int> remaining, Vector2Int start)
+		{
+			var group = new List<Vector2Int>();
+			var queue = new Queue<Vector2Int>();
+			remaining.Remove(start);
+			queue.Enqueue(start);
+
+			while (queue.Count > 0)
+			{
+				Vector2Int current = queue.Dequeue();
+				group.Add(current);
+
+				for (int i = 0; i < DirectionOffsets.Length; i++)
+				{
+					Vector2Int neighbor = current + DirectionOffsets[i];
+					if (remaining.Remove(neighbor) == false)
+						continue;
+
+					queue.Enqueue(neighbor);
+				}
+			}
+
+			return group;
+		}
+
+		private bool ShouldPreserveCandidateLedgeGroup(
+			BuildingCell[,] grid,
+			List<Vector2Int> group,
+			bool preserveBuriedLedgeTunnels,
+			int maxDeadEndBuriedLedgeLength,
+			int maxBuriedLedgeTunnelLength)
+		{
+			if (group.Count <= Mathf.Max(0, maxDeadEndBuriedLedgeLength))
+				return true;
+
+			if (preserveBuriedLedgeTunnels == false || IsBuriedLedgeTunnelGroup(grid, group) == false)
+				return false;
+
+			int maxTunnelLength = Mathf.Max(0, maxBuriedLedgeTunnelLength);
+			return maxTunnelLength == 0 || group.Count <= maxTunnelLength;
+		}
+
+		private bool IsBuriedLedgeTunnelGroup(BuildingCell[,] grid, List<Vector2Int> group)
+		{
+			var groupCells = new HashSet<Vector2Int>(group);
+			var anchorPositions = new HashSet<Vector2Int>();
+			var contactCells = new List<Vector2Int>();
+
+			for (int i = 0; i < group.Count; i++)
+			{
+				Vector2Int position = group[i];
+				for (int direction = 0; direction < DirectionOffsets.Length; direction++)
+				{
+					Vector2Int neighborPosition = position + DirectionOffsets[direction];
+					if (groupCells.Contains(neighborPosition))
+						continue;
+					if (IsInBounds(grid, neighborPosition) == false)
+						continue;
+
+					bool isAnchor = IsOpenTunnelAnchorAt(grid, neighborPosition)
+						|| IsOpenTunnelLedgeAnchorAt(grid, neighborPosition, groupCells);
+					if (isAnchor == false)
+						continue;
+
+					if (anchorPositions.Add(neighborPosition))
+						contactCells.Add(position);
+				}
+			}
+
+			if (anchorPositions.Count < 2)
+				return false;
+			if (group.Count == 1)
+				return true;
+
+			return HasSeparatedTunnelContacts(groupCells, contactCells, Mathf.Max(1, Mathf.CeilToInt(group.Count * 0.5f)));
+		}
+
+		private bool HasSeparatedTunnelContacts(HashSet<Vector2Int> groupCells, List<Vector2Int> contactCells, int requiredDistance)
+		{
+			for (int i = 0; i < contactCells.Count; i++)
+			{
+				for (int j = i + 1; j < contactCells.Count; j++)
+				{
+					if (GetCandidateGroupDistance(groupCells, contactCells[i], contactCells[j], requiredDistance) >= requiredDistance)
+						return true;
+				}
+			}
+
+			return false;
+		}
+
+		private int GetCandidateGroupDistance(HashSet<Vector2Int> groupCells, Vector2Int start, Vector2Int target, int stopAtDistance)
+		{
+			if (start == target)
+				return 0;
+
+			var visited = new HashSet<Vector2Int> { start };
+			var queue = new Queue<CandidateDistance>();
+			queue.Enqueue(new CandidateDistance(start, 0));
+
+			while (queue.Count > 0)
+			{
+				CandidateDistance current = queue.Dequeue();
+				for (int i = 0; i < DirectionOffsets.Length; i++)
+				{
+					Vector2Int neighbor = current.Position + DirectionOffsets[i];
+					if (groupCells.Contains(neighbor) == false || visited.Add(neighbor) == false)
+						continue;
+
+					int distance = current.Distance + 1;
+					if (neighbor == target || distance >= stopAtDistance)
+						return distance;
+
+					queue.Enqueue(new CandidateDistance(neighbor, distance));
+				}
+			}
+
+			return -1;
+		}
+
+		private bool IsOpenTunnelLedgeAnchorAt(BuildingCell[,] grid, Vector2Int position, HashSet<Vector2Int> ignoredCandidateGroup)
+		{
+			if (IsInBounds(grid, position) == false)
+				return false;
+
+			BuildingCell cell = grid[position.x, position.y];
+			if (cell.IsLedge == false || cell.IsHeightChangeRoad)
+				return false;
+
+			for (int i = 0; i < DirectionOffsets.Length; i++)
+			{
+				Vector2Int neighborPosition = position + DirectionOffsets[i];
+				if (ignoredCandidateGroup.Contains(neighborPosition))
+					continue;
+				if (IsOpenTunnelAnchorAt(grid, neighborPosition))
+					return true;
+			}
+
+			return false;
+		}
+
+		private bool IsOpenTunnelAnchorAt(BuildingCell[,] grid, Vector2Int position)
+		{
+			if (IsInBounds(grid, position) == false)
+				return false;
+
+			BuildingCell cell = grid[position.x, position.y];
+			if (cell.IsHeightChangeRoad)
+				return true;
+			if (cell.IsRoad)
+				return true;
+			if (cell.Building != null)
+				return cell.Building.Category != BuildingCategory.SimpleBlocking;
+
+			return cell.IsLedge == false;
+		}
+
+		private bool GetPreserveBuriedLedgeTunnels()
+		{
+			if (_hasRuntimeLedgeTunnelPruningSettings)
+				return _runtimePreserveBuriedLedgeTunnels;
+
+			return Settings != null && Settings.PreserveBuriedLedgeTunnels;
+		}
+
+		private int GetMaxDeadEndBuriedLedgeLength()
+		{
+			if (_hasRuntimeLedgeTunnelPruningSettings)
+				return Mathf.Max(0, _runtimeMaxDeadEndBuriedLedgeLength);
+
+			return Settings != null ? Mathf.Max(0, Settings.MaxDeadEndBuriedLedgeLength) : 0;
+		}
+
+		private int GetMaxBuriedLedgeTunnelLength()
+		{
+			if (_hasRuntimeLedgeTunnelPruningSettings)
+				return Mathf.Max(0, _runtimeMaxBuriedLedgeTunnelLength);
+
+			return Settings != null ? Mathf.Max(0, Settings.MaxBuriedLedgeTunnelLength) : 0;
 		}
 
 		private void ReplaceLedgeWithBlocker(BuildingCell[,] grid, List<PlacedBuilding> placements, BuildingDefinition replacement, Vector2Int position)
@@ -441,18 +686,9 @@ namespace SimpleFPS
 			return building != null && building.Category == BuildingCategory.SimpleBlocking;
 		}
 
-		private bool IsSealedByBlockerOrRampAt(BuildingCell[,] grid, Vector2Int position)
-		{
-			if (IsInBounds(grid, position) == false)
-				return false;
-
-			BuildingCell cell = grid[position.x, position.y];
-			return cell.IsHeightChangeRoad || IsBlockingBuildingAt(grid, position);
-		}
-
 		private bool IsSealedForPitCornerAt(BuildingCell[,] grid, WorldHeightSnapshot heightSnapshot, Vector2Int position)
 		{
-			if (IsSealedByBlockerOrRampAt(grid, position))
+			if (IsBlockingBuildingAt(grid, position))
 				return true;
 			if (IsInBounds(grid, position) == false)
 				return false;
@@ -1060,6 +1296,18 @@ namespace SimpleFPS
 			public BuildingDefinition Building;
 			public Vector2Int BuildingOrigin;
 			public bool IsOccupied => IsRoad || IsLedge || IsHeightChangeRoad || Building != null;
+		}
+
+		private readonly struct CandidateDistance
+		{
+			public readonly Vector2Int Position;
+			public readonly int Distance;
+
+			public CandidateDistance(Vector2Int position, int distance)
+			{
+				Position = position;
+				Distance = distance;
+			}
 		}
 
 		private struct BuildingPlacementCandidate

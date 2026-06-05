@@ -64,6 +64,7 @@ namespace SimpleFPS
 		public int EffectiveHeight => Mathf.Max(3, Height);
 		public float EffectiveTileSize => Mathf.Max(0.01f, TileSize);
 		public float EffectiveHeightLevelWorldUnits => Mathf.Max(0f, HeightLevelWorldUnits);
+		public Transform GeneratedRoot => _generatedRoot;
 
 		private IEnumerator Start()
 		{
@@ -532,6 +533,15 @@ namespace SimpleFPS
 					if (HasNonPredecessorPathNeighbor(current, next))
 						continue;
 
+					// Reject one-cell side nubs such as:
+					// A A A
+					// . B .
+					// where the path steps diagonally out from a straight run and immediately diagonally
+					// back to the same run. These classify as valid corner ledges locally, but the authored
+					// ledge pieces leave a small hole because the offshoot is only one cell deep.
+					if (CreatesSingleCellOffshoot(current, next))
+						continue;
+
 					// Diagonal path steps create inner/outer corner ledge cells which the road generator cannot
 					// replace with a ramp. Use the geometric step length (≈1.414) so the path doesn't trivially
 					// prefer diagonals just because they cover more distance per step.
@@ -567,6 +577,23 @@ namespace SimpleFPS
 			}
 
 			return false;
+		}
+
+		private bool CreatesSingleCellOffshoot(HeightPathNode current, Vector2Int next)
+		{
+			if (current.Parent == null)
+				return false;
+
+			Vector2Int previousStep = current.Position - current.Parent.Position;
+			Vector2Int nextStep = next - current.Position;
+			bool previousIsDiagonal = previousStep.x != 0 && previousStep.y != 0;
+			bool nextIsDiagonal = nextStep.x != 0 && nextStep.y != 0;
+			if (previousIsDiagonal == false || nextIsDiagonal == false)
+				return false;
+
+			bool sameHorizontalRun = previousStep.x == nextStep.x && previousStep.y == -nextStep.y;
+			bool sameVerticalRun = previousStep.y == nextStep.y && previousStep.x == -nextStep.x;
+			return sameHorizontalRun || sameVerticalRun;
 		}
 
 		private bool IsRandomEnoughLedgePath(List<Vector2Int> path, HeightRegion region)

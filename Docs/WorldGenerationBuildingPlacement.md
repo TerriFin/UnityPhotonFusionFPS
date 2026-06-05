@@ -252,6 +252,9 @@ BuildingPlacementSettings
     int SeedOffset;
     bool FillMapEdgesWithBlockingBuildings;
     bool FillRemainingEmptyCellsWithBlockingBuildings;
+    bool PreserveBuriedLedgeTunnels;
+    int MaxDeadEndBuriedLedgeLength;
+    int MaxBuriedLedgeTunnelLength;
 }
 ```
 
@@ -263,6 +266,9 @@ RepeatCooldownDistance: 2
 SeedOffset: 10000
 FillMapEdgesWithBlockingBuildings: true
 FillRemainingEmptyCellsWithBlockingBuildings: true
+PreserveBuriedLedgeTunnels: false
+MaxDeadEndBuriedLedgeLength: 0
+MaxBuriedLedgeTunnelLength: 0
 ```
 
 `LargeBuildingPreference` controls how aggressively the placer tries larger footprints first:
@@ -483,17 +489,24 @@ The intended flow is:
 
 1. `HeightMapGenerator` creates ledges according to height constraints.
 2. `RoadGridGenerator` may override individual straight, road-replaceable ledge pieces with height-change roads. A ramp is kept only if the road generator can also place a road cell on the opposite side. If that continuation cannot be made, the ramp candidate is reverted back to the original ledge.
-3. `BuildingPlacementGenerator` replaces non-boundary ledges with simple blocking buildings only when all four cardinal neighbors are either simple blocking buildings, height-change roads, or other non-ramp ledges, and at least one neighbor is a simple blocking building or height-change road.
-4. Inner/outer corner ledges receive a pit check. If the two low/down-side cardinal neighbors of the corner are both sealed by simple blocking buildings, height-change roads, or boundary ledge pieces, the corner is replaced by a simple blocking building.
-5. Boundary ledges are replaced last, after pit-corner cleanup has added any new blockers. A boundary ledge is replaced only when it is surrounded by sealed neighbors: exactly three cardinal neighbors are simple blocking buildings or height-change roads, and the fourth side is outside the map.
+3. `BuildingPlacementGenerator` marks non-boundary ledges as prune candidates when all four cardinal neighbors are either simple blocking buildings or other non-ramp ledges, and at least one neighbor is a simple blocking building.
+4. Inner/outer corner ledges receive a pit check. If the two low/down-side cardinal neighbors of the corner are both sealed by simple blocking buildings or boundary ledge pieces, the corner is marked as a prune candidate.
+5. Boundary ledges are handled last, after pit-corner cleanup has added any new blockers. A boundary ledge is marked as a prune candidate only when it is surrounded by sealed neighbors: exactly three cardinal neighbors are simple blocking buildings, and the fourth side is outside the map.
+6. Prune candidates are grouped into connected cardinal ledge runs before replacement. A run is replaced as a whole or preserved as a whole.
 
-Ledges that touch a normal road, a complex building, or an open/unfilled cell on any cardinal side are preserved. Height-change roads are the exception: a ramp cell itself is never replaced, but it counts as a sealed neighbor for adjacent ledges. This prevents ramp-adjacent ledge edge pieces from creating small unreachable pockets.
+Ledges that touch a normal road, a height-change road ramp, a complex building, or an open/unfilled cell on any cardinal side are preserved. Ramp-adjacent ledge edge pieces used to be filled because characters could get stuck in those pockets, but zombies can now climb through those spaces, so ramps no longer count as sealed blocker mass.
 
-The pass runs in two phases against the live grid:
+`MaxDeadEndBuriedLedgeLength` lets short dead-end buried ledge runs survive as visual stubs. A dead-end run is pruned only when its connected candidate length is greater than this value. A value of `0` preserves the previous behavior where every candidate run can be filled.
 
-**Phase 1 — non-boundary ledges.** Iterate every cell where `IsLedge == true`, `IsHeightChangeRoad == false`, and the height snapshot says the cell is not a boundary ledge. Replace the cell only if every in-bounds cardinal neighbor is a `SimpleBlocking` building, a height-change road, or another non-ramp ledge, with at least one `SimpleBlocking` or height-change-road neighbor.
+`PreserveBuriedLedgeTunnels` keeps long buried ledge runs when they connect two meaningful open/playable anchors, such as roads, ramps, complex buildings, or open cells. This allows concave road/building layouts to form tunnel-like ledges between different parts of the map. If the toggle is off, those connector runs are treated like ordinary buried runs and are pruned when longer than `MaxDeadEndBuriedLedgeLength`.
 
-**Phase 2 — pit-corner check.** After buried interior ledges are resolved, scan inner/outer corner ledges. Corner ledges have two low/down-side cardinal directions, derived from their rotation:
+`MaxBuriedLedgeTunnelLength` caps how long a preserved connector tunnel can be. `0` means unlimited. If a connector tunnel is longer than this value, it is filled with blocking buildings even when `PreserveBuriedLedgeTunnels` is enabled.
+
+The pass runs in three phases against the live grid:
+
+**Phase 1 - non-boundary ledges.** Iterate every cell where `IsLedge == true`, `IsHeightChangeRoad == false`, and the height snapshot says the cell is not a boundary ledge. Mark the cell only if every in-bounds cardinal neighbor is a `SimpleBlocking` building or another non-ramp ledge, with at least one `SimpleBlocking` neighbor. Connected candidate runs are then pruned or preserved according to the dead-end length and tunnel-preservation settings.
+
+**Phase 2 - pit-corner check.** After buried interior ledges are resolved, scan inner/outer corner ledges. Corner ledges have two low/down-side cardinal directions, derived from their rotation:
 
 ```text
 rotation 0 -> down sides South + West
@@ -502,9 +515,9 @@ rotation 2 -> down sides North + East
 rotation 3 -> down sides East + South
 ```
 
-If both down-side neighbors are sealed by simple blocking buildings, height-change roads, or boundary ledge pieces, replace the corner ledge with a simple blocker. Repeat this scan until no more corners are replaced. This closes tiny pits formed by diagonal ledge corners facing blocker/ramp/edge-ledge mass without deleting corner ledges that still open toward playable space.
+If both down-side neighbors are sealed by simple blocking buildings or boundary ledge pieces, mark the corner ledge as a candidate. Connected candidate runs are then pruned or preserved with the same section rules as phase 1. Repeat this scan until no more corners are replaced. This closes tiny pits formed by diagonal ledge corners facing blocker/edge-ledge mass without deleting corner ledges that still open toward playable space or belong to preserved tunnel runs.
 
-**Phase 3 — boundary ledges.** Iterate the remaining boundary ledges after phase 2 has updated the grid. Replace a boundary ledge only when it has exactly one out-of-bounds cardinal side and the other three cardinal neighbors are sealed by `SimpleBlocking` buildings or height-change roads. Running this pass last lets edge ledges see blockers created by pit-corner cleanup.
+**Phase 3 - boundary ledges.** Iterate the remaining boundary ledges after phase 2 has updated the grid. Mark a boundary ledge only when it has exactly one out-of-bounds cardinal side and the other three cardinal neighbors are sealed by `SimpleBlocking` buildings. Boundary ledges are map-edge sealing pieces, not tunnel candidates, so this phase ignores `PreserveBuriedLedgeTunnels` and `MaxDeadEndBuriedLedgeLength`: a sealed boundary ledge candidate is always replaced. Running this pass last lets edge ledges see blockers created by pit-corner cleanup.
 
 When a ledge is flagged for replacement, the generator:
 1. Picks a `1x1` simple blocker from `BuildingSet` (preferring one without a `RequiresRoad` side, since the replacement is interior fill, not an edge facade).

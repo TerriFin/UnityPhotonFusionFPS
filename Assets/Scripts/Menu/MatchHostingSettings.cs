@@ -8,7 +8,7 @@ namespace SimpleFPS
 	[Serializable]
 	public sealed class MatchHostingSettings
 	{
-		private const int CurrentVersion = 1;
+		private const int CurrentVersion = 3;
 		private const float FogDensityPrecision = 100000f;
 
 		private const string PackedProfileKey = "msp";
@@ -47,6 +47,11 @@ namespace SimpleFPS
 		public int BuildingPlacementPreset = -1;
 		public int LootSpawnPreset = -1;
 		public int ZombieOrchestratorPreset = -1;
+		public bool PreserveBuriedLedgeTunnels;
+		[Min(0)]
+		public int MaxDeadEndBuriedLedgeLength;
+		[Min(0)]
+		public int MaxBuriedLedgeTunnelLength;
 
 		public MatchHostingSettings Clone()
 		{
@@ -61,6 +66,8 @@ namespace SimpleFPS
 			GameLengthMinutes = GetClosestGameLength(GameLengthMinutes);
 			FogDensity = Mathf.Max(0f, FogDensity);
 			RaidModeClientStartingSurvivors = Mathf.Clamp(RaidModeClientStartingSurvivors, 1, 64);
+			MaxDeadEndBuriedLedgeLength = Mathf.Max(0, MaxDeadEndBuriedLedgeLength);
+			MaxBuriedLedgeTunnelLength = Mathf.Max(0, MaxBuriedLedgeTunnelLength);
 
 			if (catalog == null)
 				return;
@@ -89,7 +96,7 @@ namespace SimpleFPS
 			if (TryGetString(properties, PackedProfileKey, out string packedProfile))
 				return TryFromPackedProfile(packedProfile, catalog, out settings);
 
-			if (TryGetInt(properties, VersionKey, out int version) == false || version != CurrentVersion)
+			if (TryGetInt(properties, VersionKey, out int version) == false || version < 1 || version > CurrentVersion)
 				return false;
 
 			var parsedSettings = new MatchHostingSettings();
@@ -128,7 +135,10 @@ namespace SimpleFPS
 				RoadGenerationPreset,
 				BuildingPlacementPreset,
 				LootSpawnPreset,
-				ZombieOrchestratorPreset);
+				ZombieOrchestratorPreset,
+				PreserveBuriedLedgeTunnels ? 1 : 0,
+				MaxDeadEndBuriedLedgeLength,
+				MaxBuriedLedgeTunnelLength);
 		}
 
 		private static bool TryFromPackedProfile(string packedProfile, MatchHostingSettingsCatalog catalog, out MatchHostingSettings settings)
@@ -141,7 +151,7 @@ namespace SimpleFPS
 			if (values.Length < 13)
 				return false;
 
-			if (TryParse(values[0], out int version) == false || version != CurrentVersion)
+			if (TryParse(values[0], out int version) == false || version < 1 || version > CurrentVersion)
 				return false;
 
 			var parsedSettings = new MatchHostingSettings();
@@ -169,6 +179,18 @@ namespace SimpleFPS
 				parsedSettings.LootSpawnPreset = lootPreset;
 			if (TryParse(values[12], out int zombiePreset))
 				parsedSettings.ZombieOrchestratorPreset = zombiePreset;
+			if (version >= 2 && values.Length >= 15)
+			{
+				if (TryParse(values[13], out int preserveBuriedLedgeTunnels))
+					parsedSettings.PreserveBuriedLedgeTunnels = preserveBuriedLedgeTunnels != 0;
+				if (TryParse(values[14], out int maxDeadEndBuriedLedgeLength))
+					parsedSettings.MaxDeadEndBuriedLedgeLength = maxDeadEndBuriedLedgeLength;
+			}
+			if (version >= 3 && values.Length >= 16)
+			{
+				if (TryParse(values[15], out int maxBuriedLedgeTunnelLength))
+					parsedSettings.MaxBuriedLedgeTunnelLength = maxBuriedLedgeTunnelLength;
+			}
 
 			parsedSettings.Validate(catalog);
 			settings = parsedSettings;

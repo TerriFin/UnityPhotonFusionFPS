@@ -305,14 +305,15 @@ Zombie spawn point collection
 Zombie orchestrator starts
 ```
 
-The orchestrator should gather `ZombieSpawnPoint` components from the generated building root, not from prefab assets or disabled editor helpers.
+The orchestrator gathers `ZombieSpawnPoint` components from generated world roots, not from prefab assets or disabled editor helpers. It currently scans both the generated building root and the generated height/ledge root, so zombie spawners can live in building prefabs or authored ledge/height tiles.
 
 Suggested component references:
 
 ```csharp
-ZombieOrchestrator
+	ZombieOrchestrator
 {
 	BuildingPlacementGenerator BuildingGenerator;
+	HeightMapGenerator HeightGenerator;
 	ZombieOrchestratorSettings Settings;
 	NetworkRunner Runner;
 	Gameplay Gameplay;
@@ -354,7 +355,7 @@ Recommended first implementation path:
 1. Add `ZombieSpawnPoint` marker with `MaxSpawnCountPerPulse` and `NonForcedSurvivorBlockRadius`.
 2. Add a `ZombieOrchestratorSettings` asset or component data container.
 3. Add `ZombieOrchestrator` as a scene component.
-4. After world generation, collect spawn markers under the generated building root.
+4. After world generation, collect spawn markers under the generated building and height/ledge roots.
 5. During play, run spawn pulses on scene authority.
 6. Linearly scale current cap, spawn rate, and spawn-time stats by match progress.
 7. Spawn zombies through Fusion.

@@ -19,6 +19,7 @@ namespace SimpleFPS
 
 		[Header("Setup")]
 		public BuildingPlacementGenerator BuildingGenerator;
+		public HeightMapGenerator HeightGenerator;
 		public ZombieOrchestratorSettings Settings;
 		public NetworkRunner Runner;
 		public Gameplay Gameplay;
@@ -103,7 +104,7 @@ namespace SimpleFPS
 			{
 				if (_loggedNoSpawnPoints == false)
 				{
-					Debug.LogWarning($"{nameof(ZombieOrchestrator)} found no {nameof(ZombieSpawnPoint)} markers under the generated building root.", this);
+					Debug.LogWarning($"{nameof(ZombieOrchestrator)} found no {nameof(ZombieSpawnPoint)} markers under generated building or height roots.", this);
 					_loggedNoSpawnPoints = true;
 				}
 				return;
@@ -125,15 +126,28 @@ namespace SimpleFPS
 			_hasSpawnBounds = false;
 			_filteredSpawnPointCount = 0;
 
-			Transform root = GetGeneratedRoot();
+			var seen = new HashSet<ZombieSpawnPoint>();
+			CollectSpawnPointsFromRoot(GetGeneratedBuildingRoot(), seen);
+			CollectSpawnPointsFromRoot(GetGeneratedHeightRoot(), seen);
+
+			_random = new System.Random(GetSeed());
+
+			if (_filteredSpawnPointCount > 0)
+				Debug.Log($"{nameof(ZombieOrchestrator)} ignored {_filteredSpawnPointCount} zombie spawn point(s) on too-small or unreachable NavMesh islands.", this);
+		}
+
+		private void CollectSpawnPointsFromRoot(Transform root, HashSet<ZombieSpawnPoint> seen)
+		{
 			if (root == null)
 				return;
 
-			var markers = root.GetComponentsInChildren<ZombieSpawnPoint>(true);
+			ZombieSpawnPoint[] markers = root.GetComponentsInChildren<ZombieSpawnPoint>(true);
 			for (int i = 0; i < markers.Length; i++)
 			{
 				var marker = markers[i];
 				if (marker == null)
+					continue;
+				if (seen.Add(marker) == false)
 					continue;
 
 				if (TryGetUsableSpawnPointPosition(marker, out var navMeshPosition) == false)
@@ -145,11 +159,6 @@ namespace SimpleFPS
 				_spawnPoints.Add(marker);
 				EncapsulateSpawnPoint(navMeshPosition);
 			}
-
-			_random = new System.Random(GetSeed());
-
-			if (_filteredSpawnPointCount > 0)
-				Debug.Log($"{nameof(ZombieOrchestrator)} ignored {_filteredSpawnPointCount} zombie spawn point(s) on too-small or unreachable NavMesh islands.", this);
 		}
 
 		[ContextMenu("Start Zombie Spawning")]
@@ -569,7 +578,7 @@ namespace SimpleFPS
 				yield return null;
 		}
 
-		private Transform GetGeneratedRoot()
+		private Transform GetGeneratedBuildingRoot()
 		{
 			if (BuildingGenerator == null)
 				BuildingGenerator = GetComponent<BuildingPlacementGenerator>();
@@ -577,6 +586,18 @@ namespace SimpleFPS
 				BuildingGenerator = FindObjectOfType<BuildingPlacementGenerator>();
 
 			return BuildingGenerator != null ? BuildingGenerator.GeneratedRoot : null;
+		}
+
+		private Transform GetGeneratedHeightRoot()
+		{
+			if (HeightGenerator == null && BuildingGenerator != null && BuildingGenerator.RoadGenerator != null)
+				HeightGenerator = BuildingGenerator.RoadGenerator.HeightGenerator;
+			if (HeightGenerator == null)
+				HeightGenerator = GetComponent<HeightMapGenerator>();
+			if (HeightGenerator == null)
+				HeightGenerator = FindObjectOfType<HeightMapGenerator>();
+
+			return HeightGenerator != null ? HeightGenerator.GeneratedRoot : null;
 		}
 
 		private NetworkRunner GetRunner()

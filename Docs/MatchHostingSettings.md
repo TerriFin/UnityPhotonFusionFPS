@@ -44,6 +44,9 @@ game length: 5, 10, 15, or 20 minutes
 fog density
 raid mode
 starting survivors for non-hosts in raid mode
+preserve buried ledge tunnels
+max dead-end buried ledge length
+max buried ledge tunnel length
 height-generation preset
 road-generation preset
 building-placement preset
@@ -106,6 +109,8 @@ RenderSettings.fogDensity
 
 Rooms without the configured-profile marker are left unchanged. This is how Quick Play fallback hosting continues to use scene defaults.
 
+The buried ledge tunnel settings are applied to the scene `BuildingPlacementGenerator` as runtime overrides. They do not mutate the selected `BuildingPlacementSettings` asset, so the same preset can be reused with different hosted-match toggle values.
+
 ## Networking Rules
 
 - Session properties are authored only while a configured host creates its room.
@@ -121,5 +126,15 @@ The catalog and UI wiring are authored in the startup scene. No gameplay-scene m
 Create presets by duplicating the existing settings assets, modifying their values, and adding them to the catalog arrays. Dropdown labels use asset names, so descriptive asset names become the player-facing configuration names.
 
 The host-settings view should be registered in the `MenuUI` screen list, like the existing main, scenes, settings, loading, and gameplay views. A copied `FusionMenuViewScenes` prefab is a useful layout starting point, but its `FusionMenuUIScenes` component should be replaced with `MatchHostingMenuController`. Its existing Back button already sends `OnBackButtonPressed` and can be kept unchanged.
+
+For buried ledge tunnel controls, hook these `MatchHostingMenuController` fields:
+
+```text
+PreserveBuriedLedgeTunnels -> Toggle
+MaxDeadEndBuriedLedgeLength -> TMP_InputField
+MaxBuriedLedgeTunnelLength -> TMP_InputField
+```
+
+`PreserveBuriedLedgeTunnels` keeps long buried ledge runs that connect two meaningful open/playable anchors. `MaxDeadEndBuriedLedgeLength` keeps short dead-end buried ledge runs as visual stubs; dead-end runs longer than this value are filled with blocking buildings. `MaxBuriedLedgeTunnelLength` caps preserved connector tunnel length; `0` means unlimited.
 
 Zombie orchestrator presets should normally leave `MatchDurationSeconds` at `0`. That makes zombie escalation follow the hosting menu's selected game length through `Gameplay.GameDuration`. A positive orchestrator override intentionally decouples zombie escalation from the match timer.

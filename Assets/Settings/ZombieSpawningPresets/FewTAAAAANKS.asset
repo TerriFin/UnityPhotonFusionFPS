@@ -10,30 +10,30 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: fda0bbb5fb532f74088749f1de623d4d, type: 3}
-  m_Name: ZombieOrchestrationSettings
+  m_Name: FewTAAAAANKS
   m_EditorClassIdentifier: 
   ZombiePrefab: {fileID: 3297568450549869079, guid: 1f02166891b80b94eb78a0c324123106, type: 3}
-  StartMaxZombies: 30
-  EndMaxZombies: 120
+  StartMaxZombies: 10
+  EndMaxZombies: 30
   MatchDurationSeconds: 0
-  ScaleDuringSkirmish: 1
-  StartSpawnRatePerMinute: 16
-  EndSpawnRatePerMinute: 82
-  SpawnPulseInterval: 14
-  MaxSpawnPerPulsePerPlayer: 22
+  ScaleDuringSkirmish: 0
+  StartSpawnRatePerMinute: 3
+  EndSpawnRatePerMinute: 16
+  SpawnPulseInterval: 28
+  MaxSpawnPerPulsePerPlayer: 4
   SpawnNavMeshSampleDistance: 1.5
   MinimumSpawnConnectedNavMeshRadius: 10
-  StartHealth: 55
-  EndHealth: 145
-  StartDamage: 7
-  EndDamage: 14
-  StartMoveSpeed: 2.5
-  EndMoveSpeed: 5.5
-  StartAlertRadius: 8
-  EndAlertRadius: 24
-  OvertimeHealth: 165
-  OvertimeDamage: 16
-  OvertimeMoveSpeed: 7.25
-  UnderpopulatedRegionBias: 0.525
+  StartHealth: 400
+  EndHealth: 850
+  StartDamage: 22
+  EndDamage: 48
+  StartMoveSpeed: 4
+  EndMoveSpeed: 7
+  StartAlertRadius: 4
+  EndAlertRadius: 8
+  OvertimeHealth: 1500
+  OvertimeDamage: 101
+  OvertimeMoveSpeed: 8
+  UnderpopulatedRegionBias: 0.5
   RegionGridSize: 4
   SeedOffset: 30000

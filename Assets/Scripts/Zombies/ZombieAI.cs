@@ -96,6 +96,7 @@ namespace SimpleFPS
 		private const float MantleProbeExtraDistance = 0.75f;
 		private const float MantleMinRise = 0.08f;
 		private const float MantleMinSurfaceNormalY = 0.65f;
+		private const float ClimbObstacleBeyondGoalBuffer = 0.15f;
 		private const int TraversalHitBufferSize = 16;
 
 		private readonly RaycastHit[] _traversalHits = new RaycastHit[TraversalHitBufferSize];
@@ -248,6 +249,8 @@ namespace SimpleFPS
 				LastAttackTime = Time.timeSinceLevelLoad;
 				return BuildLookInput(targetPosition);
 			}
+			if (ShouldHoldMeleePosition(_target, targetPosition))
+				return BuildLookInput(targetPosition);
 
 			return BuildExplicitGoalMoveInput(targetPosition, ExplicitGoalStoppingDistance, true);
 		}
@@ -276,6 +279,8 @@ namespace SimpleFPS
 				LastAttackTime = Time.timeSinceLevelLoad;
 				return BuildLookInput(targetPosition);
 			}
+			if (ShouldHoldMeleePosition(_target, targetPosition))
+				return BuildLookInput(targetPosition);
 
 			return BuildExplicitGoalMoveInput(targetPosition, ExplicitGoalStoppingDistance, true);
 		}
@@ -448,10 +453,12 @@ namespace SimpleFPS
 				return true;
 
 			float probeDistance = Mathf.Max(0.1f, ClimbObstacleProbeDistance);
-			bool targetIsCloseAndHigher = FlatDistanceSqr(transform.position, goal) <= probeDistance * probeDistance &&
+			float flatDistanceToGoal = FlatDistance(transform.position, goal);
+			bool targetIsCloseAndHigher = flatDistanceToGoal <= probeDistance &&
 			                              goal.y - transform.position.y > 0.1f;
 
-			bool obstacleAhead = HasClimbObstacleAhead(direction, probeDistance);
+			float obstacleProbeDistance = Mathf.Min(probeDistance, Mathf.Max(0f, flatDistanceToGoal - ClimbObstacleBeyondGoalBuffer));
+			bool obstacleAhead = obstacleProbeDistance > 0.05f && HasClimbObstacleAhead(direction, obstacleProbeDistance);
 			if (obstacleAhead == false && targetIsCloseAndHigher == false)
 				return false;
 
@@ -640,6 +647,15 @@ namespace SimpleFPS
 			       IsTargetAlive(enemy.Object);
 		}
 
+		private bool ShouldHoldMeleePosition(NetworkObject target, Vector3 targetPosition)
+		{
+			if (IsTargetAlive(target) == false || _zombie == null)
+				return false;
+
+			float range = Mathf.Max(0.1f, _zombie.Stats.AttackRange);
+			return (targetPosition - transform.position).sqrMagnitude <= range * range;
+		}
+
 		private bool TryChooseIdleWanderPoint(out Vector3 point)
 		{
 			point = default;
@@ -752,6 +768,7 @@ namespace SimpleFPS
 		{
 			Vector3 currentPosition = transform.position;
 			Vector3 steeringTarget = destination;
+			float effectiveStoppingDistance = Mathf.Max(0f, stoppingDistance);
 			var navigator = _zombie.Navigator;
 
 			if (navigator != null)
@@ -761,17 +778,33 @@ namespace SimpleFPS
 					return default;
 
 				if (navigator.TryGetSteeringTarget(currentPosition, out Vector3 pathTarget))
+				{
 					steeringTarget = pathTarget;
+					effectiveStoppingDistance = GetPathSteeringStoppingDistance(navigator, stoppingDistance);
+				}
 				else if (allowDirectFallback == false || FlatDistanceSqr(currentPosition, destination) > DirectMoveDistance * DirectMoveDistance)
 					return default;
 			}
 
 			Vector3 toTarget = steeringTarget - currentPosition;
 			toTarget.y = 0f;
-			if (toTarget.sqrMagnitude <= stoppingDistance * stoppingDistance)
+			if (toTarget.sqrMagnitude <= effectiveStoppingDistance * effectiveStoppingDistance)
 				return BuildLookInput(destination);
 
 			return BuildMoveInputFromDirection(toTarget.normalized);
+		}
+
+		private static float GetPathSteeringStoppingDistance(CharacterNavigator navigator, float desiredStoppingDistance)
+		{
+			if (navigator == null)
+				return Mathf.Max(0f, desiredStoppingDistance);
+
+			float cornerReachDistance = Mathf.Max(0.01f, navigator.CornerReachDistance);
+			float desired = Mathf.Max(0.01f, desiredStoppingDistance);
+
+			// Steering corners are not final goals. If the AI stops farther from a corner than the
+			// navigator's corner-advance radius, it can wait forever until another character bumps it.
+			return Mathf.Min(desired, cornerReachDistance * 0.5f);
 		}
 
 		private NetworkedInput BuildMoveInputFromDirection(Vector3 worldDirection)
@@ -908,6 +941,13 @@ namespace SimpleFPS
 			a.y = 0f;
 			b.y = 0f;
 			return (a - b).sqrMagnitude;
+		}
+
+		private static float FlatDistance(Vector3 a, Vector3 b)
+		{
+			a.y = 0f;
+			b.y = 0f;
+			return (a - b).magnitude;
 		}
 	}
 }

@@ -24,7 +24,10 @@ MonoBehaviour:
     RoadGenerationPreset: 4
     BuildingPlacementPreset: 2
     LootSpawnPreset: 2
-    ZombieOrchestratorPreset: 0
+    ZombieOrchestratorPreset: 1
+    PreserveBuriedLedgeTunnels: 1
+    MaxDeadEndBuriedLedgeLength: 2
+    MaxBuriedLedgeTunnelLength: 0
   HeightGenerationPresets:
   - {fileID: 11400000, guid: c2fee7c2a84edf7459956cb76320b880, type: 2}
   - {fileID: 11400000, guid: 191979fc0ac5d934d8644767285edf9e, type: 2}
@@ -50,4 +53,9 @@ MonoBehaviour:
   - {fileID: 11400000, guid: bec873865fdf8f8479ac650e4cfb9eb1, type: 2}
   - {fileID: 11400000, guid: eab0746a77250d140be1904ddaf10867, type: 2}
   ZombieOrchestratorPresets:
+  - {fileID: 11400000, guid: ef83e6d07c5054649841673394307f5e, type: 2}
   - {fileID: 11400000, guid: 88933dedb786d73419a5ad1524406256, type: 2}
+  - {fileID: 11400000, guid: 54095c549bdfef541b5d10ce69b79afa, type: 2}
+  - {fileID: 11400000, guid: fe93c04f4393a0f4bba656b9ecd6e0c9, type: 2}
+  - {fileID: 11400000, guid: 56ba9fb7c433b564cab27b8214da40ab, type: 2}
+  - {fileID: 11400000, guid: 95cf00690b3950749b470f7c5ff19eb8, type: 2}

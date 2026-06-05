@@ -1,0 +1,39 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fda0bbb5fb532f74088749f1de623d4d, type: 3}
+  m_Name: YouAreGoingToDie
+  m_EditorClassIdentifier: 
+  ZombiePrefab: {fileID: 3297568450549869079, guid: 1f02166891b80b94eb78a0c324123106, type: 3}
+  StartMaxZombies: 60
+  EndMaxZombies: 200
+  MatchDurationSeconds: 0
+  ScaleDuringSkirmish: 0
+  StartSpawnRatePerMinute: 40
+  EndSpawnRatePerMinute: 200
+  SpawnPulseInterval: 8
+  MaxSpawnPerPulsePerPlayer: 32
+  SpawnNavMeshSampleDistance: 1.5
+  MinimumSpawnConnectedNavMeshRadius: 10
+  StartHealth: 120
+  EndHealth: 200
+  StartDamage: 12
+  EndDamage: 22
+  StartMoveSpeed: 4.5
+  EndMoveSpeed: 7.5
+  StartAlertRadius: 10
+  EndAlertRadius: 24
+  OvertimeHealth: 300
+  OvertimeDamage: 32
+  OvertimeMoveSpeed: 8
+  UnderpopulatedRegionBias: 0.525
+  RegionGridSize: 4
+  SeedOffset: 30000

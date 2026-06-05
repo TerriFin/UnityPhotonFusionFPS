@@ -77,6 +77,11 @@ namespace SimpleFPS
 					: null;
 				if (preset != null)
 					buildingGenerator.Settings = preset;
+
+				buildingGenerator.SetRuntimeLedgeTunnelPruningSettings(
+					_settings.PreserveBuriedLedgeTunnels,
+					_settings.MaxDeadEndBuriedLedgeLength,
+					_settings.MaxBuriedLedgeTunnelLength);
 			}
 
 			WorldLootSpawner lootSpawner = FindInScene<WorldLootSpawner>(scene);
