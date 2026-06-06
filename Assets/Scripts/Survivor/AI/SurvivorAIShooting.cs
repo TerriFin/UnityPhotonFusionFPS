@@ -47,6 +47,7 @@ namespace SimpleFPS
 		private float _nextShotTime;
 		private float _nextAimErrorRefreshTime;
 		private float _triggerReleaseTime;
+		private readonly System.Collections.Generic.List<KnownEnemyInfo> _directTargets = new(8);
 
 		public void SetAutoShootEnabled(bool enabled)
 		{
@@ -155,9 +156,30 @@ namespace SimpleFPS
 
 			if (_survivor == null || _survivor.Sensor == null)
 				return false;
-			if (_survivor.Sensor.TryGetClosestDirectEnemy(out enemy) == false)
-				return false;
-			if (IsDeadTarget(enemy.Object))
+
+			_directTargets.Clear();
+			_survivor.Sensor.GetDirectKnownEnemies(_directTargets);
+
+			float closestDistanceSqr = float.MaxValue;
+			Vector3 origin = transform.position;
+			for (int i = 0; i < _directTargets.Count; i++)
+			{
+				var candidate = _directTargets[i];
+				if (IsDeadTarget(candidate.Object))
+					continue;
+				if (CharacterFactionUtility.CanSurvivorAutoAttack(_survivor, candidate.Object) == false)
+					continue;
+
+				float distanceSqr = (candidate.LastKnownPosition - origin).sqrMagnitude;
+				if (distanceSqr >= closestDistanceSqr)
+					continue;
+
+				closestDistanceSqr = distanceSqr;
+				enemy = candidate;
+			}
+
+			_directTargets.Clear();
+			if (closestDistanceSqr == float.MaxValue)
 				return false;
 
 			hasLineOfFire = HasLineOfFire(enemy);

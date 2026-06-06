@@ -52,9 +52,12 @@ road-generation preset
 building-placement preset
 loot-spawning preset
 zombie-orchestrator preset
+neutral-survivor preset
 ```
 
 Preset dropdowns contain a `Scene Default` entry. Selecting it keeps the corresponding inspector-assigned settings asset from the gameplay scene.
+
+Starting survivor counts are clamped to the current team mask capacity of 128 characters per player.
 
 ## Main Classes
 
@@ -75,6 +78,7 @@ ordered road-generation presets
 ordered building-placement presets
 ordered loot-spawning presets
 ordered zombie-orchestrator presets
+ordered neutral-survivor presets
 ```
 
 All builds must use the same catalog asset and preset order. The room transmits indices, not asset names or asset contents.
@@ -104,6 +108,7 @@ RoadGridGenerator
 BuildingPlacementGenerator
 WorldLootSpawner
 ZombieOrchestrator
+NeutralSurvivorOrchestrator
 RenderSettings.fogDensity
 ```
 
@@ -133,8 +138,11 @@ For buried ledge tunnel controls, hook these `MatchHostingMenuController` fields
 PreserveBuriedLedgeTunnels -> Toggle
 MaxDeadEndBuriedLedgeLength -> TMP_InputField
 MaxBuriedLedgeTunnelLength -> TMP_InputField
+NeutralSurvivorPreset -> TMP_Dropdown
 ```
 
 `PreserveBuriedLedgeTunnels` keeps long buried ledge runs that connect two meaningful open/playable anchors. `MaxDeadEndBuriedLedgeLength` keeps short dead-end buried ledge runs as visual stubs; dead-end runs longer than this value are filled with blocking buildings. `MaxBuriedLedgeTunnelLength` caps preserved connector tunnel length; `0` means unlimited.
 
 Zombie orchestrator presets should normally leave `MatchDurationSeconds` at `0`. That makes zombie escalation follow the hosting menu's selected game length through `Gameplay.GameDuration`. A positive orchestrator override intentionally decouples zombie escalation from the match timer.
+
+Neutral survivor presets are `NeutralSurvivorSpawnSettings` assets. The dropdown is optional; leaving it unassigned in the hosting UI keeps the gameplay scene's orchestrator settings.

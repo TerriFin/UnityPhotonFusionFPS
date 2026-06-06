@@ -17,6 +17,7 @@ namespace SimpleFPS
 		public Vector2 ZombieIconSize = new Vector2(12f, 12f);
 		public Color FallbackOwnColor = Color.cyan;
 		public Color FallbackEnemyColor = Color.red;
+		public Color FallbackNeutralColor = Color.gray;
 		public Color ZombieIconColor = new Color(0f, 0.28f, 0.08f, 1f);
 		public Color ActiveWeaponPickupColor = Color.yellow;
 		public Color InactiveWeaponPickupColor = new Color(1f, 0.9f, 0f, 0.35f);
@@ -152,7 +153,9 @@ namespace SimpleFPS
 
 					if (_enemyIcons.TryGetValue(survivor, out var icon) == false || icon == null)
 					{
-						icon = CreateIcon(survivor, GameMapIconKind.EnemySurvivor, GetTeamColor(gameplay, survivor, FallbackEnemyColor), EnemyIconSize);
+						GameMapIconKind kind = survivor.IsNeutral ? GameMapIconKind.NeutralSurvivor : GameMapIconKind.EnemySurvivor;
+						Color fallbackColor = survivor.IsNeutral ? FallbackNeutralColor : FallbackEnemyColor;
+						icon = CreateIcon(survivor, kind, GetTeamColor(gameplay, survivor, fallbackColor), EnemyIconSize);
 						_enemyIcons[survivor] = icon;
 					}
 
@@ -389,12 +392,16 @@ namespace SimpleFPS
 				return fallback;
 
 			if (gameplay.PlayerData.TryGet(survivor.OwnerRef, out var data) == false)
-				return fallback;
+				return GetMaterialColor(gameplay.GetTeamColorMaterial(Gameplay.NeutralTeamColorIndex), fallback);
 
 			Material material = gameplay.GetTeamColorMaterial(data.TeamColorIndex);
+			return GetMaterialColor(material, fallback);
+		}
+
+		private static Color GetMaterialColor(Material material, Color fallback)
+		{
 			if (material == null)
 				return fallback;
-
 			if (material.HasProperty("_BaseColor"))
 				return material.GetColor("_BaseColor");
 			if (material.HasProperty("_Color"))

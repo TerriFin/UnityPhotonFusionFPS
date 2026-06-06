@@ -45,6 +45,7 @@ namespace SimpleFPS
 		private int _lastAppliedNetworkedSeed;
 		private Coroutine _generationCompleteCoroutine;
 
+		public Transform GeneratedRoot => _generatedRoot;
 		public bool IsGenerationComplete { get; private set; }
 
 		private void Awake()

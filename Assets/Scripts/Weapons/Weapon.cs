@@ -409,6 +409,8 @@ namespace SimpleFPS
 			var enemyHealth = enemyHitbox.Root.GetComponent<Health>();
 			if (enemyHealth == null || enemyHealth.IsAlive == false)
 				return;
+			if (CharacterFactionUtility.CanSurvivorWeaponDamage(_ownerSurvivor, enemyHealth) == false)
+				return;
 
 			float damageMultiplier = enemyHitbox is BodyHitbox bodyHitbox ? bodyHitbox.DamageMultiplier : 1f;
 			isCriticalHit = damageMultiplier > 1f;

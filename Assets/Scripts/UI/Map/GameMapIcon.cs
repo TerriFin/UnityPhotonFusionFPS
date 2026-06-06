@@ -7,6 +7,7 @@ namespace SimpleFPS
 	{
 		OwnSurvivor,
 		EnemySurvivor,
+		NeutralSurvivor,
 		Pickup,
 		Zombie,
 	}

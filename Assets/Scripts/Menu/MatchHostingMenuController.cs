@@ -29,6 +29,7 @@ namespace SimpleFPS
 		public TMP_Dropdown BuildingPlacementPreset;
 		public TMP_Dropdown LootSpawnPreset;
 		public TMP_Dropdown ZombieOrchestratorPreset;
+		public TMP_Dropdown NeutralSurvivorPreset;
 
 		[Header("Actions")]
 		public Button StartGameButton;
@@ -138,6 +139,7 @@ namespace SimpleFPS
 			SetPresetDropdown(BuildingPlacementPreset, settings.BuildingPlacementPreset);
 			SetPresetDropdown(LootSpawnPreset, settings.LootSpawnPreset);
 			SetPresetDropdown(ZombieOrchestratorPreset, settings.ZombieOrchestratorPreset);
+			SetPresetDropdown(NeutralSurvivorPreset, settings.NeutralSurvivorPreset);
 			RefreshRaidModeFields(settings.RaidMode);
 		}
 
@@ -161,6 +163,7 @@ namespace SimpleFPS
 				BuildingPlacementPreset = ReadPresetDropdown(BuildingPlacementPreset),
 				LootSpawnPreset = ReadPresetDropdown(LootSpawnPreset),
 				ZombieOrchestratorPreset = ReadPresetDropdown(ZombieOrchestratorPreset),
+				NeutralSurvivorPreset = ReadPresetDropdown(NeutralSurvivorPreset),
 			};
 
 			settings.Validate(GetCatalog());
@@ -177,6 +180,7 @@ namespace SimpleFPS
 			PopulateDropdown(BuildingPlacementPreset, catalog?.GetBuildingPlacementPresetNames(), true);
 			PopulateDropdown(LootSpawnPreset, catalog?.GetLootSpawnPresetNames(), true);
 			PopulateDropdown(ZombieOrchestratorPreset, catalog?.GetZombieOrchestratorPresetNames(), true);
+			PopulateDropdown(NeutralSurvivorPreset, catalog?.GetNeutralSurvivorPresetNames(), true);
 		}
 
 		private static void PopulateDropdown(TMP_Dropdown dropdown, string[] values, bool includeSceneDefault)

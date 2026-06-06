@@ -69,6 +69,7 @@ namespace SimpleFPS
 		public SurvivorCombatAI CombatAI { get; private set; }
 		public SurvivorNonCombatAISettings NonCombatAISettings => _nonCombatAISettings;
 		public SurvivorCombatAISettings CombatAISettings => _combatAISettings;
+		public bool IsNeutral => CharacterFactionUtility.IsNeutralSurvivor(this);
 
 		public void PlayFireEffect()
 		{

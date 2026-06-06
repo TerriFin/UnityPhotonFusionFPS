@@ -171,7 +171,7 @@ namespace SimpleFPS
 			ApplyNearbyTeamCommand(owner, data, origin, originCharacterIndex, command);
 		}
 
-		public void ApplySelectedTeamCommand(PlayerRef owner, long selectedCharacterMask, SurvivorAICommand command)
+		public void ApplySelectedTeamCommand(PlayerRef owner, CharacterMask128 selectedCharacterMask, SurvivorAICommand command)
 		{
 			if (TryGetSelectedCommandContext(owner, selectedCharacterMask, out var data, out var survivors) == false)
 				return;
@@ -198,7 +198,7 @@ namespace SimpleFPS
 			_laneTargetBuffer.Clear();
 		}
 
-		public void ApplySelectedTeamAssignedArea(PlayerRef owner, long selectedCharacterMask, Vector3 center, float radius)
+		public void ApplySelectedTeamAssignedArea(PlayerRef owner, CharacterMask128 selectedCharacterMask, Vector3 center, float radius)
 		{
 			if (TryGetSelectedCommandContext(owner, selectedCharacterMask, out var data, out var survivors) == false)
 				return;
@@ -230,14 +230,14 @@ namespace SimpleFPS
 			_laneTargetBuffer.Clear();
 		}
 
-		public void ApplySelectedTeamFollow(PlayerRef owner, long selectedCharacterMask, int targetCharacterIndex)
+		public void ApplySelectedTeamFollow(PlayerRef owner, CharacterMask128 selectedCharacterMask, int targetCharacterIndex)
 		{
 			if (TryGetSelectedCommandContext(owner, selectedCharacterMask, out var data, out var survivors) == false)
 				return;
 
 			if (survivors.TryGetValue(targetCharacterIndex, out var target) == false || target == null)
 				return;
-			if ((data.AliveCharacterMask & (1L << targetCharacterIndex)) == 0)
+			if (data.IsCharacterAlive(targetCharacterIndex) == false)
 				return;
 
 			foreach (var pair in survivors)
@@ -256,7 +256,7 @@ namespace SimpleFPS
 			}
 		}
 
-		public void ApplySelectedTeamNonCombatSettings(PlayerRef owner, long selectedCharacterMask, bool enabled)
+		public void ApplySelectedTeamNonCombatSettings(PlayerRef owner, CharacterMask128 selectedCharacterMask, bool enabled)
 		{
 			if (TryGetSelectedCommandContext(owner, selectedCharacterMask, out var data, out var survivors) == false)
 				return;
@@ -274,7 +274,7 @@ namespace SimpleFPS
 			}
 		}
 
-		public void ApplySelectedTeamCombatSettings(PlayerRef owner, long selectedCharacterMask, bool enabled)
+		public void ApplySelectedTeamCombatSettings(PlayerRef owner, CharacterMask128 selectedCharacterMask, bool enabled)
 		{
 			if (TryGetSelectedCommandContext(owner, selectedCharacterMask, out var data, out var survivors) == false)
 				return;
@@ -304,8 +304,6 @@ namespace SimpleFPS
 
 			float radius = Mathf.Max(0f, _settings.CommandRadius);
 			float radiusSqr = radius * radius;
-			long aliveMask = data.AliveCharacterMask;
-
 			_laneTargetBuffer.Clear();
 			foreach (var pair in survivors)
 			{
@@ -314,7 +312,7 @@ namespace SimpleFPS
 
 				if (survivor == null || characterIndex == originCharacterIndex)
 					continue;
-				if ((aliveMask & (1L << characterIndex)) == 0)
+				if (data.IsCharacterAlive(characterIndex) == false)
 					continue;
 
 				Vector3 offset = survivor.transform.position - origin.transform.position;
@@ -376,7 +374,7 @@ namespace SimpleFPS
 			return origin != null && origin.Health.IsAlive;
 		}
 
-		private bool TryGetSelectedCommandContext(PlayerRef owner, long selectedCharacterMask, out PlayerData data, out Dictionary<int, Survivor> survivors)
+		private bool TryGetSelectedCommandContext(PlayerRef owner, CharacterMask128 selectedCharacterMask, out PlayerData data, out Dictionary<int, Survivor> survivors)
 		{
 			data = default;
 			survivors = null;
@@ -384,7 +382,7 @@ namespace SimpleFPS
 			if (_gameplay.HasStateAuthority == false)
 				return false;
 
-			if (selectedCharacterMask == 0)
+			if (selectedCharacterMask.IsEmpty)
 				return false;
 
 			if (_gameplay.PlayerData.TryGet(owner, out data) == false)
@@ -393,15 +391,15 @@ namespace SimpleFPS
 			return _survivorsByOwner.TryGetValue(owner, out survivors);
 		}
 
-		private bool IsSelectedCommandTargetValid(PlayerData data, long selectedCharacterMask, int characterIndex, Survivor survivor)
+		private bool IsSelectedCommandTargetValid(PlayerData data, CharacterMask128 selectedCharacterMask, int characterIndex, Survivor survivor)
 		{
 			if (survivor == null || survivor.Health == null || survivor.Health.IsAlive == false)
 				return false;
 			if (characterIndex == data.ActiveCharacterIndex)
 				return false;
-			if ((selectedCharacterMask & (1L << characterIndex)) == 0)
+			if (selectedCharacterMask.Contains(characterIndex) == false)
 				return false;
-			if ((data.AliveCharacterMask & (1L << characterIndex)) == 0)
+			if (data.IsCharacterAlive(characterIndex) == false)
 				return false;
 
 			return true;
@@ -458,7 +456,7 @@ namespace SimpleFPS
 
 		private bool TryBuildSharedAssignedAreaPatrolPoints(
 			PlayerData data,
-			long selectedCharacterMask,
+			CharacterMask128 selectedCharacterMask,
 			Dictionary<int, Survivor> survivors,
 			Vector3 center,
 			float radius,
@@ -492,8 +490,6 @@ namespace SimpleFPS
 
 			float radius = Mathf.Max(0f, _settings.CommandRadius);
 			float radiusSqr = radius * radius;
-			long aliveMask = data.AliveCharacterMask;
-
 			foreach (var pair in survivors)
 			{
 				int characterIndex = pair.Key;
@@ -501,7 +497,7 @@ namespace SimpleFPS
 
 				if (survivor == null || characterIndex == originCharacterIndex)
 					continue;
-				if ((aliveMask & (1L << characterIndex)) == 0)
+				if (data.IsCharacterAlive(characterIndex) == false)
 					continue;
 
 				Vector3 offset = survivor.transform.position - origin.transform.position;

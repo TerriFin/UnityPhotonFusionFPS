@@ -28,6 +28,8 @@ namespace SimpleFPS
 			{
 				Survivor survivor  = _tempSpawnedPlayers[i];
 				PlayerRef playerRef = survivor.Object.InputAuthority;
+				if (playerRef.IsRealPlayer == false)
+					continue;
 
 				// 3. Remove PlayerRef of existing player object from pending spawn list.
 				_tempSpawnPlayers.Remove(playerRef);

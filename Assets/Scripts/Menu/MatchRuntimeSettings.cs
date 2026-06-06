@@ -103,6 +103,16 @@ namespace SimpleFPS
 				if (preset != null)
 					zombieOrchestrator.Settings = preset;
 			}
+
+			NeutralSurvivorOrchestrator neutralSurvivorOrchestrator = FindInScene<NeutralSurvivorOrchestrator>(scene);
+			if (neutralSurvivorOrchestrator != null)
+			{
+				NeutralSurvivorSpawnSettings preset = _catalog != null
+					? _catalog.GetNeutralSurvivorPreset(_settings.NeutralSurvivorPreset)
+					: null;
+				if (preset != null)
+					neutralSurvivorOrchestrator.Settings = preset;
+			}
 		}
 
 		private static void RegisterSceneLoadedHook()
@@ -130,5 +140,6 @@ namespace SimpleFPS
 
 			return null;
 		}
+
 	}
 }

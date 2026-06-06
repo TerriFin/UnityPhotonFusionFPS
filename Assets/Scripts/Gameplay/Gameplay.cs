@@ -27,16 +27,47 @@ namespace SimpleFPS
 		public int       ActiveCharacterIndex;
 		public int       AliveCharMaskLow;    // bits 0-31, serialized as int by Fusion
 		public int       AliveCharMaskHigh;   // bits 32-63, serialized as int by Fusion
+		public int       AliveCharMask2;      // bits 64-95, serialized as int by Fusion
+		public int       AliveCharMask3;      // bits 96-127, serialized as int by Fusion
 		public int       CharacterCount;
 		public int       TeamColorIndex;
 
 		// Convenience wrapper — NOT a Fusion-serialized field (no [Networked] attribute).
-		// Fusion only serializes public fields, not computed properties, so this property is
-		// transparent to the network. All existing code using AliveCharacterMask is unchanged.
-		public long AliveCharacterMask
+		// Fusion only serializes public fields, not computed properties, so this property is transparent to the network.
+		public CharacterMask128 AliveCharacterMask
 		{
-			get => ((long)(uint)AliveCharMaskHigh << 32) | (uint)AliveCharMaskLow;
-			set { AliveCharMaskLow = (int)value; AliveCharMaskHigh = (int)((uint)(value >> 32)); }
+			get => new CharacterMask128(AliveCharMaskLow, AliveCharMaskHigh, AliveCharMask2, AliveCharMask3);
+			set
+			{
+				AliveCharMaskLow = value.Mask0;
+				AliveCharMaskHigh = value.Mask1;
+				AliveCharMask2 = value.Mask2;
+				AliveCharMask3 = value.Mask3;
+			}
+		}
+
+		public bool HasAnyAliveCharacter => AliveCharacterMask.IsEmpty == false;
+
+		public bool IsCharacterAlive(int index)
+		{
+			return AliveCharacterMask.Contains(index);
+		}
+
+		public void SetCharacterAlive(int index, bool alive)
+		{
+			CharacterMask128 mask = AliveCharacterMask;
+			mask.Set(index, alive);
+			AliveCharacterMask = mask;
+		}
+
+		public void ClearAliveCharacters()
+		{
+			AliveCharacterMask = new CharacterMask128();
+		}
+
+		public void SetFirstAliveCharacters(int count)
+		{
+			AliveCharacterMask = CharacterMask128.FirstBits(count);
 		}
 	}
 
@@ -92,6 +123,7 @@ namespace SimpleFPS
 		// Non-networked survivor lookup, populated via Register/Unregister from Survivor.Spawned/Despawned
 		// on every peer. Stays in sync because spawn/despawn events fire everywhere via state replication.
 		private readonly Dictionary<PlayerRef, Dictionary<int, Survivor>> _characterCache = new();
+		private readonly List<Survivor> _neutralSurvivors = new(16);
 
 		// State-authority-only debounce: prevents a held Shift/Ctrl from triggering multiple switches
 		// when _previousButtons on the newly-active character hasn't seen the button yet.
@@ -124,8 +156,19 @@ namespace SimpleFPS
 			}
 		}
 
+		public IReadOnlyList<Survivor> NeutralSurvivors => _neutralSurvivors;
+
 		public void RegisterSurvivor(Survivor character)
 		{
+			if (character == null)
+				return;
+			if (CharacterFactionUtility.IsNeutralSurvivor(character))
+			{
+				if (_neutralSurvivors.Contains(character) == false)
+					_neutralSurvivors.Add(character);
+				return;
+			}
+
 			if (_characterCache.TryGetValue(character.OwnerRef, out var dict) == false)
 			{
 				dict = new Dictionary<int, Survivor>();
@@ -136,6 +179,11 @@ namespace SimpleFPS
 
 		public void UnregisterSurvivor(Survivor character)
 		{
+			if (character == null)
+				return;
+
+			_neutralSurvivors.Remove(character);
+
 			if (_characterCache.TryGetValue(character.OwnerRef, out var dict))
 			{
 				if (dict.TryGetValue(character.CharacterIndex, out var existing) && existing == character)
@@ -152,6 +200,43 @@ namespace SimpleFPS
 			return null;
 		}
 
+		public bool TryRecruitNeutralSurvivor(Survivor neutral, Survivor recruiter)
+		{
+			if (HasStateAuthority == false)
+				return false;
+			if (neutral == null || recruiter == null)
+				return false;
+			if (neutral.Health == null || neutral.Health.IsAlive == false)
+				return false;
+			if (recruiter.Health == null || recruiter.Health.IsAlive == false)
+				return false;
+			if (CharacterFactionUtility.IsNeutralSurvivor(neutral) == false)
+				return false;
+			if (CharacterFactionUtility.IsPlayerOwnedSurvivor(recruiter) == false)
+				return false;
+			if (PlayerData.TryGet(recruiter.OwnerRef, out var playerData) == false)
+				return false;
+			if (playerData.CharacterCount >= CharacterMask128.Capacity)
+				return false;
+
+			_neutralSurvivors.Remove(neutral);
+
+			int newCharacterIndex = Mathf.Clamp(playerData.CharacterCount, 0, CharacterMask128.Capacity - 1);
+			PlayerRef owner = recruiter.OwnerRef;
+			AssignInputAuthorityToHierarchy(neutral, owner);
+			neutral.OwnerRef = owner;
+			neutral.CharacterIndex = newCharacterIndex;
+			RegisterSurvivor(neutral);
+
+			playerData.CharacterCount = Mathf.Max(playerData.CharacterCount + 1, newCharacterIndex + 1);
+			playerData.SetCharacterAlive(newCharacterIndex, true);
+			playerData.IsAlive = true;
+			PlayerData.Set(owner, playerData);
+
+			ApplyRecruitmentOrder(neutral, recruiter);
+			return true;
+		}
+
 		public Material GetTeamColorMaterial(int teamColorIndex)
 		{
 			if (TeamColorPalette == null)
@@ -160,7 +245,7 @@ namespace SimpleFPS
 			return TeamColorPalette.GetMaterial(teamColorIndex);
 		}
 
-		public void RequestMapMoveOrder(long selectedCharacterMask, Vector3 destination)
+		public void RequestMapMoveOrder(CharacterMask128 selectedCharacterMask, Vector3 destination)
 		{
 			if (HasStateAuthority)
 			{
@@ -169,12 +254,10 @@ namespace SimpleFPS
 				return;
 			}
 
-			int maskLow = (int)selectedCharacterMask;
-			int maskHigh = (int)(selectedCharacterMask >> 32);
-			RPC_RequestMapMoveOrder(maskLow, maskHigh, destination);
+			RPC_RequestMapMoveOrder(selectedCharacterMask.Mask0, selectedCharacterMask.Mask1, selectedCharacterMask.Mask2, selectedCharacterMask.Mask3, destination);
 		}
 
-		public void RequestMapAssignedAreaOrder(long selectedCharacterMask, Vector3 center, float radius)
+		public void RequestMapAssignedAreaOrder(CharacterMask128 selectedCharacterMask, Vector3 center, float radius)
 		{
 			if (HasStateAuthority)
 			{
@@ -183,12 +266,10 @@ namespace SimpleFPS
 				return;
 			}
 
-			int maskLow = (int)selectedCharacterMask;
-			int maskHigh = (int)(selectedCharacterMask >> 32);
-			RPC_RequestMapAssignedAreaOrder(maskLow, maskHigh, center, radius);
+			RPC_RequestMapAssignedAreaOrder(selectedCharacterMask.Mask0, selectedCharacterMask.Mask1, selectedCharacterMask.Mask2, selectedCharacterMask.Mask3, center, radius);
 		}
 
-		public void RequestMapFollowOrder(long selectedCharacterMask, int targetCharacterIndex)
+		public void RequestMapFollowOrder(CharacterMask128 selectedCharacterMask, int targetCharacterIndex)
 		{
 			if (HasStateAuthority)
 			{
@@ -196,12 +277,10 @@ namespace SimpleFPS
 				return;
 			}
 
-			int maskLow = (int)selectedCharacterMask;
-			int maskHigh = (int)(selectedCharacterMask >> 32);
-			RPC_RequestMapFollowOrder(maskLow, maskHigh, targetCharacterIndex);
+			RPC_RequestMapFollowOrder(selectedCharacterMask.Mask0, selectedCharacterMask.Mask1, selectedCharacterMask.Mask2, selectedCharacterMask.Mask3, targetCharacterIndex);
 		}
 
-		public void RequestMapNonCombatSettings(long selectedCharacterMask, bool enabled)
+		public void RequestMapNonCombatSettings(CharacterMask128 selectedCharacterMask, bool enabled)
 		{
 			if (HasStateAuthority)
 			{
@@ -209,12 +288,10 @@ namespace SimpleFPS
 				return;
 			}
 
-			int maskLow = (int)selectedCharacterMask;
-			int maskHigh = (int)(selectedCharacterMask >> 32);
-			RPC_RequestMapNonCombatSettings(maskLow, maskHigh, enabled);
+			RPC_RequestMapNonCombatSettings(selectedCharacterMask.Mask0, selectedCharacterMask.Mask1, selectedCharacterMask.Mask2, selectedCharacterMask.Mask3, enabled);
 		}
 
-		public void RequestMapCombatSettings(long selectedCharacterMask, bool enabled)
+		public void RequestMapCombatSettings(CharacterMask128 selectedCharacterMask, bool enabled)
 		{
 			if (HasStateAuthority)
 			{
@@ -222,9 +299,7 @@ namespace SimpleFPS
 				return;
 			}
 
-			int maskLow = (int)selectedCharacterMask;
-			int maskHigh = (int)(selectedCharacterMask >> 32);
-			RPC_RequestMapCombatSettings(maskLow, maskHigh, enabled);
+			RPC_RequestMapCombatSettings(selectedCharacterMask.Mask0, selectedCharacterMask.Mask1, selectedCharacterMask.Mask2, selectedCharacterMask.Mask3, enabled);
 		}
 
 		public void RequestSwitchActiveCharacter(int targetCharacterIndex)
@@ -251,9 +326,15 @@ namespace SimpleFPS
 				PlayerData.Set(killerPlayerRef, killerData);
 			}
 
+			if (PlayerData.TryGet(ownerRef, out var victimData) == false)
+			{
+				CheckWinCondition();
+				RecalculateStatisticPositions();
+				return;
+			}
+
 			// Mark the character as dead.
-			var victimData = PlayerData.Get(ownerRef);
-			victimData.AliveCharacterMask &= ~(1L << characterIndex);
+			victimData.SetCharacterAlive(characterIndex, false);
 			victimData.Deaths++;
 
 			// Transfer control if the active character just died.
@@ -263,7 +344,7 @@ namespace SimpleFPS
 				// -1 means no alive characters remain — the player has lost.
 			}
 
-			victimData.IsAlive = victimData.AliveCharacterMask != 0;
+			victimData.IsAlive = victimData.HasAnyAliveCharacter;
 			PlayerData.Set(ownerRef, victimData);
 
 			UpdatePlayerObject(ownerRef, victimData);
@@ -308,7 +389,7 @@ namespace SimpleFPS
 			if (targetCharacterIndex < 0 || targetCharacterIndex >= data.CharacterCount)
 				return;
 
-			if ((data.AliveCharacterMask & (1L << targetCharacterIndex)) == 0)
+			if (data.IsCharacterAlive(targetCharacterIndex) == false)
 				return;
 
 			if (targetCharacterIndex == data.ActiveCharacterIndex)
@@ -337,6 +418,43 @@ namespace SimpleFPS
 			}
 
 			_lastSwitchTicks[owner] = Runner.Tick;
+		}
+
+		private void ApplyRecruitmentOrder(Survivor neutral, Survivor recruiter)
+		{
+			if (neutral == null || recruiter == null)
+				return;
+
+			if (recruiter.IsActiveCharacter())
+			{
+				neutral.SetAI(SurvivorNonCombatAI.Follow(neutral, recruiter, neutral.NonCombatAISettings));
+				return;
+			}
+
+			if (recruiter.NonCombatAI != null)
+			{
+				var matchingOrder = recruiter.NonCombatAI.CreateEquivalentAssignmentFor(neutral, neutral.NonCombatAISettings);
+				if (matchingOrder != null)
+				{
+					neutral.SetAI(matchingOrder);
+					return;
+				}
+			}
+
+			neutral.SetIdleAI();
+		}
+
+		private static void AssignInputAuthorityToHierarchy(Survivor survivor, PlayerRef owner)
+		{
+			if (survivor == null || survivor.Object == null || owner.IsRealPlayer == false)
+				return;
+
+			var networkObjects = survivor.GetComponentsInChildren<NetworkObject>(true);
+			for (int i = 0; i < networkObjects.Length; i++)
+			{
+				if (networkObjects[i] != null)
+					networkObjects[i].AssignInputAuthority(owner);
+			}
 		}
 
 		public override void Spawned()
@@ -488,7 +606,7 @@ namespace SimpleFPS
 
 				playerData.IsConnected = false;
 				playerData.IsAlive = false;
-				playerData.AliveCharacterMask = 0;
+				playerData.ClearAliveCharacters();
 				PlayerData.Set(playerRef, playerData);
 			}
 
@@ -521,7 +639,7 @@ namespace SimpleFPS
 
 			var playerData = PlayerData.Get(playerRef);
 			playerData.ActiveCharacterIndex = 0;
-			playerData.AliveCharacterMask   = count >= 64 ? -1L : (1L << count) - 1L;
+			playerData.SetFirstAliveCharacters(count);
 			playerData.CharacterCount       = count;
 			playerData.IsAlive              = true;
 			PlayerData.Set(playerRef, playerData);
@@ -532,9 +650,9 @@ namespace SimpleFPS
 		private int GetStartingCharacterCount(PlayerRef playerRef)
 		{
 			if (RaidMode && playerRef != Runner.LocalPlayer)
-				return Mathf.Clamp(RaidModeClientStartingCharacterCount, 1, 64);
+				return Mathf.Clamp(RaidModeClientStartingCharacterCount, 1, CharacterMask128.Capacity);
 
-			return Mathf.Clamp(StartingCharacterCount, 1, 64);
+			return Mathf.Clamp(StartingCharacterCount, 1, CharacterMask128.Capacity);
 		}
 
 		private void InitializeWorldSeed()
@@ -619,7 +737,7 @@ namespace SimpleFPS
 			}
 		}
 
-		private static int FindNextAliveCharacter(long aliveMask, int characterCount, int startIndex, int direction)
+		private static int FindNextAliveCharacter(CharacterMask128 aliveMask, int characterCount, int startIndex, int direction)
 		{
 			if (characterCount <= 0)
 				return -1;
@@ -627,7 +745,7 @@ namespace SimpleFPS
 			for (int i = 1; i <= characterCount; i++)
 			{
 				int candidate = ((startIndex + direction * i) % characterCount + characterCount) % characterCount;
-				if ((aliveMask & (1L << candidate)) != 0)
+				if (aliveMask.Contains(candidate))
 					return candidate;
 			}
 			return -1;
@@ -635,7 +753,7 @@ namespace SimpleFPS
 
 		private int FindClosestAliveCharacter(PlayerRef owner, PlayerData data, int deadCharacterIndex)
 		{
-			if (data.AliveCharacterMask == 0 || data.CharacterCount <= 0)
+			if (data.HasAnyAliveCharacter == false || data.CharacterCount <= 0)
 				return -1;
 
 			var deadCharacter = GetSurvivor(owner, deadCharacterIndex);
@@ -648,7 +766,7 @@ namespace SimpleFPS
 
 			for (int i = 0; i < data.CharacterCount; i++)
 			{
-				if ((data.AliveCharacterMask & (1L << i)) == 0)
+				if (data.IsCharacterAlive(i) == false)
 					continue;
 
 				var candidate = GetSurvivor(owner, i);
@@ -942,12 +1060,12 @@ namespace SimpleFPS
 		}
 
 		[Rpc(RpcSources.All, RpcTargets.StateAuthority, Channel = RpcChannel.Reliable)]
-		private void RPC_RequestMapMoveOrder(int selectedMaskLow, int selectedMaskHigh, Vector3 destination, RpcInfo info = default)
+		private void RPC_RequestMapMoveOrder(int selectedMask0, int selectedMask1, int selectedMask2, int selectedMask3, Vector3 destination, RpcInfo info = default)
 		{
 			if (IsValidMapOrderSource(info.Source) == false)
 				return;
 
-			long selectedCharacterMask = ((long)(uint)selectedMaskHigh << 32) | (uint)selectedMaskLow;
+			var selectedCharacterMask = new CharacterMask128(selectedMask0, selectedMask1, selectedMask2, selectedMask3);
 			if (IsFinite(destination) == false)
 				return;
 
@@ -955,12 +1073,12 @@ namespace SimpleFPS
 		}
 
 		[Rpc(RpcSources.All, RpcTargets.StateAuthority, Channel = RpcChannel.Reliable)]
-		private void RPC_RequestMapAssignedAreaOrder(int selectedMaskLow, int selectedMaskHigh, Vector3 center, float radius, RpcInfo info = default)
+		private void RPC_RequestMapAssignedAreaOrder(int selectedMask0, int selectedMask1, int selectedMask2, int selectedMask3, Vector3 center, float radius, RpcInfo info = default)
 		{
 			if (IsValidMapOrderSource(info.Source) == false)
 				return;
 
-			long selectedCharacterMask = ((long)(uint)selectedMaskHigh << 32) | (uint)selectedMaskLow;
+			var selectedCharacterMask = new CharacterMask128(selectedMask0, selectedMask1, selectedMask2, selectedMask3);
 			if (IsFinite(center) == false || TryGetValidAssignedAreaRadius(radius, out radius) == false)
 				return;
 
@@ -968,32 +1086,32 @@ namespace SimpleFPS
 		}
 
 		[Rpc(RpcSources.All, RpcTargets.StateAuthority, Channel = RpcChannel.Reliable)]
-		private void RPC_RequestMapFollowOrder(int selectedMaskLow, int selectedMaskHigh, int targetCharacterIndex, RpcInfo info = default)
+		private void RPC_RequestMapFollowOrder(int selectedMask0, int selectedMask1, int selectedMask2, int selectedMask3, int targetCharacterIndex, RpcInfo info = default)
 		{
 			if (IsValidMapOrderSource(info.Source) == false)
 				return;
 
-			long selectedCharacterMask = ((long)(uint)selectedMaskHigh << 32) | (uint)selectedMaskLow;
+			var selectedCharacterMask = new CharacterMask128(selectedMask0, selectedMask1, selectedMask2, selectedMask3);
 			SurvivorAICommands.ApplySelectedTeamFollow(info.Source, selectedCharacterMask, targetCharacterIndex);
 		}
 
 		[Rpc(RpcSources.All, RpcTargets.StateAuthority, Channel = RpcChannel.Reliable)]
-		private void RPC_RequestMapNonCombatSettings(int selectedMaskLow, int selectedMaskHigh, bool enabled, RpcInfo info = default)
+		private void RPC_RequestMapNonCombatSettings(int selectedMask0, int selectedMask1, int selectedMask2, int selectedMask3, bool enabled, RpcInfo info = default)
 		{
 			if (IsValidMapOrderSource(info.Source) == false)
 				return;
 
-			long selectedCharacterMask = ((long)(uint)selectedMaskHigh << 32) | (uint)selectedMaskLow;
+			var selectedCharacterMask = new CharacterMask128(selectedMask0, selectedMask1, selectedMask2, selectedMask3);
 			SurvivorAICommands.ApplySelectedTeamNonCombatSettings(info.Source, selectedCharacterMask, enabled);
 		}
 
 		[Rpc(RpcSources.All, RpcTargets.StateAuthority, Channel = RpcChannel.Reliable)]
-		private void RPC_RequestMapCombatSettings(int selectedMaskLow, int selectedMaskHigh, bool enabled, RpcInfo info = default)
+		private void RPC_RequestMapCombatSettings(int selectedMask0, int selectedMask1, int selectedMask2, int selectedMask3, bool enabled, RpcInfo info = default)
 		{
 			if (IsValidMapOrderSource(info.Source) == false)
 				return;
 
-			long selectedCharacterMask = ((long)(uint)selectedMaskHigh << 32) | (uint)selectedMaskLow;
+			var selectedCharacterMask = new CharacterMask128(selectedMask0, selectedMask1, selectedMask2, selectedMask3);
 			SurvivorAICommands.ApplySelectedTeamCombatSettings(info.Source, selectedCharacterMask, enabled);
 		}
 

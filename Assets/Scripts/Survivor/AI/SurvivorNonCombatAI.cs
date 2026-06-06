@@ -229,6 +229,21 @@ namespace SimpleFPS
 			SetHoldPosition(_survivor != null ? _survivor.transform.position : default);
 		}
 
+		public Survivor.ICharacterInputSource CreateEquivalentAssignmentFor(Survivor target, SurvivorNonCombatAISettings settings)
+		{
+			if (target == null)
+				return null;
+
+			return _assignment switch
+			{
+				ENonCombatAssignment.FollowSurvivor => Follow(target, _followTarget, settings),
+				ENonCombatAssignment.MoveToPoint => MoveTo(target, _anchorPosition, settings),
+				ENonCombatAssignment.AssignedArea => AssignedArea(target, _anchorPosition, _assignmentRadius, _assignedAreaEntryPoint, _assignedAreaPatrolPoints, settings),
+				ENonCombatAssignment.HoldPosition => HoldPosition(target, settings),
+				_ => HoldPosition(target, settings),
+			};
+		}
+
 		public void SetSettings(SurvivorNonCombatAISettings settings)
 		{
 			_settings = settings;

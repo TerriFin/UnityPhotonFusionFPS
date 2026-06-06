@@ -515,10 +515,8 @@ namespace SimpleFPS
 				return true;
 			if (sourceZombie != null)
 				return true;
-			if (source.InputAuthority.IsRealPlayer == false)
-				return true;
 
-			return source.InputAuthority != _survivor.OwnerRef;
+			return CharacterFactionUtility.IsEnemyNoiseSourceForSurvivor(_survivor, source);
 		}
 
 		private Vector3 GetEyePosition()

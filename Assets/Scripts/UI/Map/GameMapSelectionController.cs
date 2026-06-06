@@ -163,8 +163,8 @@ namespace SimpleFPS
 
 			if (_areaDragging && mouse.rightButton.wasReleasedThisFrame)
 			{
-				long selectedMask = BuildSelectedMask(gameplay, runner);
-				if (selectedMask != 0 && _areaCircleVisible)
+				CharacterMask128 selectedMask = BuildSelectedMask(gameplay, runner);
+				if (selectedMask.IsEmpty == false && _areaCircleVisible)
 				{
 					gameplay.RequestMapAssignedAreaOrder(selectedMask, _areaDragStartWorld, _currentAreaRadius);
 				}
@@ -181,8 +181,8 @@ namespace SimpleFPS
 
 		private void IssuePointOrder(GameMapView mapView, Gameplay gameplay, NetworkRunner runner, Vector2 screenPosition, Camera eventCamera)
 		{
-			long selectedMask = BuildSelectedMask(gameplay, runner);
-			if (selectedMask == 0)
+			CharacterMask128 selectedMask = BuildSelectedMask(gameplay, runner);
+			if (selectedMask.IsEmpty)
 				return;
 
 			GameMapIcon targetIcon = IconController.FindOwnIconAt(screenPosition, eventCamera);
@@ -247,18 +247,18 @@ namespace SimpleFPS
 			return Mathf.Max(0f, AssignedAreaMaxRadius);
 		}
 
-		private long BuildSelectedMask(Gameplay gameplay, NetworkRunner runner)
+		private CharacterMask128 BuildSelectedMask(Gameplay gameplay, NetworkRunner runner)
 		{
 			if (gameplay.PlayerData.TryGet(runner.LocalPlayer, out var data) == false)
-				return 0;
+				return default;
 
-			long mask = 0;
+			var mask = new CharacterMask128();
 			foreach (var survivor in _selected)
 			{
 				if (IsSelectable(survivor, gameplay, runner) == false)
 					continue;
 
-				mask |= 1L << survivor.CharacterIndex;
+				mask.Set(survivor.CharacterIndex, true);
 			}
 
 			return mask;
@@ -373,8 +373,8 @@ namespace SimpleFPS
 			bool combatOffPressed = keyboard.kKey.wasPressedThisFrame;
 			bool combatOnPressed = keyboard.lKey.wasPressedThisFrame;
 
-			long selectedMask = BuildSelectedMask(gameplay, runner);
-			if (selectedMask == 0)
+			CharacterMask128 selectedMask = BuildSelectedMask(gameplay, runner);
+			if (selectedMask.IsEmpty)
 				return;
 
 			if (idlePressed != enablePressed)

@@ -8,7 +8,7 @@ namespace SimpleFPS
 	[Serializable]
 	public sealed class MatchHostingSettings
 	{
-		private const int CurrentVersion = 3;
+		private const int CurrentVersion = 4;
 		private const float FogDensityPrecision = 100000f;
 
 		private const string PackedProfileKey = "msp";
@@ -25,6 +25,7 @@ namespace SimpleFPS
 		private const string BuildingPresetKey = "bp";
 		private const string LootPresetKey = "lp";
 		private const string ZombiePresetKey = "zp";
+		private const string NeutralSurvivorPresetKey = "np";
 
 		private static readonly int[] AllowedGameLengths = { 5, 10, 15, 20 };
 
@@ -32,13 +33,13 @@ namespace SimpleFPS
 		public int MapWidth = 12;
 		[Min(3)]
 		public int MapHeight = 12;
-		[Range(1, 64)]
+		[Range(1, CharacterMask128.Capacity)]
 		public int StartingSurvivorsPerPlayer = 5;
 		public int GameLengthMinutes = 10;
 		[Min(0f)]
 		public float FogDensity = 0.06f;
 		public bool RaidMode;
-		[Range(1, 64)]
+		[Range(1, CharacterMask128.Capacity)]
 		public int RaidModeClientStartingSurvivors = 1;
 
 		[Header("Preset Indices")]
@@ -47,6 +48,7 @@ namespace SimpleFPS
 		public int BuildingPlacementPreset = -1;
 		public int LootSpawnPreset = -1;
 		public int ZombieOrchestratorPreset = -1;
+		public int NeutralSurvivorPreset = -1;
 		public bool PreserveBuriedLedgeTunnels;
 		[Min(0)]
 		public int MaxDeadEndBuriedLedgeLength;
@@ -62,10 +64,10 @@ namespace SimpleFPS
 		{
 			MapWidth = Mathf.Max(3, MapWidth);
 			MapHeight = Mathf.Max(3, MapHeight);
-			StartingSurvivorsPerPlayer = Mathf.Clamp(StartingSurvivorsPerPlayer, 1, 64);
+			StartingSurvivorsPerPlayer = Mathf.Clamp(StartingSurvivorsPerPlayer, 1, CharacterMask128.Capacity);
 			GameLengthMinutes = GetClosestGameLength(GameLengthMinutes);
 			FogDensity = Mathf.Max(0f, FogDensity);
-			RaidModeClientStartingSurvivors = Mathf.Clamp(RaidModeClientStartingSurvivors, 1, 64);
+			RaidModeClientStartingSurvivors = Mathf.Clamp(RaidModeClientStartingSurvivors, 1, CharacterMask128.Capacity);
 			MaxDeadEndBuriedLedgeLength = Mathf.Max(0, MaxDeadEndBuriedLedgeLength);
 			MaxBuriedLedgeTunnelLength = Mathf.Max(0, MaxBuriedLedgeTunnelLength);
 
@@ -77,6 +79,7 @@ namespace SimpleFPS
 			BuildingPlacementPreset = catalog.ClampBuildingPlacementPresetIndex(BuildingPlacementPreset);
 			LootSpawnPreset = catalog.ClampLootSpawnPresetIndex(LootSpawnPreset);
 			ZombieOrchestratorPreset = catalog.ClampZombieOrchestratorPresetIndex(ZombieOrchestratorPreset);
+			NeutralSurvivorPreset = catalog.ClampNeutralSurvivorPresetIndex(NeutralSurvivorPreset);
 		}
 
 		public Dictionary<string, SessionProperty> ToSessionProperties()
@@ -112,6 +115,7 @@ namespace SimpleFPS
 			TryAssignInt(properties, BuildingPresetKey, value => parsedSettings.BuildingPlacementPreset = value);
 			TryAssignInt(properties, LootPresetKey, value => parsedSettings.LootSpawnPreset = value);
 			TryAssignInt(properties, ZombiePresetKey, value => parsedSettings.ZombieOrchestratorPreset = value);
+			TryAssignInt(properties, NeutralSurvivorPresetKey, value => parsedSettings.NeutralSurvivorPreset = value);
 			parsedSettings.Validate(catalog);
 			settings = parsedSettings;
 			return true;
@@ -138,7 +142,8 @@ namespace SimpleFPS
 				ZombieOrchestratorPreset,
 				PreserveBuriedLedgeTunnels ? 1 : 0,
 				MaxDeadEndBuriedLedgeLength,
-				MaxBuriedLedgeTunnelLength);
+				MaxBuriedLedgeTunnelLength,
+				NeutralSurvivorPreset);
 		}
 
 		private static bool TryFromPackedProfile(string packedProfile, MatchHostingSettingsCatalog catalog, out MatchHostingSettings settings)
@@ -190,6 +195,11 @@ namespace SimpleFPS
 			{
 				if (TryParse(values[15], out int maxBuriedLedgeTunnelLength))
 					parsedSettings.MaxBuriedLedgeTunnelLength = maxBuriedLedgeTunnelLength;
+			}
+			if (version >= 4 && values.Length >= 17)
+			{
+				if (TryParse(values[16], out int neutralSurvivorPreset))
+					parsedSettings.NeutralSurvivorPreset = neutralSurvivorPreset;
 			}
 
 			parsedSettings.Validate(catalog);
