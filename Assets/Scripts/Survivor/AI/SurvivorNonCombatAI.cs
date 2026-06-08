@@ -148,6 +148,21 @@ namespace SimpleFPS
 			return ai;
 		}
 
+		// Like AssignedArea, but starts already "satisfied" so the survivor has full autonomy (combat AND looting)
+		// while travelling to the area, not just once it arrives. Used for roaming neutral survivors so they fight
+		// zombies and grab pickups on the way between dynamic spawn points.
+		public static SurvivorNonCombatAI RoamArea(Survivor survivor, Vector3 center, float radius, Vector3 entryPoint, Vector3[] patrolPoints, SurvivorNonCombatAISettings settings)
+		{
+			var ai = GetOrAdd(survivor);
+			if (ai == null)
+				return null;
+
+			ai.SetSettings(settings);
+			ai.SetAssignedArea(center, radius, entryPoint, patrolPoints);
+			ai._playerAssignmentSatisfiedOnce = true;
+			return ai;
+		}
+
 		public static bool TryBuildAssignedAreaPatrolPoints(Survivor survivor, Vector3 center, float radius, out Vector3[] patrolPoints)
 		{
 			patrolPoints = null;

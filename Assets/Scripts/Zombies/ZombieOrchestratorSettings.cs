@@ -12,6 +12,9 @@ namespace SimpleFPS
 		[Header("Population")]
 		public int StartMaxZombies = 100;
 		public int EndMaxZombies = 400;
+		[Range(0f, 1f)]
+		[Tooltip("How much of StartMaxZombies to pre-populate when zombie spawning starts. 0 keeps the map empty until spawn pulses. 1 tries to spawn up to StartMaxZombies, still respecting each spawn point's MaxSpawnCountPerPulse.")]
+		public float InitialPopulation = 0f;
 		public float MatchDurationSeconds = 0f;
 		public bool ScaleDuringSkirmish;
 
@@ -51,6 +54,7 @@ namespace SimpleFPS
 		{
 			StartMaxZombies = Mathf.Max(0, StartMaxZombies);
 			EndMaxZombies = Mathf.Max(StartMaxZombies, EndMaxZombies);
+			InitialPopulation = Mathf.Clamp01(InitialPopulation);
 			MatchDurationSeconds = Mathf.Max(0f, MatchDurationSeconds);
 			StartSpawnRatePerMinute = Mathf.Max(0f, StartSpawnRatePerMinute);
 			EndSpawnRatePerMinute = Mathf.Max(0f, EndSpawnRatePerMinute);

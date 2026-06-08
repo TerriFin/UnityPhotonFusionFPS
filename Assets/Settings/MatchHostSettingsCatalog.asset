@@ -25,10 +25,11 @@ MonoBehaviour:
     BuildingPlacementPreset: 2
     LootSpawnPreset: 2
     ZombieOrchestratorPreset: 1
-    NeutralSurvivorPreset: -1
+    NeutralSurvivorPreset: 2
     PreserveBuriedLedgeTunnels: 1
     MaxDeadEndBuriedLedgeLength: 2
     MaxBuriedLedgeTunnelLength: 0
+    PreferredNeutralSurvivorCount: 20
   HeightGenerationPresets:
   - {fileID: 11400000, guid: c2fee7c2a84edf7459956cb76320b880, type: 2}
   - {fileID: 11400000, guid: 191979fc0ac5d934d8644767285edf9e, type: 2}
@@ -60,4 +61,10 @@ MonoBehaviour:
   - {fileID: 11400000, guid: fe93c04f4393a0f4bba656b9ecd6e0c9, type: 2}
   - {fileID: 11400000, guid: 56ba9fb7c433b564cab27b8214da40ab, type: 2}
   - {fileID: 11400000, guid: 95cf00690b3950749b470f7c5ff19eb8, type: 2}
-  NeutralSurvivorPresets: []
+  NeutralSurvivorPresets:
+  - {fileID: 11400000, guid: 97296027c164cda43a33e85c59ce3c17, type: 2}
+  - {fileID: 11400000, guid: b822ff5301686b1469f626aa0dff0795, type: 2}
+  - {fileID: 11400000, guid: 15dee10a5fee0214ba1468d7eeea7170, type: 2}
+  - {fileID: 11400000, guid: 7efd187ea52f8d742bcd8f693530b727, type: 2}
+  - {fileID: 11400000, guid: 75b3cd6b47d18a44199d5ec00d7d441e, type: 2}
+  - {fileID: 11400000, guid: e31cabd3663581946a586c80faeeb03e, type: 2}

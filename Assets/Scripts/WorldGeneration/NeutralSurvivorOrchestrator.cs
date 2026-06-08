@@ -28,6 +28,7 @@ namespace SimpleFPS
 		public BuildingPlacementGenerator BuildingGenerator;
 		public RoadGridGenerator RoadGenerator;
 		public NeutralSurvivorSpawnSettings Settings;
+		[Tooltip("Optional. Neutral survivors are identical to player survivors (neutral vs owned is just a runtime OwnerRef), so this can be left empty to spawn the same prefab as Gameplay.SurvivorPrefab.")]
 		public Survivor NeutralSurvivorPrefab;
 		public NetworkRunner Runner;
 		public Gameplay Gameplay;
@@ -41,6 +42,7 @@ namespace SimpleFPS
 
 		private readonly List<SpawnMarker> _validMarkers = new();
 		private readonly List<SpawnMarker> _selectedMarkers = new();
+		private readonly List<RoamDestination> _roamDestinations = new();
 		private readonly List<Survivor> _spawnedNeutralSurvivors = new();
 		private readonly List<Survivor> _recruitmentCandidates = new();
 		private readonly List<ReservedSpawnPosition> _reservedSpawnPositions = new();
@@ -55,6 +57,12 @@ namespace SimpleFPS
 		private bool _loggedMissingSetup;
 		private bool _loggedNoMarkers;
 		private bool _isPrimaryOrchestrator = true;
+		private int _runtimeDesiredNeutralSurvivorCount = -1;
+
+		public void SetRuntimeDesiredNeutralSurvivorCount(int count)
+		{
+			_runtimeDesiredNeutralSurvivorCount = Mathf.Max(0, count);
+		}
 
 		private void Awake()
 		{
@@ -155,7 +163,23 @@ namespace SimpleFPS
 			var seen = new HashSet<NeutralSurvivorSpawnPoint>();
 			CollectSpawnPointsFromRoot(GetGeneratedBuildingRoot(), seen);
 			CollectSpawnPointsFromRoot(GetGeneratedRoadRoot(), seen);
+			BuildRoamDestinations();
 			_random = new System.Random(GetSeed());
+		}
+
+		// Roam destinations are every valid dynamic-spawn marker, whether or not it was selected to spawn survivors,
+		// so roaming neutrals can wander to unused dynamic spawns too.
+		private void BuildRoamDestinations()
+		{
+			_roamDestinations.Clear();
+			for (int i = 0; i < _validMarkers.Count; i++)
+			{
+				var point = _validMarkers[i].Point;
+				if (point == null || point.DynamicSpawn == false)
+					continue;
+
+				_roamDestinations.Add(new RoamDestination(_validMarkers[i].Position, Mathf.Max(0f, point.PatrolRadius)));
+			}
 		}
 
 		[ContextMenu("Spawn Neutral Survivors")]
@@ -237,11 +261,11 @@ namespace SimpleFPS
 			runner = GetRunner();
 			if (runner == null || runner.IsSceneAuthority == false)
 				return false;
-			if (Settings == null || NeutralSurvivorPrefab == null)
+			if (Settings == null || GetNeutralSurvivorPrefab() == null)
 			{
 				if (_loggedMissingSetup == false)
 				{
-					Debug.LogWarning($"{nameof(NeutralSurvivorOrchestrator)} needs both settings and a neutral survivor prefab before spawning.", this);
+					Debug.LogWarning($"{nameof(NeutralSurvivorOrchestrator)} needs settings and a survivor prefab (its own or {nameof(Gameplay)}.{nameof(Gameplay.SurvivorPrefab)}) before spawning.", this);
 					_loggedMissingSetup = true;
 				}
 				return false;
@@ -251,13 +275,30 @@ namespace SimpleFPS
 			return true;
 		}
 
+		// Neutral survivors use the same prefab as player survivors (the only difference is the runtime OwnerRef).
+		// The orchestrator's own field is an optional override; when empty it falls back to Gameplay.SurvivorPrefab,
+		// so a separate neutral prefab is not required.
+		private Survivor GetNeutralSurvivorPrefab()
+		{
+			if (NeutralSurvivorPrefab != null)
+				return NeutralSurvivorPrefab;
+
+			ResolveGameplay();
+			return Gameplay != null ? Gameplay.SurvivorPrefab : null;
+		}
+
 		private void SpawnNeutralSurvivor(NetworkRunner runner, SpawnMarker marker)
 		{
+			Survivor prefab = GetNeutralSurvivorPrefab();
+			if (prefab == null)
+				return;
+
 			Vector3 patrolCenter = marker.Position;
 			float patrolRadius = marker.Point != null ? Mathf.Max(0f, marker.Point.PatrolRadius) : 0f;
+			bool isDynamic = marker.Point != null && marker.Point.DynamicSpawn;
 			Quaternion rotation = marker.Point != null ? marker.Point.transform.rotation : Quaternion.identity;
 
-			runner.Spawn(NeutralSurvivorPrefab, marker.Position, rotation, PlayerRef.None,
+			runner.Spawn(prefab, marker.Position, rotation, PlayerRef.None,
 				(spawnRunner, obj) =>
 				{
 					var survivor = obj.GetComponent<Survivor>();
@@ -267,11 +308,11 @@ namespace SimpleFPS
 					survivor.OwnerRef = PlayerRef.None;
 					survivor.CharacterIndex = -1;
 					AddSpawnedNeutral(survivor);
-					StartCoroutine(InitializeNeutralAfterSpawn(survivor, patrolCenter, patrolRadius));
+					StartCoroutine(InitializeNeutralAfterSpawn(survivor, patrolCenter, patrolRadius, isDynamic));
 				});
 		}
 
-		private IEnumerator InitializeNeutralAfterSpawn(Survivor survivor, Vector3 patrolCenter, float patrolRadius)
+		private IEnumerator InitializeNeutralAfterSpawn(Survivor survivor, Vector3 patrolCenter, float patrolRadius, bool isDynamic)
 		{
 			yield return null;
 
@@ -286,19 +327,29 @@ namespace SimpleFPS
 			if (neutral == null)
 				neutral = survivor.gameObject.AddComponent<NeutralSurvivor>();
 			neutral.Initialize(survivor, patrolCenter, patrolRadius);
+			neutral.ApplyNeutralStats(Settings);
 
 			survivor.SetNonCombatAISettings(SurvivorNonCombatAISettings.Default);
 			survivor.SetCombatAISettings(SurvivorCombatAISettings.Default);
 
+			// Dynamic-spawn survivors roam between dynamic areas instead of staying put. They are still registered
+			// for recruitment below like any neutral, so players can recruit them mid-roam.
+			bool roams = isDynamic && _roamDestinations.Count > 0;
+
 			if (patrolRadius > 0f && SurvivorNonCombatAI.TryBuildAssignedAreaPatrolPoints(survivor, patrolCenter, patrolRadius, out Vector3[] patrolPoints))
 			{
 				Vector3 entryPoint = patrolPoints != null && patrolPoints.Length > 0 ? patrolPoints[0] : patrolCenter;
-				survivor.SetAI(SurvivorNonCombatAI.AssignedArea(survivor, patrolCenter, patrolRadius, entryPoint, patrolPoints, survivor.NonCombatAISettings));
+				survivor.SetAI(roams
+					? SurvivorNonCombatAI.RoamArea(survivor, patrolCenter, patrolRadius, entryPoint, patrolPoints, survivor.NonCombatAISettings)
+					: SurvivorNonCombatAI.AssignedArea(survivor, patrolCenter, patrolRadius, entryPoint, patrolPoints, survivor.NonCombatAISettings));
 			}
 			else
 			{
 				survivor.SetIdleAI();
 			}
+
+			if (roams)
+				neutral.EnableRoaming(_roamDestinations);
 
 			ResolveGameplay();
 			Gameplay?.RegisterSurvivor(survivor);
@@ -349,6 +400,7 @@ namespace SimpleFPS
 				if (TryFindRecruiter(neutral, radiusSqr, out Survivor recruiter) &&
 				    Gameplay.TryRecruitNeutralSurvivor(neutral, recruiter))
 				{
+					neutral.GetComponent<NeutralSurvivor>()?.RestoreOriginalStats();
 					_spawnedNeutralSurvivors.Remove(neutral);
 				}
 			}
@@ -465,7 +517,7 @@ namespace SimpleFPS
 			if (_random == null)
 				_random = new System.Random(GetSeed());
 
-			int desiredSurvivorCount = Mathf.Max(0, Settings.DesiredNeutralSurvivorCount);
+			int desiredSurvivorCount = GetDesiredNeutralSurvivorCount();
 			if (desiredSurvivorCount == 0)
 				return;
 
@@ -629,6 +681,14 @@ namespace SimpleFPS
 			if (_random == null)
 				_random = new System.Random(GetSeed());
 			return _random.Next(min, max + 1);
+		}
+
+		private int GetDesiredNeutralSurvivorCount()
+		{
+			if (_runtimeDesiredNeutralSurvivorCount >= 0)
+				return _runtimeDesiredNeutralSurvivorCount;
+
+			return Settings != null ? Mathf.Max(0, Settings.DesiredNeutralSurvivorCount) : 0;
 		}
 
 		private void AddSpawnedNeutral(Survivor survivor)

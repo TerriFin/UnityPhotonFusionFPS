@@ -11,7 +11,7 @@ GameObject:
   - component: {fileID: 8642550737786001459}
   - component: {fileID: 2625745260830887975}
   m_Layer: 0
-  m_Name: NeutralSurvivorSpawn
+  m_Name: DynamicNeutralSurvivorSpawn
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -44,7 +44,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4ec1c99b9be232042bec2979523346af, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  MinSpawnCount: 2
-  MaxSpawnCount: 4
-  PatrolRadius: 8
-  DynamicSpawn: 0
+  MinSpawnCount: 1
+  MaxSpawnCount: 2
+  PatrolRadius: 6
+  DynamicSpawn: 1

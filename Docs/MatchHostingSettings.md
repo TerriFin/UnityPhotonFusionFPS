@@ -52,6 +52,7 @@ road-generation preset
 building-placement preset
 loot-spawning preset
 zombie-orchestrator preset
+preferred neutral survivor count
 neutral-survivor preset
 ```
 
@@ -138,6 +139,7 @@ For buried ledge tunnel controls, hook these `MatchHostingMenuController` fields
 PreserveBuriedLedgeTunnels -> Toggle
 MaxDeadEndBuriedLedgeLength -> TMP_InputField
 MaxBuriedLedgeTunnelLength -> TMP_InputField
+PreferredNeutralSurvivorCount -> TMP_InputField
 NeutralSurvivorPreset -> TMP_Dropdown
 ```
 
@@ -146,3 +148,5 @@ NeutralSurvivorPreset -> TMP_Dropdown
 Zombie orchestrator presets should normally leave `MatchDurationSeconds` at `0`. That makes zombie escalation follow the hosting menu's selected game length through `Gameplay.GameDuration`. A positive orchestrator override intentionally decouples zombie escalation from the match timer.
 
 Neutral survivor presets are `NeutralSurvivorSpawnSettings` assets. The dropdown is optional; leaving it unassigned in the hosting UI keeps the gameplay scene's orchestrator settings.
+
+`PreferredNeutralSurvivorCount` is separate from the neutral survivor preset dropdown. It overrides the selected preset's `DesiredNeutralSurvivorCount` for this hosted match only. Movement speed, sensor ranges, sensor update interval, recruitment rules, spacing rules, and neutral shooting inaccuracies still come from the selected `NeutralSurvivorSpawnSettings` preset.

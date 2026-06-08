@@ -210,7 +210,7 @@ namespace SimpleFPS
 			CameraController.Tick(Time.unscaledDeltaTime, panInput.normalized, zoomInput);
 
 			if (IconController != null)
-				IconController.Tick(this, gameplay, _runner);
+				IconController.Tick(this, gameplay, _runner, CameraController != null && CameraController.RevealEverything);
 			if (SelectionController != null)
 				SelectionController.Tick(this, gameplay, _runner);
 		}

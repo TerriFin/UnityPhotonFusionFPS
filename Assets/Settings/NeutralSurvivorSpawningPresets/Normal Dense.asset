@@ -10,11 +10,11 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: dfb6cd533f538f544b116feba882b7e9, type: 3}
-  m_Name: Neutral Survivor Spawn Settings
+  m_Name: Normal Dense
   m_EditorClassIdentifier: 
-  DesiredNeutralSurvivorCount: 20
-  MinDistanceBetweenSelectedSpawnPoints: 54
-  MinDistanceToActivePlayerSpawns: 40
+  DesiredNeutralSurvivorCount: 10
+  MinDistanceBetweenSelectedSpawnPoints: 34
+  MinDistanceToActivePlayerSpawns: 32
   SeedOffset: 0
   MatchStartSeedOffset: 7919
   SpawnNavMeshSampleDistance: 1.5

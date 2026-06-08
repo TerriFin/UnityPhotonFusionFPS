@@ -63,7 +63,12 @@ On recruitment:
 5. Player `CharacterCount`, `AliveCharacterMask`, and `IsAlive` are updated.
 6. Existing gear and health are preserved.
 7. Visual team color updates from neutral to the recruiting player's color.
-8. The survivor receives the same order the non-controlled player survivor had if the recruited was a non-controlled player survivor. If the recruiter was a player possessed survivor, they should start following them.
+8. Temporary neutral-only stat overrides are restored to the survivor prefab's normal values.
+9. The survivor receives a post-recruitment order:
+   - if the recruiter is player-possessed, follow the recruiter,
+   - if the recruiter is AI-controlled and had a player move order, follow the recruiter,
+   - if the recruiter is AI-controlled and had an assigned patrol/defend area, inherit the same area,
+   - otherwise inherit the closest equivalent current non-combat assignment.
 
 Current team masks support up to 128 characters per player.
 
@@ -148,6 +153,7 @@ NeutralSurvivorSpawnPoint : MonoBehaviour
 	public int MinSpawnCount = 1;
 	public int MaxSpawnCount = 1;
 	public float PatrolRadius = 8f;
+	public bool DynamicSpawn;
 }
 ```
 
@@ -157,8 +163,14 @@ Rules:
 - `PatrolRadius` defines the defend/patrol area assigned to spawned neutral survivors.
 - The marker transform provides spawn position and rotation.
 - The patrol center is the marker position unless later we add a separate patrol-center child transform.
+- `DynamicSpawn` controls whether survivors stay and patrol here or roam between dynamic spawns (see Roaming). It is an editor toggle on the marker, so the two spawn flavours (street vs complex-building) can be authored per marker.
 - Spawn markers are not networked objects.
 - Spawned neutral survivors are networked survivor entities spawned through Fusion.
+
+There are two intended marker flavours:
+
+- **Street spawns** (`DynamicSpawn = true`): small, frequent groups that make the streets feel alive and roam between dynamic spawns.
+- **Complex-building spawns** (`DynamicSpawn = false`): larger, hunkered-down groups that stay and defend their authored area, usually near pickups.
 
 Open question:
 
@@ -187,7 +199,7 @@ Suggested component:
 NeutralSurvivorOrchestrator : MonoBehaviour
 {
 	public NetworkRunner Runner;
-	public Survivor NeutralSurvivorPrefab;
+	public Survivor NeutralSurvivorPrefab; // optional override; falls back to Gameplay.SurvivorPrefab
 	public NeutralSurvivorSpawnSettings Settings;
 	public BuildingPlacementGenerator BuildingGenerator;
 	public RoadGridGenerator RoadGenerator;
@@ -195,6 +207,8 @@ NeutralSurvivorOrchestrator : MonoBehaviour
 	public bool FindRunnerIfMissing = true;
 }
 ```
+
+Neutral survivors are not a different prefab from player survivors — the only difference is the runtime `OwnerRef` (`PlayerRef.None` vs a real player) and the team color it resolves to. `NeutralSurvivorPrefab` is therefore an optional override: leave it empty to spawn the same prefab as `Gameplay.SurvivorPrefab`. A single shared survivor prefab is the intended setup.
 
 The orchestrator should scan generated roots, not prefab assets or disabled editor helper layouts.
 
@@ -217,8 +231,20 @@ NeutralSurvivorSpawnSettings : ScriptableObject
 	public int MatchStartSeedOffset = 7919;
 	public float SpawnNavMeshSampleDistance = 1.5f;
 	public float MinimumSpawnConnectedNavMeshRadius = 8f;
+	public float RecruitmentRadius = 3f;
+	public float RecruitmentCheckInterval = 0.25f;
+
+	public bool ApplyNeutralStatOverrides = true;
+	public float NeutralMovementSpeed;
+	public float NeutralVisionDistance;
+	public float NeutralAllAroundDetectionRange;
+	public float NeutralSensorInterval;
+	public float NeutralHorizontalAimErrorDegrees;
+	public float NeutralVerticalAimErrorDegrees;
 }
 ```
+
+Roam dwell timing lives on the `NeutralSurvivor` component (`RoamDwellTimeMin`/`RoamDwellTimeMax`), not in this settings asset, so it is tuned on the survivor prefab alongside the survivor's other per-character knobs (see Roaming).
 
 `MinDistanceToActivePlayerSpawns`:
 
@@ -233,6 +259,16 @@ Only player spawns that are actually in use are considered. Unused spawn points 
 `MatchStartSeedOffset` is added to the world seed for the match-start re-roll (see Spawn Timing), so the layout the real match begins with differs from the skirmish preview.
 
 `DesiredNeutralSurvivorCount` is the total number of neutral survivors the orchestrator tries to place across the map. It selects spaced markers and accumulates each marker's rolled `MinSpawnCount..MaxSpawnCount` count until the desired total is reached. This gives the host precise control over the headcount instead of an abstract marker ratio.
+
+The hosting menu can override `DesiredNeutralSurvivorCount` with a separate numeric **preferred neutral survivor count** field. The selected preset still supplies every other neutral survivor setting. This allows the same "weak civilians", "trained guards", or "many but helpless" preset to be reused with different match sizes without duplicating assets.
+
+Neutral stat overrides make unrecruited neutral survivors intentionally weaker than owned survivors. The `NeutralSurvivor` runtime component snapshots the survivor prefab's current values, applies the preset's weaker neutral values, and restores the snapshot after recruitment:
+
+- `NeutralMovementSpeed` temporarily replaces `Survivor.AIMoveSpeed`. Neutral survivors are always AI-controlled, so direct player `MoveSpeed` is not overridden.
+- `NeutralVisionDistance` temporarily replaces `CharacterSensor.VisionDistance`.
+- `NeutralAllAroundDetectionRange` temporarily replaces `CharacterSensor.ProximityAwarenessRadius`.
+- `NeutralSensorInterval` temporarily replaces `CharacterSensor.SensorInterval`.
+- `NeutralHorizontalAimErrorDegrees` / `NeutralVerticalAimErrorDegrees` temporarily replace all AI shooting inaccuracy values while neutral. Neutral survivors only fight zombies right now, but both shooting buckets are set to the same value so future neutral targets do not need a separate preset split.
 
 Selection flow:
 
@@ -300,6 +336,26 @@ Open question:
 
 - Should neutral survivors investigate gunshots before recruitment, or should they ignore all non-zombie stimuli to keep them from wandering into player fights? Answer: they should not. They only care about zombie related stimuli.
 
+## Roaming (Dynamic Spawns)
+
+Survivors spawned from a marker with `DynamicSpawn = true` do not stay in one patrol area. They roam between dynamic spawn areas, making the streets feel alive, meeting players in random places (better recruit targets), and getting culled faster by wandering through zombie-dense alleys where zombies spawn precisely because no players are nearby.
+
+Roam destinations are **every valid dynamic-spawn marker**, whether or not it was chosen to spawn survivors. The orchestrator builds this list once after collecting markers and shares it with every roamer.
+
+Per-survivor roam cycle (driven by `NeutralSurvivor` on state authority, where AI assignment is local):
+
+1. Start by dwelling at the spawn area for a random time in `[RoamDwellTimeMin, RoamDwellTimeMax]` (serialized on the `NeutralSurvivor` component).
+2. When the dwell elapses, **independently** pick a different random dynamic spawn area and head there. Each survivor chooses on its own timer, so a group spreads out over time.
+3. On arrival, dwell again, then repeat. Recruitment, death, or being assigned a player order ends roaming.
+
+The move to the next area is issued through `SurvivorNonCombatAI.RoamArea` — an assigned-area order that starts **already satisfied**, so the survivor has full autonomy *while travelling*, not just on arrival:
+
+- it fights zombies with its combat AI on the way (and at the destination),
+- it detours for visible pickups it does not already have (looting is allowed during the travel because the order is "satisfied"),
+- after combat or looting it continues toward the chosen area, then patrols it.
+
+If a chosen area cannot be reached (no NavMesh path set could be built), the survivor idles briefly and picks a different one. A roaming neutral is still a normal recruit target the whole time, so players (and AI recruiters via the recruit detour) can chase one down mid-roam.
+
 ## Combat Behavior
 
 Neutral survivors should use survivor combat behavior against zombies.
@@ -363,9 +419,9 @@ MatchHostingSettingsCatalog
 }
 ```
 
-Runtime match settings should select one preset and apply it to the scene orchestrator before generation/spawning.
+Runtime match settings select one preset and apply it to the scene orchestrator before generation/spawning.
 
-This can be added after the base neutral survivor system works.
+The hosting menu also exposes a separate neutral survivor count input. That value overrides the selected preset's `DesiredNeutralSurvivorCount`; all other neutral survivor stats and spawn constraints come from the preset dropdown.
 
 ## Implementation Plan
 
@@ -390,11 +446,13 @@ This can be added after the base neutral survivor system works.
 The first pass is implemented with these runtime pieces:
 
 - `NeutralSurvivorSpawnPoint` is the authored marker component placed inside generated road/building prefabs.
-- `NeutralSurvivorSpawnSettings` controls marker usage, marker spacing, distance from in-use player spawns, the match-start seed offset, NavMesh validation, and recruitment radius/interval.
+- `NeutralSurvivorSpawnSettings` controls marker usage, marker spacing, distance from in-use player spawns, the match-start seed offset, NavMesh validation, recruitment radius/interval, and temporary neutral-only stat overrides.
 - `NeutralSurvivorOrchestrator` waits for road/building generation, collects markers from generated roots, spawns neutral survivor network objects on scene authority, assigns patrol areas, and batches recruitment checks. It spawns a skirmish-pass layout when the world is ready and re-rolls a match-start layout (re-seeded, pruned against every in-use player spawn) once the match reaches `Running` — see Spawn Timing.
+- `NeutralSurvivorOrchestrator.SetRuntimeDesiredNeutralSurvivorCount` lets the hosting menu override only the preferred count without mutating the selected preset asset.
+- The `NeutralSurvivor` runtime component snapshots and applies neutral stat overrides after spawn, then restores the snapshot when recruited.
 - Neutral identity is represented by `Survivor.OwnerRef == PlayerRef.None` before recruitment.
 - `Gameplay` keeps neutral survivors out of player `PlayerData` until recruitment.
-- Recruitment appends the survivor to the recruiting player's team, assigns input authority to the survivor hierarchy, updates `CharacterCount` and `AliveCharacterMask`, and gives the recruited survivor either the recruiter's current non-combat order or a follow order if the recruiter is player-possessed.
+- Recruitment appends the survivor to the recruiting player's team, assigns input authority to the survivor hierarchy, updates `CharacterCount` and `AliveCharacterMask`, restores neutral stat overrides, and assigns the post-recruitment order described in Neutral Ownership Model.
 - Because recruitment changes `OwnerRef`/`CharacterIndex` through networked replication (no Spawned/Despawned), each peer re-syncs its local character lookup in `Survivor.Render()` via `Gameplay.ReregisterSurvivor`, so recruited survivors appear in cycling, AI commands, and death-switching on every machine. See `TeamCharacterSystem.md`.
 - Survivor AI can still sense neutral survivors for map/UI purposes, but `SurvivorAIShooting` filters them out as auto-shoot targets.
 - Non-possessed player-owned survivors actively recruit: `SurvivorRecruitingAI` walks them to sensed neutral survivors (toggled by `RecruitNeutralSurvivors`, on in `Default`). See `SurvivorRecruitingAI.md`.

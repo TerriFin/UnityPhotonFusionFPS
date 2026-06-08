@@ -21,12 +21,19 @@ namespace SimpleFPS
 		public IReadOnlyDictionary<NetworkObject, PickupMapMemory> PickupMemory => _pickupMemory;
 		public IReadOnlyDictionary<NetworkObject, ZombieMapMemory> ZombieMemory => _zombieMemory;
 
-		public void Tick(Gameplay gameplay, NetworkRunner runner)
+		public void Tick(Gameplay gameplay, NetworkRunner runner, bool revealAll = false)
 		{
 			if (gameplay == null || runner == null)
 				return;
 
 			float now = Time.time;
+
+			// Dev reveal: seed every entity into memory at its live position before the normal sensor pass, so the
+			// existing icon rendering shows the whole map. Revealed entries are refreshed each tick (full opacity);
+			// they fade out normally once the toggle is turned off.
+			if (revealAll)
+				RevealEverything(runner, now);
+
 			var sensors = CharacterSensor.ActiveSensors;
 			for (int i = 0; i < sensors.Count; i++)
 			{
@@ -144,6 +151,65 @@ namespace SimpleFPS
 
 			for (int i = 0; i < _expired.Count; i++)
 				_pickupMemory.Remove(_expired[i]);
+		}
+
+		// Seeds memory with every entity at its live position. The normal sensor pass that follows leaves these
+		// entries untouched (their sense tick is current, so older sightings do not override them), and the expiry
+		// pass keeps them (their sense time is now). Enumerated from the same global registries the sensors use.
+		private void RevealEverything(NetworkRunner runner, float now)
+		{
+			int tick = runner.Tick;
+
+			// Every survivor not owned by the local player (enemies and neutrals alike).
+			var sensors = CharacterSensor.ActiveSensors;
+			for (int i = 0; i < sensors.Count; i++)
+			{
+				var sensor = sensors[i];
+				var survivor = sensor != null ? sensor.Survivor : null;
+				if (survivor == null || IsSpawnedSurvivor(survivor) == false)
+					continue;
+				if (survivor.OwnerRef == runner.LocalPlayer)
+					continue;
+				if (survivor.Health == null || survivor.Health.IsAlive == false)
+					continue;
+
+				_enemyMemory[survivor.Object] = new EnemyMapMemory(
+					survivor,
+					survivor.transform.position,
+					survivor.transform.eulerAngles.y,
+					tick,
+					now);
+			}
+
+			// Every zombie.
+			var zombies = ZombieCharacter.ActiveZombies;
+			for (int i = 0; i < zombies.Count; i++)
+			{
+				var zombie = zombies[i];
+				if (IsSpawnedZombie(zombie) == false || zombie.Health == null || zombie.Health.IsAlive == false)
+					continue;
+
+				_zombieMemory[zombie.Object] = new ZombieMapMemory(zombie, zombie.transform.position, tick, now);
+			}
+
+			// Every pickup.
+			for (int i = 0; i < WeaponPickup.ActivePickups.Count; i++)
+			{
+				var pickup = WeaponPickup.ActivePickups[i];
+				if (pickup == null || pickup.Object == null || pickup.IsVisibleForSensor == false)
+					continue;
+
+				_pickupMemory[pickup.Object] = new PickupMapMemory(pickup.transform.position, EVisiblePickupType.Weapon, pickup.IsAvailableForSensor, tick, now);
+			}
+
+			for (int i = 0; i < HealthPickup.ActivePickups.Count; i++)
+			{
+				var pickup = HealthPickup.ActivePickups[i];
+				if (pickup == null || pickup.Object == null || pickup.IsVisibleForSensor == false)
+					continue;
+
+				_pickupMemory[pickup.Object] = new PickupMapMemory(pickup.transform.position, EVisiblePickupType.Health, pickup.IsAvailableForSensor, tick, now);
+			}
 		}
 
 		public static float ComputeOpacity(float now, float lastSenseTime, float forgetDelay)

@@ -14,7 +14,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   ZombiePrefab: {fileID: 3297568450549869079, guid: 1f02166891b80b94eb78a0c324123106, type: 3}
   StartMaxZombies: 60
-  EndMaxZombies: 120
+  EndMaxZombies: 160
+  InitialPopulation: 0.5
   MatchDurationSeconds: 0
   ScaleDuringSkirmish: 0
   StartSpawnRatePerMinute: 18
@@ -22,7 +23,7 @@ MonoBehaviour:
   SpawnPulseInterval: 14
   MaxSpawnPerPulsePerPlayer: 22
   SpawnNavMeshSampleDistance: 1.5
-  MinimumSpawnConnectedNavMeshRadius: 16
+  MinimumSpawnConnectedNavMeshRadius: 20
   StartHealth: 55
   EndHealth: 145
   StartDamage: 7

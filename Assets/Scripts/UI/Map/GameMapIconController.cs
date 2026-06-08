@@ -44,7 +44,7 @@ namespace SimpleFPS
 				&& icon.gameObject.activeSelf;
 		}
 
-		public void Tick(IGameMapView mapView, Gameplay gameplay, NetworkRunner runner)
+		public void Tick(IGameMapView mapView, Gameplay gameplay, NetworkRunner runner, bool revealAll = false)
 		{
 			if (mapView == null || gameplay == null || runner == null)
 				return;
@@ -52,7 +52,7 @@ namespace SimpleFPS
 			EnsureSetup(mapView);
 
 			if (AwarenessTracker != null)
-				AwarenessTracker.Tick(gameplay, runner);
+				AwarenessTracker.Tick(gameplay, runner, revealAll);
 
 			UpdateOwnIcons(mapView, gameplay, runner);
 			UpdateEnemyIcons(mapView, gameplay);

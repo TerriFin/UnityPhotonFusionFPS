@@ -75,6 +75,7 @@ ZombieOrchestratorSettings
 
 	int StartMaxZombies;
 	int EndMaxZombies;
+	float InitialPopulation;
 	float MatchDurationSeconds;
 	bool ScaleDuringSkirmish;
 
@@ -110,6 +111,7 @@ Suggested defaults:
 ```text
 StartMaxZombies: 100
 EndMaxZombies: 400
+InitialPopulation: 0
 MatchDurationSeconds: match setting
 StartSpawnRatePerMinute: 12
 EndSpawnRatePerMinute: 60
@@ -122,6 +124,15 @@ RegionGridSize: 3 or 4
 ```
 
 `StartMaxZombies` and `EndMaxZombies` are separate because the match should not start with the full zombie budget even if the final cap is high.
+
+`InitialPopulation` controls how many zombies are seeded immediately when the orchestrator starts spawning:
+
+```text
+0.0 = no initial zombies; the map fills only through normal spawn pulses
+1.0 = try to spawn up to StartMaxZombies immediately
+```
+
+The initial population pass still respects each spawn point's `MaxSpawnCountPerPulse`, survivor-blocking rules, NavMesh validation, and regional spawn selection. If the map does not have enough valid spawn points or per-point capacity, fewer zombies spawn.
 
 `UnderpopulatedRegionBias` controls how strongly the orchestrator prefers cleared areas:
 
@@ -212,6 +223,22 @@ roughly 10 zombies spawn elsewhere
 If no valid underpopulated spawn exists, the orchestrator falls back to any valid forced spawn.
 
 If there are not enough spawns available to spawn all/any zombies, do not spawn them.
+
+## Player Spawn Safety
+
+`Gameplay` clears zombies around a player's assigned spawn point after that player's team is spawned. This protects the initial spawn and late-joining players who are placed into a spread-out spawn after the match has already started.
+
+Scene tuning:
+
+```csharp
+Gameplay
+{
+	public ZombieOrchestrator ZombieOrchestrator;
+	public float ZombieSpawnClearRadius = 24f;
+}
+```
+
+`ZombieSpawnClearRadius` is intentionally an inspector value, not a hosting-menu value yet. The clear runs on scene authority and despawns any currently alive zombie inside that flat radius from the assigned player spawn.
 
 ## Regional Pressure
 
@@ -368,7 +395,7 @@ Recommended first implementation path:
 ## Resolved Decisions
 
 - Should the starting zombie count be spawned immediately at match start, or should zombies ramp in through normal spawn pulses? 
-Answer: for now they should not be spawned. Later we will add the functionality for the map to already contain zombies as part of the map generation.
+Answer: controlled by `InitialPopulation`. `0` keeps the old empty-start behavior, while higher values seed part of `StartMaxZombies` before normal spawn pulses take over.
 - Should forced spawns ignore survivor proximity entirely, or should they still avoid spawning directly inside melee range?
 Answer: forced spawns are forced spawns. They will be placed into places where it is conveyed that zombies spawn from, so they should spawn in even if there is a survivor directly on-top of them.
 - Should zombie spawn points support different zombie prefab pools later, such as normal, fast, armored, or boss zombies?

@@ -10,9 +10,9 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: dfb6cd533f538f544b116feba882b7e9, type: 3}
-  m_Name: Neutral Survivor Spawn Settings
+  m_Name: Strong
   m_EditorClassIdentifier: 
-  DesiredNeutralSurvivorCount: 20
+  DesiredNeutralSurvivorCount: 10
   MinDistanceBetweenSelectedSpawnPoints: 54
   MinDistanceToActivePlayerSpawns: 40
   SeedOffset: 0
@@ -22,9 +22,9 @@ MonoBehaviour:
   RecruitmentRadius: 3
   RecruitmentCheckInterval: 0.25
   ApplyNeutralStatOverrides: 1
-  NeutralMovementSpeed: 4.75
-  NeutralVisionDistance: 18
-  NeutralAllAroundDetectionRange: 4
-  NeutralSensorInterval: 0.3
-  NeutralHorizontalAimErrorDegrees: 6
-  NeutralVerticalAimErrorDegrees: 3
+  NeutralMovementSpeed: 5.5
+  NeutralVisionDistance: 22
+  NeutralAllAroundDetectionRange: 5
+  NeutralSensorInterval: 0.25
+  NeutralHorizontalAimErrorDegrees: 4
+  NeutralVerticalAimErrorDegrees: 2

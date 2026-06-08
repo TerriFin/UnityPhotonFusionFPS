@@ -98,6 +98,11 @@ namespace SimpleFPS
 		public float  SpawnClusterRadius = 1.5f;
 		public TeamColorPalette TeamColorPalette;
 
+		[Header("Spawn Safety")]
+		public ZombieOrchestrator ZombieOrchestrator;
+		[Min(0f)]
+		public float ZombieSpawnClearRadius = 24f;
+
 		[Header("Survivor Commands")]
 		public SurvivorAICommandSettings AICommandSettings = new();
 
@@ -478,6 +483,12 @@ namespace SimpleFPS
 
 			if (recruiter.NonCombatAI != null)
 			{
+				if (recruiter.NonCombatAI.Assignment == ENonCombatAssignment.MoveToPoint)
+				{
+					neutral.SetAI(SurvivorNonCombatAI.Follow(neutral, recruiter, neutral.NonCombatAISettings));
+					return;
+				}
+
 				var matchingOrder = recruiter.NonCombatAI.CreateEquivalentAssignmentFor(neutral, neutral.NonCombatAISettings);
 				if (matchingOrder != null)
 				{
@@ -666,6 +677,7 @@ namespace SimpleFPS
 		{
 			int count = GetStartingCharacterCount(playerRef);
 			var spawnPoint = GetSpawnPoint(playerRef);
+			TryPopulateInitialZombiesBeforeSpawn();
 			var offsets = GetClusterOffsets(count, SpawnClusterRadius);
 
 			for (int i = 0; i < count; i++)
@@ -690,6 +702,26 @@ namespace SimpleFPS
 			PlayerData.Set(playerRef, playerData);
 
 			UpdatePlayerObject(playerRef, playerData);
+			ClearZombiesNearSpawn(spawnPoint);
+		}
+
+		private void ClearZombiesNearSpawn(Transform spawnPoint)
+		{
+			if (spawnPoint == null || ZombieSpawnClearRadius <= 0f)
+				return;
+
+			if (ZombieOrchestrator == null)
+				ZombieOrchestrator = FindObjectOfType<ZombieOrchestrator>();
+
+			ZombieOrchestrator?.ClearZombiesNear(spawnPoint.position, ZombieSpawnClearRadius);
+		}
+
+		private void TryPopulateInitialZombiesBeforeSpawn()
+		{
+			if (ZombieOrchestrator == null)
+				ZombieOrchestrator = FindObjectOfType<ZombieOrchestrator>();
+
+			ZombieOrchestrator?.TryRunInitialPopulation();
 		}
 
 		private int GetStartingCharacterCount(PlayerRef playerRef)

@@ -22,6 +22,7 @@ namespace SimpleFPS
 		public Toggle PreserveBuriedLedgeTunnels;
 		public TMP_InputField MaxDeadEndBuriedLedgeLength;
 		public TMP_InputField MaxBuriedLedgeTunnelLength;
+		public TMP_InputField PreferredNeutralSurvivorCount;
 
 		[Header("Preset Dropdowns")]
 		public TMP_Dropdown HeightGenerationPreset;
@@ -133,6 +134,7 @@ namespace SimpleFPS
 				PreserveBuriedLedgeTunnels.SetIsOnWithoutNotify(settings.PreserveBuriedLedgeTunnels);
 			SetText(MaxDeadEndBuriedLedgeLength, settings.MaxDeadEndBuriedLedgeLength);
 			SetText(MaxBuriedLedgeTunnelLength, settings.MaxBuriedLedgeTunnelLength);
+			SetText(PreferredNeutralSurvivorCount, settings.PreferredNeutralSurvivorCount);
 
 			SetPresetDropdown(HeightGenerationPreset, settings.HeightGenerationPreset);
 			SetPresetDropdown(RoadGenerationPreset, settings.RoadGenerationPreset);
@@ -158,6 +160,7 @@ namespace SimpleFPS
 				PreserveBuriedLedgeTunnels = PreserveBuriedLedgeTunnels != null ? PreserveBuriedLedgeTunnels.isOn : defaults.PreserveBuriedLedgeTunnels,
 				MaxDeadEndBuriedLedgeLength = ReadInt(MaxDeadEndBuriedLedgeLength, defaults.MaxDeadEndBuriedLedgeLength),
 				MaxBuriedLedgeTunnelLength = ReadInt(MaxBuriedLedgeTunnelLength, defaults.MaxBuriedLedgeTunnelLength),
+				PreferredNeutralSurvivorCount = ReadInt(PreferredNeutralSurvivorCount, defaults.PreferredNeutralSurvivorCount),
 				HeightGenerationPreset = ReadPresetDropdown(HeightGenerationPreset),
 				RoadGenerationPreset = ReadPresetDropdown(RoadGenerationPreset),
 				BuildingPlacementPreset = ReadPresetDropdown(BuildingPlacementPreset),

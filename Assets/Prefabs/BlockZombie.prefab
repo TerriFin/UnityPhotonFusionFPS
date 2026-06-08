@@ -1218,13 +1218,13 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   InitialIdleWanderDelayMax: 2
-  IdleWanderIntervalMin: 4
-  IdleWanderIntervalMax: 9
+  IdleWanderIntervalMin: 3
+  IdleWanderIntervalMax: 7
   IdleWanderRetryDelayMin: 1
   IdleWanderRetryDelayMax: 2
-  IdleWanderRadius: 16
-  IdleWanderAvoidZombieRadius: 8
-  IdleWanderCandidateCount: 5
+  IdleWanderRadius: 18
+  IdleWanderAvoidZombieRadius: 16
+  IdleWanderCandidateCount: 6
   AttackRetargetInterval: 1
   HuntingRetargetInterval: 6
   HuntingRetargetIntervalJitter: 2

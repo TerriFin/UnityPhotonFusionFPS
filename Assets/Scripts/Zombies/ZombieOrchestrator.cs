@@ -44,6 +44,7 @@ namespace SimpleFPS
 		private bool _hasSpawnBounds;
 		private bool _isOvertime;
 		private bool _isStarted;
+		private bool _hasRunInitialPopulation;
 		private bool _isPrimary = true;
 		private bool _loggedMissingRunner;
 		private bool _loggedNotSceneAuthority;
@@ -130,8 +131,6 @@ namespace SimpleFPS
 			_loggedNotSceneAuthority = false;
 
 			ResolveGameplay();
-			if (ShouldRunSpawner() == false)
-				return;
 
 			if (_spawnPoints.Count == 0)
 				CollectSpawnPoints();
@@ -147,6 +146,11 @@ namespace SimpleFPS
 			}
 
 			_loggedNoSpawnPoints = false;
+
+			TryRunInitialPopulation();
+
+			if (ShouldRunSpawner() == false)
+				return;
 
 			if (Time.timeSinceLevelLoad < _nextPulseTime)
 				return;
@@ -202,6 +206,49 @@ namespace SimpleFPS
 		{
 			_isStarted = true;
 			_nextPulseTime = Time.timeSinceLevelLoad;
+		}
+
+		public void ClearZombiesNear(Vector3 center, float radius)
+		{
+			NetworkRunner runner = GetRunner();
+			if (runner == null || runner.IsSceneAuthority == false || radius <= 0f)
+				return;
+
+			float radiusSqr = radius * radius;
+			for (int i = ZombieCharacter.ActiveZombies.Count - 1; i >= 0; i--)
+			{
+				var zombie = ZombieCharacter.ActiveZombies[i];
+				if (zombie == null)
+				{
+					ZombieCharacter.ActiveZombies.RemoveAt(i);
+					continue;
+				}
+				if (zombie.Object == null || zombie.Object.IsValid == false)
+					continue;
+				if (FlatDistanceSqr(zombie.transform.position, center) > radiusSqr)
+					continue;
+
+				runner.Despawn(zombie.Object);
+			}
+		}
+
+		public void TryRunInitialPopulation()
+		{
+			if (_hasRunInitialPopulation)
+				return;
+
+			NetworkRunner runner = GetRunner();
+			if (runner == null || runner.IsSceneAuthority == false)
+				return;
+			if (HasUsableSettings == false)
+				return;
+
+			if (_spawnPoints.Count == 0)
+				CollectSpawnPoints();
+			if (_spawnPoints.Count == 0)
+				return;
+
+			RunInitialPopulation(runner);
 		}
 
 		[ContextMenu("Start Overtime")]
@@ -262,6 +309,39 @@ namespace SimpleFPS
 
 			if (spawnedThisPulse == 0)
 				_spawnRemainder = 0f;
+		}
+
+		private void RunInitialPopulation(NetworkRunner runner)
+		{
+			_hasRunInitialPopulation = true;
+
+			if (Settings == null || Settings.InitialPopulation <= 0f)
+				return;
+
+			int targetCount = Mathf.RoundToInt(Settings.StartMaxZombies * Mathf.Clamp01(Settings.InitialPopulation));
+			int spawnBudget = Mathf.Max(0, targetCount - CountAliveZombies());
+			if (spawnBudget <= 0)
+				return;
+
+			BuildSpawnCandidates();
+			if (_candidates.Count == 0)
+				return;
+
+			for (int i = 0; i < spawnBudget && _candidates.Count > 0; i++)
+			{
+				int candidateIndex = ChooseCandidateIndex();
+				if (candidateIndex < 0 || candidateIndex >= _candidates.Count)
+					break;
+
+				SpawnCandidate candidate = _candidates[candidateIndex];
+				SpawnZombie(runner, candidate);
+
+				candidate.Remaining--;
+				if (candidate.Remaining <= 0)
+					_candidates.RemoveAt(candidateIndex);
+				else
+					_candidates[candidateIndex] = candidate;
+			}
 		}
 
 		private void SpawnZombie(NetworkRunner runner, SpawnCandidate candidate)

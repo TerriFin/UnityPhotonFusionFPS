@@ -214,6 +214,8 @@ Assigned-area patrol is inherent to an `AssignedArea` player order, not a generi
 
 When a survivor has an assigned area, it uses the assignment anchor as a local patrol area after it has reached that area.
 
+`SurvivorNonCombatAI.RoamArea` is a variant used for roaming neutral survivors: it is an assigned-area order that starts already "satisfied", so the survivor has full autonomy (combat and looting) *while travelling* to the area rather than only after arriving. This lets roaming neutrals fight zombies and grab pickups on the way between dynamic spawn points. See `NeutralSurvivors.md` (Roaming).
+
 Suggested behavior:
 
 1. Pick a reachable point within the assigned-area radius, default about `8m`.

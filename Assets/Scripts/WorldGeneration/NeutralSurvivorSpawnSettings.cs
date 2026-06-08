@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Serialization;
 
 namespace SimpleFPS
 {
@@ -18,5 +19,24 @@ namespace SimpleFPS
 		public float MinimumSpawnConnectedNavMeshRadius = 8f;
 		public float RecruitmentRadius = 3f;
 		public float RecruitmentCheckInterval = 0.25f;
+
+		[Header("Neutral Stats")]
+		[Tooltip("Neutral survivors use these weaker runtime stats until recruited. Recruitment restores the survivor prefab's original values.")]
+		public bool ApplyNeutralStatOverrides = true;
+		[Min(0f)]
+		[FormerlySerializedAs("NeutralAIMoveSpeed")]
+		public float NeutralMovementSpeed = 3.5f;
+		[Min(0f)]
+		public float NeutralVisionDistance = 14f;
+		[Min(0f)]
+		public float NeutralAllAroundDetectionRange = 2.5f;
+		[Min(0.02f)]
+		public float NeutralSensorInterval = 0.35f;
+		[Min(0f)]
+		[FormerlySerializedAs("NeutralZombieHorizontalAimErrorDegrees")]
+		public float NeutralHorizontalAimErrorDegrees = 6f;
+		[Min(0f)]
+		[FormerlySerializedAs("NeutralZombieVerticalAimErrorDegrees")]
+		public float NeutralVerticalAimErrorDegrees = 3f;
 	}
 }

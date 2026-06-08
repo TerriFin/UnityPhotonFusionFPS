@@ -112,6 +112,8 @@ namespace SimpleFPS
 					: null;
 				if (preset != null)
 					neutralSurvivorOrchestrator.Settings = preset;
+
+				neutralSurvivorOrchestrator.SetRuntimeDesiredNeutralSurvivorCount(_settings.PreferredNeutralSurvivorCount);
 			}
 		}
 

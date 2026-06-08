@@ -8,7 +8,7 @@ namespace SimpleFPS
 	[Serializable]
 	public sealed class MatchHostingSettings
 	{
-		private const int CurrentVersion = 4;
+		private const int CurrentVersion = 5;
 		private const float FogDensityPrecision = 100000f;
 
 		private const string PackedProfileKey = "msp";
@@ -26,6 +26,7 @@ namespace SimpleFPS
 		private const string LootPresetKey = "lp";
 		private const string ZombiePresetKey = "zp";
 		private const string NeutralSurvivorPresetKey = "np";
+		private const string PreferredNeutralSurvivorCountKey = "nc";
 
 		private static readonly int[] AllowedGameLengths = { 5, 10, 15, 20 };
 
@@ -54,6 +55,8 @@ namespace SimpleFPS
 		public int MaxDeadEndBuriedLedgeLength;
 		[Min(0)]
 		public int MaxBuriedLedgeTunnelLength;
+		[Min(0)]
+		public int PreferredNeutralSurvivorCount = 20;
 
 		public MatchHostingSettings Clone()
 		{
@@ -70,6 +73,7 @@ namespace SimpleFPS
 			RaidModeClientStartingSurvivors = Mathf.Clamp(RaidModeClientStartingSurvivors, 1, CharacterMask128.Capacity);
 			MaxDeadEndBuriedLedgeLength = Mathf.Max(0, MaxDeadEndBuriedLedgeLength);
 			MaxBuriedLedgeTunnelLength = Mathf.Max(0, MaxBuriedLedgeTunnelLength);
+			PreferredNeutralSurvivorCount = Mathf.Max(0, PreferredNeutralSurvivorCount);
 
 			if (catalog == null)
 				return;
@@ -116,6 +120,7 @@ namespace SimpleFPS
 			TryAssignInt(properties, LootPresetKey, value => parsedSettings.LootSpawnPreset = value);
 			TryAssignInt(properties, ZombiePresetKey, value => parsedSettings.ZombieOrchestratorPreset = value);
 			TryAssignInt(properties, NeutralSurvivorPresetKey, value => parsedSettings.NeutralSurvivorPreset = value);
+			TryAssignInt(properties, PreferredNeutralSurvivorCountKey, value => parsedSettings.PreferredNeutralSurvivorCount = value);
 			parsedSettings.Validate(catalog);
 			settings = parsedSettings;
 			return true;
@@ -143,7 +148,8 @@ namespace SimpleFPS
 				PreserveBuriedLedgeTunnels ? 1 : 0,
 				MaxDeadEndBuriedLedgeLength,
 				MaxBuriedLedgeTunnelLength,
-				NeutralSurvivorPreset);
+				NeutralSurvivorPreset,
+				PreferredNeutralSurvivorCount);
 		}
 
 		private static bool TryFromPackedProfile(string packedProfile, MatchHostingSettingsCatalog catalog, out MatchHostingSettings settings)
@@ -200,6 +206,11 @@ namespace SimpleFPS
 			{
 				if (TryParse(values[16], out int neutralSurvivorPreset))
 					parsedSettings.NeutralSurvivorPreset = neutralSurvivorPreset;
+			}
+			if (version >= 5 && values.Length >= 18)
+			{
+				if (TryParse(values[17], out int preferredNeutralSurvivorCount))
+					parsedSettings.PreferredNeutralSurvivorCount = preferredNeutralSurvivorCount;
 			}
 
 			parsedSettings.Validate(catalog);
