@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: YouAreGoingToDie
   m_EditorClassIdentifier: 
   ZombiePrefab: {fileID: 3297568450549869079, guid: 1f02166891b80b94eb78a0c324123106, type: 3}
-  StartMaxZombies: 60
+  StartMaxZombies: 80
   EndMaxZombies: 200
   MatchDurationSeconds: 0
   ScaleDuringSkirmish: 0
@@ -22,7 +22,7 @@ MonoBehaviour:
   SpawnPulseInterval: 8
   MaxSpawnPerPulsePerPlayer: 32
   SpawnNavMeshSampleDistance: 1.5
-  MinimumSpawnConnectedNavMeshRadius: 10
+  MinimumSpawnConnectedNavMeshRadius: 16
   StartHealth: 120
   EndHealth: 200
   StartDamage: 12

@@ -44,6 +44,7 @@ namespace SimpleFPS
 		private bool _hasSpawnBounds;
 		private bool _isOvertime;
 		private bool _isStarted;
+		private bool _isPrimary = true;
 		private bool _loggedMissingRunner;
 		private bool _loggedNotSceneAuthority;
 		private bool _loggedNoSpawnPoints;
@@ -51,8 +52,40 @@ namespace SimpleFPS
 		public bool IsOvertime => _isOvertime;
 		public bool HasUsableSettings => Settings != null && Settings.ZombiePrefab != null;
 
+		private void Awake()
+		{
+			_isPrimary = IsPrimaryInstanceInScene();
+			if (_isPrimary)
+				return;
+
+			Debug.LogError($"{nameof(ZombieOrchestrator)} expects exactly one active instance per scene. Disabling duplicate on '{name}'.", this);
+			enabled = false;
+		}
+
+		private bool IsPrimaryInstanceInScene()
+		{
+			ZombieOrchestrator primary = null;
+			foreach (GameObject root in gameObject.scene.GetRootGameObjects())
+			{
+				var orchestrators = root.GetComponentsInChildren<ZombieOrchestrator>(true);
+				for (int i = 0; i < orchestrators.Length; i++)
+				{
+					var orchestrator = orchestrators[i];
+					if (orchestrator == null)
+						continue;
+					if (primary == null || orchestrator.GetInstanceID() < primary.GetInstanceID())
+						primary = orchestrator;
+				}
+			}
+
+			return primary == null || primary == this;
+		}
+
 		private IEnumerator Start()
 		{
+			if (_isPrimary == false)
+				yield break;
+
 			if (CollectSpawnPointsOnStart)
 			{
 				yield return WaitForGeneratedBuildings();
@@ -65,6 +98,9 @@ namespace SimpleFPS
 
 		private void Update()
 		{
+			if (_isPrimary == false)
+				return;
+
 			if (_isStarted == false || HasUsableSettings == false)
 				return;
 
@@ -422,6 +458,10 @@ namespace SimpleFPS
 
 				var survivor = sensor.Survivor;
 				if (survivor == null || survivor.Health == null || survivor.Health.IsAlive == false)
+					continue;
+				// Only player-owned survivors keep zombies from spawning. Neutral survivors are meant to be
+				// threatened by the horde, so they must not suppress nearby zombie spawns.
+				if (CharacterFactionUtility.IsPlayerOwnedSurvivor(survivor) == false)
 					continue;
 				if ((survivor.transform.position - origin).sqrMagnitude <= radiusSqr)
 					return true;

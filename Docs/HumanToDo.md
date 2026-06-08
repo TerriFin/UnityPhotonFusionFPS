@@ -7,11 +7,9 @@ feel free to read, might give good context :)
  - World gen should stay layered: height -> roads -> buildings -> loot -> special encounters.
 
 ## To-do list:
-- Neutral, recruitable survivors
-- Server startup options (map generation sliders, game modifiers, game duration)
-- Disconnect/Join cleanup (error messages, game crashes, spectate mode)
 - Map show survivor info (list your survivors and their statuses, allow toggling of individual behaviors)
 - Overall polishing of survivor AI (at this point all behaviors should be in, can polish)
+- Spectate mode
 - Rework weapon system (all characters "have" all weapons at the same time, unnecessary)
 - Pickup system (no loot respawning, drop loot when dying, zombies can drop with a small chance?)
 - Loot distribution system (toggleable setting for non-combat AI? Player can "take" weapon from non-controlled characters?)

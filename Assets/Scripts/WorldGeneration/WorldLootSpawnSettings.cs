@@ -11,5 +11,7 @@ namespace SimpleFPS
 		public NetworkObject[] WeaponPickups;
 		public NetworkObject[] HealthPickups;
 		public int SeedOffset = 20000;
+		[Tooltip("Added to the seed for the match-start re-roll, so the loot the real match starts with differs from the skirmish preview.")]
+		public int MatchStartSeedOffset = 31337;
 	}
 }

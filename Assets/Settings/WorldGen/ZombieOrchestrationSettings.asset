@@ -22,7 +22,7 @@ MonoBehaviour:
   SpawnPulseInterval: 14
   MaxSpawnPerPulsePerPlayer: 22
   SpawnNavMeshSampleDistance: 1.5
-  MinimumSpawnConnectedNavMeshRadius: 10
+  MinimumSpawnConnectedNavMeshRadius: 16
   StartHealth: 55
   EndHealth: 145
   StartDamage: 7

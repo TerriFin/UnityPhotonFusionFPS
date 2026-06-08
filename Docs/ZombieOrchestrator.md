@@ -45,8 +45,10 @@ ZombieSpawnPoint
 
 ```text
 0 or less = forced spawn, never blocked by survivor proximity
-above 0 = non-forced spawn, blocked while an alive survivor is inside the radius
+above 0 = non-forced spawn, blocked while an alive player-owned survivor is inside the radius
 ```
+
+Only player-owned survivors block non-forced spawns. Neutral survivors never suppress zombie spawning — they are meant to be threatened by the horde.
 
 Forced spawn points:
 
@@ -56,7 +58,7 @@ Forced spawn points:
 
 Non-forced spawn points:
 
-- Skipped when an alive survivor is inside `NonForcedSurvivorBlockRadius`.
+- Skipped when an alive player-owned survivor is inside `NonForcedSurvivorBlockRadius`.
 - Used for less obvious locations where spawning zombies in front of the player would feel unfair, such as warehouses, alleys, apartments, or back rooms.
 - Still useful for repopulating cleared areas when no survivors are nearby.
 
@@ -242,7 +244,7 @@ A spawn point is valid when:
 - The point is on or near reachable NavMesh.
 - The NavMesh island under the point is large enough to be useful.
 - The point has not exceeded `MaxSpawnCountPerPulse`.
-- If `NonForcedSurvivorBlockRadius` is above `0`, no alive survivor is inside that radius. Future "neutral" survivors do not count against this.
+- If `NonForcedSurvivorBlockRadius` is above `0`, no alive player-owned survivor is inside that radius. Neutral survivors do not count against this.
 
 Spawn point collection filters out markers on tiny disconnected NavMesh islands. This handles generated alleys or building pockets where the marker is technically on NavMesh, but that NavMesh is cut off from the playable city by walls, blocking buildings, or prop arrangements.
 
@@ -279,6 +281,8 @@ The orchestrator should spawn only on scene/state authority:
 if Runner.IsSceneAuthority == false:
 	do nothing
 ```
+
+Every peer loads the scene with its own orchestrator, but only the scene authority runs spawn pulses; clients receive zombies through replication. The orchestrator also guards against duplicate components in the same scene: on `Awake` it keeps a single primary instance and disables any extras with an error log, so an accidentally duplicated orchestrator cannot double-spawn zombies.
 
 Spawn-time stats can be applied in the spawn callback or immediately after the spawned object is available.
 

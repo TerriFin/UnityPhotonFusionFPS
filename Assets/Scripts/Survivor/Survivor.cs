@@ -56,6 +56,12 @@ namespace SimpleFPS
 		private bool _firstPersonVisualsActive;
 		private CinemachineVirtualCamera[] _virtualCameras;
 
+		// Owner/index this survivor was last registered into Gameplay's lookup with. Used to re-sync the lookup on
+		// every peer when recruitment changes the networked OwnerRef/CharacterIndex (which does not fire Spawned).
+		private bool _hasRegisteredIdentity;
+		private PlayerRef _registeredOwnerRef;
+		private int _registeredCharacterIndex;
+
 		private SceneObjects _sceneObjects;
 		private ICharacterInputSource _aiController;
 		private SurvivorNonCombatAISettings _nonCombatAISettings = SurvivorNonCombatAISettings.Default;
@@ -208,9 +214,29 @@ namespace SimpleFPS
 			if (_sceneObjects != null && _sceneObjects.Gameplay != null)
 			{
 				_sceneObjects.Gameplay.RegisterSurvivor(this);
+				_registeredOwnerRef = OwnerRef;
+				_registeredCharacterIndex = CharacterIndex;
+				_hasRegisteredIdentity = true;
 			}
 
 			SetIdleAI();
+		}
+
+		// Keeps Gameplay's per-peer survivor lookup in sync when recruitment changes the networked
+		// OwnerRef/CharacterIndex. Recruitment does not fire Spawned/Despawned, so without this the recruit would
+		// stay in the neutral list on non-authority peers and be invisible to cycling, AI commands, and switching.
+		private void SyncRegistrationIdentity()
+		{
+			if (_hasRegisteredIdentity == false)
+				return;
+			if (OwnerRef == _registeredOwnerRef && CharacterIndex == _registeredCharacterIndex)
+				return;
+			if (_sceneObjects == null || _sceneObjects.Gameplay == null)
+				return;
+
+			_sceneObjects.Gameplay.ReregisterSurvivor(this, _registeredOwnerRef, _registeredCharacterIndex);
+			_registeredOwnerRef = OwnerRef;
+			_registeredCharacterIndex = CharacterIndex;
 		}
 
 		private void EnsureNonCombatAI()
@@ -321,6 +347,8 @@ namespace SimpleFPS
 
 		public override void Render()
 		{
+			SyncRegistrationIdentity();
+
 			if (_sceneObjects.Gameplay.State == EGameplayState.Finished)
 				return;
 

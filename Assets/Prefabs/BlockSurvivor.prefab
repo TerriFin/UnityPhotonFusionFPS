@@ -1317,6 +1317,7 @@ GameObject:
   - component: {fileID: 5017329814356762074}
   - component: {fileID: 8835636566654811975}
   - component: {fileID: 3140107809847408399}
+  - component: {fileID: 7775560638992602792}
   - component: {fileID: 9208980521310565510}
   - component: {fileID: -4394101241498737787}
   - component: {fileID: 1772856214135365984}
@@ -1663,6 +1664,21 @@ MonoBehaviour:
   LookRotationIntervalMin: 0.75
   LookRotationIntervalMax: 1.5
   MaxYawDegreesPerTick: 8
+--- !u!114 &7775560638992602792
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7812586951838351475}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: be3e58ec03e414243bf1dca28a0e11ae, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  RecruitStoppingDistance: 0.75
+  DirectFallbackDistance: 1
+  RecruitDetourDistance: 10
 --- !u!114 &9208980521310565510
 MonoBehaviour:
   m_ObjectHideFlags: 0

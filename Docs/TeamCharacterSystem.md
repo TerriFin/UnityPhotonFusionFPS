@@ -86,6 +86,8 @@ public void UnregisterSurvivor(Survivor character)
 
 `Survivor.Spawned()` calls `RegisterSurvivor(this)` and `Survivor.Despawned()` calls `UnregisterSurvivor(this)`. Fusion calls these on every peer as objects appear and disappear in their local simulation via state replication, so the cache stays in sync on all machines without any explicit messages.
 
+Recruitment is the one case where a survivor's `OwnerRef`/`CharacterIndex` change **without** a Spawned/Despawned event — only the networked fields replicate. The state authority re-registers the recruit explicitly inside `Gameplay.TryRecruitNeutralSurvivor`, but other peers would otherwise keep the recruit stuck in the neutral list and never move it into the owning team's cache (so it would show on the map via `FindObjectsOfType` yet be missing from cycling, AI commands, and death-switching). To cover every peer, `Survivor` records the owner/index it last registered with and, in `Render()`, calls `Gameplay.ReregisterSurvivor(this, previousOwnerRef, previousCharacterIndex)` whenever it detects the identity changed. That moves the cache entry from the old key to the new one on all machines.
+
 To look up a live character by owner and index:
 
 ```csharp

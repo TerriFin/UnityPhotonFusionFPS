@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Fusion;
 using UnityEngine;
 
@@ -15,12 +16,14 @@ namespace SimpleFPS
 	{
 		public bool CollectVisiblePickups;
 		public bool InvestigateSuspiciousStimuli;
+		public bool RecruitNeutralSurvivors;
 		public bool AllowCombatAIActivation;
 
 		public static SurvivorNonCombatAISettings Default => new SurvivorNonCombatAISettings
 		{
 			CollectVisiblePickups = true,
 			InvestigateSuspiciousStimuli = true,
+			RecruitNeutralSurvivors = true,
 			AllowCombatAIActivation = true,
 		};
 
@@ -28,6 +31,7 @@ namespace SimpleFPS
 		{
 			CollectVisiblePickups = false,
 			InvestigateSuspiciousStimuli = false,
+			RecruitNeutralSurvivors = false,
 			AllowCombatAIActivation = false,
 		};
 	}
@@ -49,8 +53,10 @@ namespace SimpleFPS
 		private Survivor _survivor;
 		private SurvivorLootingAI _looting;
 		private SurvivorInvestigationAI _investigation;
+		private SurvivorRecruitingAI _recruiting;
 		private SurvivorAssignedAreaAI _assignedArea;
 		private SurvivorCombatAI _combat;
+		private readonly List<KnownEnemyInfo> _directEnemiesScratch = new(8);
 		private SurvivorNonCombatAISettings _settings;
 		private ENonCombatAssignment _assignment;
 		private Vector3 _anchorPosition;
@@ -69,6 +75,9 @@ namespace SimpleFPS
 		private Vector3 _lastCombatEnemyPosition;
 		private int _lastCombatEnemyTick;
 		private bool _hasLastCombatEnemy;
+		private float _nextTravelDetourTime;
+
+		private const float TravelDetourRetryDelay = 0.75f;
 
 		public ENonCombatAssignment Assignment => _assignment;
 		public Survivor FollowTarget => _followTarget;
@@ -206,6 +215,13 @@ namespace SimpleFPS
 					_investigation = gameObject.AddComponent<SurvivorInvestigationAI>();
 			}
 
+			if (_recruiting == null)
+			{
+				_recruiting = GetComponent<SurvivorRecruitingAI>();
+				if (_recruiting == null)
+					_recruiting = gameObject.AddComponent<SurvivorRecruitingAI>();
+			}
+
 			if (_assignedArea == null)
 			{
 				_assignedArea = GetComponent<SurvivorAssignedAreaAI>();
@@ -252,8 +268,18 @@ namespace SimpleFPS
 
 			if (_settings.CollectVisiblePickups == false && (_looting != null && (_looting.HasTask || _looting.IsReturning)))
 				_looting.ClearTask(true, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
-			if (_settings.InvestigateSuspiciousStimuli == false && (_investigation != null && (_investigation.HasTask || _investigation.IsReturning)))
-				_investigation.ClearTask(true, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
+			// A recruitment hand-off investigation is governed by the recruit setting, a stimulus investigation by the
+			// investigate setting, so toggling one behavior off never cancels the other's work.
+			if (_investigation != null && (_investigation.HasTask || _investigation.IsReturning))
+			{
+				bool investigationDisabled = _investigation.IsRecruitmentOrigin
+					? _settings.RecruitNeutralSurvivors == false
+					: _settings.InvestigateSuspiciousStimuli == false;
+				if (investigationDisabled)
+					_investigation.ClearTask(true, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
+			}
+			if (_settings.RecruitNeutralSurvivors == false && (_recruiting != null && (_recruiting.HasTask || _recruiting.IsReturning)))
+				_recruiting.ClearTask(true, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
 		}
 
 		public void ReceiveInvestigationAlert(Vector3 target, int stimulusTick, NetworkObject observedTarget = null)
@@ -271,9 +297,13 @@ namespace SimpleFPS
 			return TryStartInvestigation(target, stimulusTick, alertAllies, null, false, false);
 		}
 
-		private bool TryStartInvestigation(Vector3 target, int stimulusTick, bool alertAllies, NetworkObject observedTarget, bool allowSameTick, bool force)
+		private bool TryStartInvestigation(Vector3 target, int stimulusTick, bool alertAllies, NetworkObject observedTarget, bool allowSameTick, bool force, bool recruitmentOrigin = false)
 		{
 			EnsureBehaviorComponents();
+			// Once committed to a recruitment, the survivor ignores investigation stimuli (gunshots, alerts) entirely.
+			// The recruitment hand-off itself clears recruiting first, so it is not blocked here.
+			if (recruitmentOrigin == false && _recruiting != null && _recruiting.HasTask)
+				return false;
 			return _investigation != null &&
 			       _investigation.TryStart(
 				       _survivor,
@@ -285,7 +315,8 @@ namespace SimpleFPS
 				       alertAllies,
 				       observedTarget,
 				       allowSameTick,
-				       force);
+				       force,
+				       recruitmentOrigin);
 		}
 
 		public void SetHoldPosition(Vector3 position)
@@ -298,6 +329,7 @@ namespace SimpleFPS
 			_playerAssignmentSatisfiedOnce = true;
 			_looting?.ClearTask(false, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
 			_investigation?.ClearTask(false, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
+			_recruiting?.ClearTask(false, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
 			_assignedArea?.ClearTask(_survivor != null ? _survivor.Navigator : null);
 			_combat?.ClearMovementTask();
 			_survivor?.Navigator?.ClearDestination();
@@ -314,6 +346,7 @@ namespace SimpleFPS
 			_playerAssignmentSatisfiedOnce = false;
 			_looting?.ClearTask(false, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
 			_investigation?.ClearTask(false, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
+			_recruiting?.ClearTask(false, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
 			_assignedArea?.ClearTask(_survivor != null ? _survivor.Navigator : null);
 			_combat?.ClearMovementTask();
 			ClearRememberedCombatEnemy();
@@ -330,6 +363,7 @@ namespace SimpleFPS
 			_playerAssignmentSatisfiedOnce = false;
 			_looting?.ClearTask(false, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
 			_investigation?.ClearTask(false, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
+			_recruiting?.ClearTask(false, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
 			_assignedArea?.ClearTask(_survivor != null ? _survivor.Navigator : null);
 			_combat?.ClearMovementTask();
 			ClearRememberedCombatEnemy();
@@ -360,6 +394,7 @@ namespace SimpleFPS
 			_playerAssignmentSatisfiedOnce = false;
 			_looting?.ClearTask(false, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
 			_investigation?.ClearTask(false, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
+			_recruiting?.ClearTask(false, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
 			_assignedArea?.ClearTask(_survivor != null ? _survivor.Navigator : null);
 			_combat?.ClearMovementTask();
 			ClearRememberedCombatEnemy();
@@ -387,6 +422,10 @@ namespace SimpleFPS
 
 		private NetworkedInput GetFollowInput()
 		{
+			// Detour to recruit a nearby neutral while following, then resume following.
+			if (TryGetTravelDetourRecruitingInput(out NetworkedInput detourInput))
+				return detourInput;
+
 			if (_followTarget == null || _followTarget.Health == null || _followTarget.Health.IsAlive == false)
 			{
 				SetHoldPosition(_survivor.transform.position);
@@ -431,6 +470,10 @@ namespace SimpleFPS
 
 			if (_playerAssignmentSatisfiedOnce == false)
 			{
+				// Detour to recruit a nearby neutral while travelling to the area, then resume heading there.
+				if (TryGetTravelDetourRecruitingInput(out NetworkedInput travelDetourInput))
+					return travelDetourInput;
+
 				return _assignedArea.GetInput(
 					_survivor,
 					_anchorPosition,
@@ -440,6 +483,11 @@ namespace SimpleFPS
 					CreatePlayerOrderMoveInput,
 					GetPlayerOrderHoldInput);
 			}
+
+			// Active recruitment outranks looting/investigation and ignores zombies; only a sensed enemy player stops it.
+			// On loss (target killed or sight lost) the helper hands off to an investigation of the last known spot.
+			if (TryGetRecruitingInput(_assignedAreaEntryPoint, out NetworkedInput activeRecruitInput))
+				return activeRecruitInput;
 
 			if (ShouldPauseTemporaryNonCombatBehavior())
 			{
@@ -453,10 +501,14 @@ namespace SimpleFPS
 			if (TryGetCombatInput(out var combatInput))
 				return combatInput;
 
+			if (CanStartRecruiting() && _recruiting.TryStart(_survivor, _settings.RecruitNeutralSurvivors)
+			    && TryGetRecruitingInput(_assignedAreaEntryPoint, out NetworkedInput startRecruitInput))
+				return startRecruitInput;
+
 			if (_investigation != null && _investigation.HasTask)
 				return _investigation.GetInput(_survivor, _assignedAreaEntryPoint, CreateMoveInput, GetReturnToAssignedAreaInput);
 
-			if ((_looting != null && _looting.IsReturning) || (_investigation != null && _investigation.IsReturning))
+			if ((_looting != null && _looting.IsReturning) || (_investigation != null && _investigation.IsReturning) || (_recruiting != null && _recruiting.IsReturning))
 				return GetReturnToAssignedAreaInput();
 
 			if (_looting != null && _looting.HasTask)
@@ -470,6 +522,10 @@ namespace SimpleFPS
 
 		private NetworkedInput GetMoveToPointInput()
 		{
+			// Detour to recruit a nearby neutral while travelling to the move point, then resume heading there.
+			if (TryGetTravelDetourRecruitingInput(out NetworkedInput detourInput))
+				return detourInput;
+
 			var navigator = _survivor.Navigator;
 			if (navigator != null)
 			{
@@ -519,6 +575,11 @@ namespace SimpleFPS
 		{
 			EnsureBehaviorComponents();
 
+			// Active recruitment outranks looting/investigation and ignores zombies; only a sensed enemy player stops it.
+			// On loss (target killed or sight lost) the helper hands off to an investigation of the last known spot.
+			if (TryGetRecruitingInput(_anchorPosition, out NetworkedInput activeRecruitInput))
+				return activeRecruitInput;
+
 			if (ShouldPauseTemporaryNonCombatBehavior())
 			{
 				if (_looting != null && (_looting.HasTask || _looting.IsReturning))
@@ -531,10 +592,14 @@ namespace SimpleFPS
 			if (TryGetCombatInput(out var combatInput))
 				return combatInput;
 
+			if (CanStartRecruiting() && _recruiting.TryStart(_survivor, _settings.RecruitNeutralSurvivors)
+			    && TryGetRecruitingInput(_anchorPosition, out NetworkedInput startRecruitInput))
+				return startRecruitInput;
+
 			if (_investigation != null && _investigation.HasTask)
 				return _investigation.GetInput(_survivor, _anchorPosition, CreateMoveInput, GetReturnToAnchorInput);
 
-			if ((_looting != null && _looting.IsReturning) || (_investigation != null && _investigation.IsReturning))
+			if ((_looting != null && _looting.IsReturning) || (_investigation != null && _investigation.IsReturning) || (_recruiting != null && _recruiting.IsReturning))
 				return GetReturnToAnchorInput();
 
 			if (_looting != null && _looting.HasTask)
@@ -573,6 +638,7 @@ namespace SimpleFPS
 			{
 				_looting?.CompleteReturn();
 				_investigation?.CompleteReturn();
+				_recruiting?.CompleteReturn();
 				_survivor.Navigator?.ClearDestination();
 				return GetHoldInput();
 			}
@@ -600,6 +666,7 @@ namespace SimpleFPS
 			{
 				_looting?.CompleteReturn();
 				_investigation?.CompleteReturn();
+				_recruiting?.CompleteReturn();
 				_survivor.Navigator?.ClearDestination();
 				return GetHoldInput();
 			}
@@ -613,6 +680,7 @@ namespace SimpleFPS
 			{
 				_looting?.CompleteReturn();
 				_investigation?.CompleteReturn();
+				_recruiting?.CompleteReturn();
 				_survivor.Navigator?.ClearDestination();
 				return GetHoldInput();
 			}
@@ -652,6 +720,181 @@ namespace SimpleFPS
 			return CanAIBehaviorOverridePlayerOrder();
 		}
 
+		// Recruitment may only begin once the player order is satisfied, the survivor is not in combat (no line of
+		// fire on anything), no enemy player is sensed, and no investigation is currently active. Returning from an
+		// investigation is allowed, since that only clears the active task, not the order.
+		private bool CanStartRecruiting()
+		{
+			if (_settings.RecruitNeutralSurvivors == false || _recruiting == null)
+				return false;
+			if (CanAIBehaviorOverridePlayerOrder() == false)
+				return false;
+			if (ShouldPauseTemporaryNonCombatBehavior())
+				return false;
+			if (HasSensedEnemyPlayerSurvivor())
+				return false;
+			if (_investigation != null && _investigation.HasTask)
+				return false;
+
+			return true;
+		}
+
+		// True when any direct (vision/proximity) sensor contact is an attackable enemy player-owned survivor.
+		// Zombies and neutral survivors are excluded, so only enemy players interrupt or block recruitment.
+		private bool HasSensedEnemyPlayerSurvivor()
+		{
+			if (_survivor == null || _survivor.Sensor == null)
+				return false;
+
+			_directEnemiesScratch.Clear();
+			_survivor.Sensor.GetDirectKnownEnemies(_directEnemiesScratch);
+
+			bool found = false;
+			for (int i = 0; i < _directEnemiesScratch.Count; i++)
+			{
+				var obj = _directEnemiesScratch[i].Object;
+				if (obj == null)
+					continue;
+				if (obj.GetComponent<ZombieCharacter>() != null)
+					continue;
+
+				var other = obj.GetComponent<Survivor>();
+				if (other == null || other.Health == null || other.Health.IsAlive == false)
+					continue;
+				if (CharacterFactionUtility.CanSurvivorAutoAttack(_survivor, obj) == false)
+					continue;
+
+				found = true;
+				break;
+			}
+
+			_directEnemiesScratch.Clear();
+			return found;
+		}
+
+		// Drives an active recruitment. Returns true with movement input while pursuing. When the recruit is lost
+		// (killed or sight lost) it hands off to an investigation of the last known spot; when recruited it ends the
+		// task. In every non-pursuing case it returns false so the caller falls through to the normal
+		// combat/investigation/looting/hold flow.
+		private bool TryGetRecruitingInput(Vector3 anchor, out NetworkedInput input)
+		{
+			input = default;
+			if (_recruiting == null || _recruiting.HasTask == false)
+				return false;
+
+			CharacterNavigator navigator = _survivor != null ? _survivor.Navigator : null;
+
+			// Only a sensed enemy player interrupts an active recruitment; combat then takes over below.
+			if (HasSensedEnemyPlayerSurvivor())
+			{
+				_recruiting.ClearTask(true, anchor, navigator);
+				return false;
+			}
+
+			ERecruitTickResult result = _recruiting.Tick(_survivor, CreateRecruitingMoveInput, out input);
+			if (result == ERecruitTickResult.Pursuing)
+				return true;
+
+			if (result == ERecruitTickResult.Lost)
+			{
+				Vector3 lastKnown = _recruiting.LastKnownPosition;
+				_recruiting.ClearTask(false, anchor, navigator);
+				// Go look where we last saw the recruit; this can re-spot it or reveal other survivors. If an
+				// investigation cannot start (disabled, or a closer threat), fall back to returning to the anchor.
+				if (TryStartRecruitLossInvestigation(lastKnown) == false)
+					_recruiting.ClearTask(true, anchor, navigator);
+			}
+			else
+			{
+				_recruiting.ClearTask(true, anchor, navigator);
+			}
+
+			input = default;
+			return false;
+		}
+
+		private bool TryStartRecruitLossInvestigation(Vector3 lastKnownPosition)
+		{
+			if (_survivor == null)
+				return false;
+
+			int tick = _survivor.Runner != null ? _survivor.Runner.Tick : 0;
+			// recruitmentOrigin: true -> this investigation is part of recruiting and ignores the investigate setting.
+			return TryStartInvestigation(lastKnownPosition, tick, false, null, true, false, true);
+		}
+
+		// A travel detour may start while still moving to a player order (unlike the satisfied-order recruiting),
+		// but only for a neutral within RecruitDetourDistance, and not while in combat or sensing an enemy player.
+		private bool CanStartTravelDetourRecruiting()
+		{
+			if (_settings.RecruitNeutralSurvivors == false || _recruiting == null)
+				return false;
+			if (_recruiting.RecruitDetourDistance <= 0f)
+				return false;
+			// Brief cooldown after a detour ends so a sensed-but-unreachable neutral cannot make the survivor
+			// start-and-abort a detour every tick (which would re-path twice per tick).
+			if (Time.timeSinceLevelLoad < _nextTravelDetourTime)
+				return false;
+			if (ShouldPauseTemporaryNonCombatBehavior())
+				return false;
+			if (HasSensedEnemyPlayerSurvivor())
+				return false;
+
+			return true;
+		}
+
+		// In-travel detour: while the survivor is still moving toward a player order, allow a short, distance-limited
+		// detour to recruit a nearby neutral, then resume the order. Returns true with movement while detouring;
+		// otherwise false so the caller's normal order movement resumes (the navigator is cleared so it re-paths).
+		private bool TryGetTravelDetourRecruitingInput(out NetworkedInput input)
+		{
+			input = default;
+			if (_recruiting == null)
+				return false;
+
+			CharacterNavigator navigator = _survivor != null ? _survivor.Navigator : null;
+
+			if (_recruiting.HasTask)
+			{
+				// Only a sensed enemy player interrupts the detour; the order then resumes (combat merges into it).
+				if (HasSensedEnemyPlayerSurvivor())
+				{
+					EndTravelDetour(navigator);
+					return false;
+				}
+
+				ERecruitTickResult result = _recruiting.Tick(_survivor, CreateRecruitingMoveInput, out input);
+				if (result == ERecruitTickResult.Pursuing)
+					return true;
+
+				// Recruited, or lost the target -> drop the detour and resume the player order. Unlike satisfied
+				// recruiting, a travel detour does not branch into a loss investigation; finishing the order wins.
+				EndTravelDetour(navigator);
+				input = default;
+				return false;
+			}
+
+			if (CanStartTravelDetourRecruiting()
+			    && _recruiting.TryStart(_survivor, _settings.RecruitNeutralSurvivors, _recruiting.RecruitDetourDistance))
+			{
+				if (_recruiting.Tick(_survivor, CreateRecruitingMoveInput, out input) == ERecruitTickResult.Pursuing)
+					return true;
+
+				EndTravelDetour(navigator);
+				input = default;
+			}
+
+			return false;
+		}
+
+		private void EndTravelDetour(CharacterNavigator navigator)
+		{
+			_recruiting.ClearTask(false, default, navigator);
+			// Drop the recruit destination so the resuming player order re-paths from the current position.
+			navigator?.ClearDestination();
+			_nextTravelDetourTime = Time.timeSinceLevelLoad + TravelDetourRetryDelay;
+		}
+
 		private bool CanAIBehaviorOverridePlayerOrder()
 		{
 			switch (_assignment)
@@ -673,6 +916,15 @@ namespace SimpleFPS
 		}
 
 		private NetworkedInput CreatePlayerOrderMoveInput(Vector3 steeringTarget, bool stopAtTarget, float stoppingDistance)
+		{
+			return CreateMoveInput(steeringTarget, stopAtTarget, stoppingDistance, true, false, false);
+		}
+
+		// Recruitment movement lets the survivor aim and fire at zombies (allowCombatInput) but never lets combat
+		// take over its movement (allowCombatMovement = false), so it keeps beelining to the neutral instead of
+		// retreating like the zombie combat AI would. Lost-combat investigation is also suppressed. Enemy players
+		// are handled one level up (they interrupt recruitment entirely).
+		private NetworkedInput CreateRecruitingMoveInput(Vector3 steeringTarget, bool stopAtTarget, float stoppingDistance)
 		{
 			return CreateMoveInput(steeringTarget, stopAtTarget, stoppingDistance, true, false, false);
 		}

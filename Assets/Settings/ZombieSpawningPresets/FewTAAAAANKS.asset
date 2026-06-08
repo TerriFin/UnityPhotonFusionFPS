@@ -13,16 +13,16 @@ MonoBehaviour:
   m_Name: FewTAAAAANKS
   m_EditorClassIdentifier: 
   ZombiePrefab: {fileID: 3297568450549869079, guid: 1f02166891b80b94eb78a0c324123106, type: 3}
-  StartMaxZombies: 10
+  StartMaxZombies: 15
   EndMaxZombies: 30
   MatchDurationSeconds: 0
   ScaleDuringSkirmish: 0
-  StartSpawnRatePerMinute: 3
-  EndSpawnRatePerMinute: 16
+  StartSpawnRatePerMinute: 4
+  EndSpawnRatePerMinute: 18
   SpawnPulseInterval: 28
   MaxSpawnPerPulsePerPlayer: 4
   SpawnNavMeshSampleDistance: 1.5
-  MinimumSpawnConnectedNavMeshRadius: 10
+  MinimumSpawnConnectedNavMeshRadius: 16
   StartHealth: 400
   EndHealth: 850
   StartDamage: 22

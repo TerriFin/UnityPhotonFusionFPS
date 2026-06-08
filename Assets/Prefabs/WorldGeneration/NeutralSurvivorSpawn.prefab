@@ -44,6 +44,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4ec1c99b9be232042bec2979523346af, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  MinSpawnCount: 2
-  MaxSpawnCount: 4
+  MinSpawnCount: 1
+  MaxSpawnCount: 2
   PatrolRadius: 8

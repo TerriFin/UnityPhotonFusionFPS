@@ -15,7 +15,7 @@ MonoBehaviour:
   DefaultHostedSettings:
     MapWidth: 16
     MapHeight: 16
-    StartingSurvivorsPerPlayer: 12
+    StartingSurvivorsPerPlayer: 5
     GameLengthMinutes: 10
     FogDensity: 0.06
     RaidMode: 0
@@ -25,6 +25,7 @@ MonoBehaviour:
     BuildingPlacementPreset: 2
     LootSpawnPreset: 2
     ZombieOrchestratorPreset: 1
+    NeutralSurvivorPreset: -1
     PreserveBuriedLedgeTunnels: 1
     MaxDeadEndBuriedLedgeLength: 2
     MaxBuriedLedgeTunnelLength: 0
@@ -59,3 +60,4 @@ MonoBehaviour:
   - {fileID: 11400000, guid: fe93c04f4393a0f4bba656b9ecd6e0c9, type: 2}
   - {fileID: 11400000, guid: 56ba9fb7c433b564cab27b8214da40ab, type: 2}
   - {fileID: 11400000, guid: 95cf00690b3950749b470f7c5ff19eb8, type: 2}
+  NeutralSurvivorPresets: []

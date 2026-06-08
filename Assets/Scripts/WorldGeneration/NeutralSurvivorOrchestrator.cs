@@ -21,6 +21,7 @@ namespace SimpleFPS
 		{
 			public NeutralSurvivorSpawnPoint Point;
 			public Vector3 Position;
+			public int SpawnCount;
 		}
 
 		[Header("Setup")]
@@ -48,6 +49,7 @@ namespace SimpleFPS
 		private float _nextRecruitmentCheckTime;
 		private bool _isWorldReady;
 		private bool _hasSpawned;
+		private bool _hasMatchStartReroll;
 		private bool _loggedMissingRunner;
 		private bool _loggedNotSceneAuthority;
 		private bool _loggedMissingSetup;
@@ -107,8 +109,17 @@ namespace SimpleFPS
 			_loggedNotSceneAuthority = false;
 			ResolveGameplay();
 
-			if (SpawnOnStart && _hasSpawned == false && _isWorldReady)
-				SpawnNeutralSurvivors();
+			if (SpawnOnStart && _isWorldReady)
+			{
+				// Skirmish pass: spawn against whatever player spawns are in use so far (usually just the host).
+				// Match-start pass: once the match begins all player spawns are assigned, so re-roll the layout
+				// with a seed offset and prune against every in-use player spawn. If the match is already running
+				// the first time we spawn, go straight to the match-start layout instead of flickering a skirmish set.
+				if (_hasMatchStartReroll == false && IsMatchRunning())
+					RerollNeutralSurvivorsForMatchStart();
+				else if (_hasSpawned == false)
+					SpawnNeutralSurvivors();
+			}
 
 			TickRecruitment();
 		}
@@ -182,14 +193,43 @@ namespace SimpleFPS
 			for (int i = 0; i < _selectedMarkers.Count; i++)
 			{
 				SpawnMarker marker = _selectedMarkers[i];
-				int spawnCount = GetSpawnCount(marker.Point);
-				for (int j = 0; j < spawnCount; j++)
+				for (int j = 0; j < marker.SpawnCount; j++)
 				{
 					SpawnNeutralSurvivor(runner, marker);
 				}
 			}
 
 			_hasSpawned = true;
+		}
+
+		private bool IsMatchRunning()
+		{
+			ResolveGameplay();
+			return Gameplay != null && Gameplay.State == EGameplayState.Running;
+		}
+
+		// When the match transitions out of skirmish, all participating player spawns have been assigned.
+		// Despawn the skirmish-pass neutrals, drop their spacing reservations, and select a fresh layout with a
+		// seed offset so it differs from the skirmish preview and avoids every in-use player spawn.
+		[ContextMenu("Reroll Neutral Survivors For Match Start")]
+		public void RerollNeutralSurvivorsForMatchStart()
+		{
+			if (CanSpawn(out NetworkRunner runner) == false)
+				return;
+
+			_hasMatchStartReroll = true;
+
+			ClearSpawnedNeutralSurvivors(runner);
+			ClearReservedSpawnPositions();
+
+			// Collect first if needed (CollectSpawnPoints reseeds _random from the base seed), then apply the
+			// match-start offset so SpawnNeutralSurvivors does not recollect and clobber the re-roll seed.
+			if (_validMarkers.Count == 0)
+				CollectSpawnPoints();
+
+			_random = new System.Random(GetSeed() + (Settings != null ? Settings.MatchStartSeedOffset : 0));
+
+			SpawnNeutralSurvivors();
 		}
 
 		private bool CanSpawn(out NetworkRunner runner)
@@ -425,14 +465,21 @@ namespace SimpleFPS
 			if (_random == null)
 				_random = new System.Random(GetSeed());
 
+			int desiredSurvivorCount = Mathf.Max(0, Settings.DesiredNeutralSurvivorCount);
+			if (desiredSurvivorCount == 0)
+				return;
+
 			var candidates = new List<SpawnMarker>(_validMarkers);
 			Shuffle(candidates, _random);
 
-			int targetCount = Mathf.Clamp(Mathf.RoundToInt(candidates.Count * Mathf.Clamp01(Settings.SpawnPointUsage)), 0, candidates.Count);
 			float minDistance = GetEffectiveMinDistanceBetweenSelectedSpawnPoints();
 			List<ReservedSpawnPosition> reservedPositions = GetReservedSpawnPositionsForScene();
 
-			for (int i = 0; i < candidates.Count && _selectedMarkers.Count < targetCount; i++)
+			// Select spaced markers and accumulate their rolled survivor counts until we reach the desired total.
+			// The final marker is capped so the total lands exactly on the desired count; if markers run out first
+			// we simply spawn fewer.
+			int selectedSurvivorCount = 0;
+			for (int i = 0; i < candidates.Count && selectedSurvivorCount < desiredSurvivorCount; i++)
 			{
 				SpawnMarker candidate = candidates[i];
 				if (CanMarkerSpawnAnySurvivors(candidate.Point) == false)
@@ -440,8 +487,17 @@ namespace SimpleFPS
 				float candidateRadius = GetMarkerSpacingRadius(candidate.Point);
 				if (IsFarEnoughFromSelected(candidate.Position, candidateRadius, minDistance, reservedPositions) == false)
 					continue;
+				if (IsFarEnoughFromActivePlayerSpawns(candidate.Position, candidateRadius) == false)
+					continue;
+
+				int markerCount = GetSpawnCount(candidate.Point);
+				if (markerCount <= 0)
+					continue;
+				markerCount = Mathf.Min(markerCount, desiredSurvivorCount - selectedSurvivorCount);
+				candidate.SpawnCount = markerCount;
 
 				_selectedMarkers.Add(candidate);
+				selectedSurvivorCount += markerCount;
 				var reserved = new ReservedSpawnPosition
 				{
 					Position = candidate.Position,
@@ -476,6 +532,19 @@ namespace SimpleFPS
 			}
 
 			return true;
+		}
+
+		private bool IsFarEnoughFromActivePlayerSpawns(Vector3 position, float patrolRadius)
+		{
+			if (Settings == null || Settings.MinDistanceToActivePlayerSpawns <= 0f)
+				return true;
+
+			ResolveGameplay();
+			if (Gameplay == null)
+				return true;
+
+			float requiredDistance = Settings.MinDistanceToActivePlayerSpawns + Mathf.Max(0f, patrolRadius);
+			return Gameplay.IsWithinActivePlayerSpawn(position, requiredDistance) == false;
 		}
 
 		private static bool CanMarkerSpawnAnySurvivors(NeutralSurvivorSpawnPoint point)

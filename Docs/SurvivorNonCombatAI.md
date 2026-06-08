@@ -4,7 +4,7 @@
 
 Non-combat AI controls an unpossessed survivor when it has no active combat target. It decides the survivor's base non-combat assignment: hold position, follow another survivor, move to an ordered point, or patrol inside an assigned area.
 
-Optional non-combat behaviors, such as looting and investigation, are implemented as separate behavior components that `SurvivorNonCombatAI` orchestrates. Combat AI is allowed to interrupt non-combat AI whenever the survivor detects a valid enemy. When combat ends, non-combat AI resumes the previous assignment if it is still valid.
+Optional non-combat behaviors, such as looting, investigation, and recruiting, are implemented as separate behavior components that `SurvivorNonCombatAI` orchestrates. Combat AI is allowed to interrupt non-combat AI whenever the survivor detects a valid enemy. When combat ends, non-combat AI resumes the previous assignment if it is still valid.
 
 ## Relationship To Current AI
 
@@ -12,17 +12,19 @@ Optional non-combat behaviors, such as looting and investigation, are implemente
 
 Player-facing orders are now represented as assignments inside `SurvivorNonCombatAI` instead of replacing the survivor's whole AI input source with separate top-level idle/follow/move classes.
 
-Looting and investigation are separate behavior components on the same survivor object:
+Looting, investigation, and recruiting are separate behavior components on the same survivor object:
 
 - `SurvivorLootingAI` owns pickup target selection, pickup movement, and pickup return state.
 - `SurvivorInvestigationAI` owns suspicious-position movement, ally alerts, and the investigation look-around phase.
+- `SurvivorRecruitingAI` owns neutral-survivor target selection, the walk-to-recruit movement, and its return state.
 
-`SurvivorNonCombatAI` coordinates those components and keeps shared assignment state such as hold/follow/move anchors and idle looking. All three components run only on state authority through the survivor's AI input path.
+`SurvivorNonCombatAI` coordinates those components and keeps shared assignment state such as hold/follow/move anchors and idle looking. All components run only on state authority through the survivor's AI input path.
 
 The matching behavior docs are:
 
 - `Docs/SurvivorLootingAI.md`
 - `Docs/SurvivorInvestigationAI.md`
+- `Docs/SurvivorRecruitingAI.md`
 - `Docs/SurvivorAssignedAreaAI.md`
 
 The intended expandable pattern is:
@@ -44,7 +46,7 @@ Non-combat AI should:
 - Preserve the current player order, such as idle, follow, or move.
 - Resume the current order after combat if the order is still valid.
 - Decide whether optional behaviors are allowed to run based on the current assignment and settings.
-- Orchestrate behavior priority, such as combat over investigation and investigation over looting.
+- Orchestrate behavior priority. Combat over recruiting/investigation/looting; recruiting over investigation and looting; investigation over looting. An exception: an already-active recruitment ignores zombies and investigation and is only interrupted by a sensed enemy player (see Recruiting).
 - Move around inside an assigned area after reaching it when assigned-area patrol is implemented.
 - Emit normal `NetworkedInput`; it should not directly move transforms.
 
@@ -59,6 +61,7 @@ public struct SurvivorNonCombatAISettings
 {
 	public bool CollectVisiblePickups;
 	public bool InvestigateSuspiciousStimuli;
+	public bool RecruitNeutralSurvivors;
 	public bool AllowCombatAIActivation;
 }
 ```
@@ -68,6 +71,7 @@ Suggested defaults:
 ```text
 CollectVisiblePickups: true
 InvestigateSuspiciousStimuli: true
+RecruitNeutralSurvivors: true
 AllowCombatAIActivation: true
 ```
 
@@ -176,6 +180,33 @@ Pickup collection is implemented by `SurvivorLootingAI`.
 Once allowed, `SurvivorLootingAI` owns visible pickup filtering, usefulness checks, pickup movement, pickup chaining, and return state.
 
 See `Docs/SurvivorLootingAI.md`.
+
+## Recruiting
+
+Recruiting is implemented by `SurvivorRecruitingAI`. It moves a player-owned AI survivor to a sensed neutral survivor; the actual ownership/team transfer is done by `NeutralSurvivorOrchestrator` once the survivor is in range.
+
+`SurvivorNonCombatAI` decides when recruiting may start:
+
+- `RecruitNeutralSurvivors` must be enabled and the survivor must be an unpossessed player-owned survivor.
+- The player order must already be satisfied (same completion gate as looting/investigation): `HoldPosition`, a reached move order, or a reached assigned area. This path has no distance limit beyond the survivor's senses.
+- The survivor must not be in combat (no line-of-fire target) and must not sense an enemy player.
+- The survivor must not be in an active investigation. Returning from an investigation toward the order anchor is allowed to start recruiting.
+
+There is also an in-travel **detour**: while still moving toward a player order (unreached `MoveTo`/assigned-area travel, or following), the survivor will detour to recruit a neutral within `SurvivorRecruitingAI.RecruitDetourDistance`, then resume the order. The detour paths (`GetMoveToPointInput`, `GetFollowInput`, the assigned-area travel branch) call `TryGetTravelDetourRecruitingInput`; on completion the recruit task is cleared (no return-to-anchor, no loss investigation) and the order re-paths. A short retry cooldown avoids per-tick thrash on an unreachable target. See `SurvivorRecruitingAI.md`.
+
+Recruiting differs from the other temporary behaviors in priority and persistence:
+
+- It outranks both investigation and looting when starting.
+- Once active it ignores new investigation stimuli and ignores looting. It does not let zombies divert it: it still aims and fires at zombies (`CreateRecruitingMoveInput` allows combat input but not combat movement), but it never retreats or repositions for them — it keeps beelining to the neutral.
+- The only interruption is sensing an enemy player survivor, at which point combat AI takes over and the survivor abandons the recruit.
+
+`SurvivorRecruitingAI.Tick` reports `Pursuing`, `Recruited`, or `Lost` each tick. `Recruited` means the neutral joined *our* team -> return to anchor. `Lost` means it died, sight of it was lost, or another team took it -> `SurvivorNonCombatAI` starts an investigation at its last known location so the survivor walks there and looks around for a chance to re-spot it or other survivors.
+
+That loss investigation is part of recruiting, not a stimulus investigation: it is started with `recruitmentOrigin = true`, so it runs regardless of `InvestigateSuspiciousStimuli` and is instead governed by `RecruitNeutralSurvivors`. `SurvivorInvestigationAI.IsRecruitmentOrigin` tracks this so `SetSettings` cancels it with the recruit toggle, not the investigate toggle — the two settings never cross-cancel. (A closer combat threat can still preempt it like any investigation.)
+
+The recruited survivor inherits the recruiter's current player order through `Gameplay.ApplyRecruitmentOrder` -> `CreateEquivalentAssignmentFor`, because recruiting never changes the recruiter's underlying assignment.
+
+See `Docs/SurvivorRecruitingAI.md`.
 
 ## Assigned Area Patrol
 

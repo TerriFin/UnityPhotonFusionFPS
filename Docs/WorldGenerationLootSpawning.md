@@ -72,6 +72,7 @@ WorldLootSpawnSettings
     NetworkObject[] WeaponPickups;
     NetworkObject[] HealthPickups;
     int SeedOffset;
+    int MatchStartSeedOffset;
 }
 ```
 
@@ -80,7 +81,10 @@ Suggested defaults:
 ```text
 PickupPointUsage: 0.35
 SeedOffset: 20000
+MatchStartSeedOffset: 31337
 ```
+
+`MatchStartSeedOffset` is added to the seed for the match-start re-roll so the loot the live match starts with differs from the skirmish preview (see Skirmish vs Match Start).
 
 `PickupPointUsage` controls how many valid markers are filled:
 
@@ -102,8 +106,10 @@ WorldLootSpawner
     BuildingPlacementGenerator BuildingGenerator;
     WorldLootSpawnSettings Settings;
     NetworkRunner Runner;
+    Gameplay Gameplay;
     bool ClearBeforeGenerate;
     bool FindRunnerIfMissing;
+    bool FindGameplayIfMissing;
 }
 ```
 
@@ -135,6 +141,17 @@ if Runner.IsSceneAuthority == false:
 ```
 
 This covers the host/server instance that owns scene generation and prevents clients from spawning duplicate pickups.
+
+Every peer loads the scene with its own `WorldLootSpawner`, but only the scene authority ever spawns or despawns pickups. Clients receive the networked pickups through replication. The spawner also guards against duplicate components in the same scene: on `Awake` it keeps a single primary instance and disables any extras with an error log, so an accidentally duplicated spawner cannot double-spawn loot.
+
+## Skirmish vs Match Start
+
+Loot is spawned once during world generation, which happens while the host is still in skirmish (waiting for a player to join). To keep skirmish from leaking an advantage into the live match, the spawner re-rolls the loot when the match begins:
+
+1. **Skirmish pass** — `BuildingPlacementGenerator` triggers `SpawnLoot()` after generation, using the base seed (`RoadGridGenerator.Seed + SeedOffset`).
+2. **Match-start pass** — once `Gameplay.State` reaches `Running`, the spawner (on scene authority) despawns the skirmish pickups and re-spawns with the seed offset applied (`+ MatchStartSeedOffset`), producing a different loot layout for the real match.
+
+Because player teams are also reset at match start, any weapon a player grabbed during skirmish is wiped with their team, and the loot itself is re-rolled, so nothing carries over. The re-roll runs only once per match and only on the scene authority.
 
 ## Spawn Pipeline
 

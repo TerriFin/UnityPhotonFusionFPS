@@ -40,12 +40,8 @@ First pass scope:
 - neutral survivors patrol their configured area, set from the spawn marker they spawned to,
 - neutral survivors fight zombies,
 - player-controlled survivors recruit them by proximity,
-- no automatic player-AI recruitment behavior yet.
+- AI-controlled player survivors detect sensed neutral survivors and walk over to recruit them (see `SurvivorRecruitingAI.md`),
 - map/UI can highlight recruitable neutral survivors,
-
-Future scope:
-
-- AI-controlled player survivors can detect neutral survivors and move to recruit them,
 
 ## Neutral Ownership Model
 
@@ -123,7 +119,7 @@ NeutralSurvivorRecruitmentSettings
 Rules:
 
 - only state authority performs recruitment checks,
-- AI-controlled player survivors recruit in just the same way as the player possessed survivor, they just do not yet get the behavior to go to the detected neutral survivors like they do with pickups, for example.
+- AI-controlled player survivors recruit in just the same way as the player possessed survivor; they also actively walk to sensed neutral survivors via `SurvivorRecruitingAI` (see `SurvivorRecruitingAI.md`),
 - the recruiting survivor must be alive,
 - the neutral survivor must be alive,
 - recruitment happens once when the player survivor enters radius.
@@ -214,36 +210,58 @@ Suggested settings asset:
 ```csharp
 NeutralSurvivorSpawnSettings : ScriptableObject
 {
-	[Range(0f, 1f)]
-	public float SpawnPointUsage = 1f;
+	public int DesiredNeutralSurvivorCount = 20;
 	public float MinDistanceBetweenSelectedSpawnPoints = 0f;
+	public float MinDistanceToActivePlayerSpawns = 0f;
 	public int SeedOffset;
+	public int MatchStartSeedOffset = 7919;
 	public float SpawnNavMeshSampleDistance = 1.5f;
 	public float MinimumSpawnConnectedNavMeshRadius = 8f;
 }
 ```
 
-`SpawnPointUsage`:
+`MinDistanceToActivePlayerSpawns`:
 
 ```text
-0.0 = spawn no neutral survivors
-1.0 = use every valid marker allowed by constraints
+0.0 = no player-spawn constraint
+>0  = skip any marker whose center is within this distance (plus the marker's PatrolRadius)
+      of a player spawn point currently assigned to a connected player
 ```
+
+Only player spawns that are actually in use are considered. Unused spawn points never block neutral spawns. The distance, like the inter-marker spacing, adds the marker's `PatrolRadius` so the neutral patrol area — not just its center — stays clear of the player spawn.
+
+`MatchStartSeedOffset` is added to the world seed for the match-start re-roll (see Spawn Timing), so the layout the real match begins with differs from the skirmish preview.
+
+`DesiredNeutralSurvivorCount` is the total number of neutral survivors the orchestrator tries to place across the map. It selects spaced markers and accumulates each marker's rolled `MinSpawnCount..MaxSpawnCount` count until the desired total is reached. This gives the host precise control over the headcount instead of an abstract marker ratio.
 
 Selection flow:
 
 1. Collect all marker components under generated roots.
 2. Filter invalid markers.
 3. Shuffle deterministically using world seed + `SeedOffset`.
-4. Walk shuffled markers and select markers until reaching `round(validMarkerCount * SpawnPointUsage)`.
+4. Walk shuffled markers; for each marker that passes the constraints, roll its `MinSpawnCount..MaxSpawnCount` count and select it, accumulating survivors until reaching `DesiredNeutralSurvivorCount`.
 5. Respect `MinDistanceBetweenSelectedSpawnPoints`, including each marker's `PatrolRadius`.
-6. For each selected marker, roll or choose a count between `MinSpawnCount` and `MaxSpawnCount`.
-7. Spawn that many neutral survivors near the marker.
-8. Assign each survivor to the marker's patrol area.
+6. Respect `MinDistanceToActivePlayerSpawns` against every in-use player spawn, including the marker's `PatrolRadius`.
+7. The marker that crosses the desired total is capped so the total lands exactly on `DesiredNeutralSurvivorCount`.
+8. Spawn each selected marker's survivors near the marker.
+9. Assign each survivor to the marker's patrol area.
 
-If the distance constraint rejects many markers, the final count may be lower than `SpawnPointUsage` would imply. This is intended; the constraint protects map readability and avoids clusters created by adjacent building tiles.
+If the constraints (spacing, player-spawn distance, NavMesh validity) leave too few usable markers to reach `DesiredNeutralSurvivorCount`, fewer survivors spawn. This is intended; the count is a target, not a guarantee.
 
 The selected-marker distance is reserved per generated scene, so repeated spawn passes cannot place separate neutral groups inside the configured minimum distance. Each reservation remembers the distance it was selected with. The spacing check also adds both markers' `PatrolRadius` values, so the configured distance separates the groups' patrol areas rather than only their invisible center points. The distance applies to selected spawn markers, not to individual survivors inside the same marker group.
+
+## Spawn Timing
+
+Player spawn points only become "in use" once a player has actually been placed at them, so the player-spawn constraint depends on when neutral survivors are selected. The orchestrator runs two passes on scene authority:
+
+1. **Skirmish pass** — runs as soon as the generated world is ready (typically during skirmish, when only the host is placed). It spawns neutral survivors using whatever player spawns are in use at that moment, so `MinDistanceToActivePlayerSpawns` only avoids the host's spawn at this stage.
+2. **Match-start pass** — runs once the match transitions to `Running`, when every participating player has been assigned a spawn. It despawns the skirmish-pass neutrals, drops their spacing reservations, re-seeds with `MatchStartSeedOffset`, and re-selects against **all** in-use player spawns. This is the authoritative layout the match plays with.
+
+If the world is already `Running` the first time the orchestrator spawns, it skips the skirmish pass and produces the match-start layout directly.
+
+Late joiners (players who connect after the match-start pass) are not re-pruned in the current version — their neutral survivors may spawn closer. This is acceptable until a "all clients join simultaneously" lobby flow exists.
+
+Skirmish must not grant an advantage: at match start `Gameplay.StartGameplay` despawns and re-spawns every connected player's team from scratch, so any neutral survivor recruited during skirmish (which had joined the host's team) is wiped along with it. The neutral re-roll independently despawns the still-neutral skirmish survivors. Net result: nothing carried over from skirmish — neither recruited survivors nor picked-up loot (loot is re-rolled too; see `WorldGenerationLootSpawning.md`).
 
 ## Spawn Validity
 
@@ -372,12 +390,14 @@ This can be added after the base neutral survivor system works.
 The first pass is implemented with these runtime pieces:
 
 - `NeutralSurvivorSpawnPoint` is the authored marker component placed inside generated road/building prefabs.
-- `NeutralSurvivorSpawnSettings` controls marker usage, marker spacing, NavMesh validation, and recruitment radius/interval.
-- `NeutralSurvivorOrchestrator` waits for road/building generation, collects markers from generated roots, spawns neutral survivor network objects on scene authority, assigns patrol areas, and batches recruitment checks.
+- `NeutralSurvivorSpawnSettings` controls marker usage, marker spacing, distance from in-use player spawns, the match-start seed offset, NavMesh validation, and recruitment radius/interval.
+- `NeutralSurvivorOrchestrator` waits for road/building generation, collects markers from generated roots, spawns neutral survivor network objects on scene authority, assigns patrol areas, and batches recruitment checks. It spawns a skirmish-pass layout when the world is ready and re-rolls a match-start layout (re-seeded, pruned against every in-use player spawn) once the match reaches `Running` — see Spawn Timing.
 - Neutral identity is represented by `Survivor.OwnerRef == PlayerRef.None` before recruitment.
 - `Gameplay` keeps neutral survivors out of player `PlayerData` until recruitment.
 - Recruitment appends the survivor to the recruiting player's team, assigns input authority to the survivor hierarchy, updates `CharacterCount` and `AliveCharacterMask`, and gives the recruited survivor either the recruiter's current non-combat order or a follow order if the recruiter is player-possessed.
+- Because recruitment changes `OwnerRef`/`CharacterIndex` through networked replication (no Spawned/Despawned), each peer re-syncs its local character lookup in `Survivor.Render()` via `Gameplay.ReregisterSurvivor`, so recruited survivors appear in cycling, AI commands, and death-switching on every machine. See `TeamCharacterSystem.md`.
 - Survivor AI can still sense neutral survivors for map/UI purposes, but `SurvivorAIShooting` filters them out as auto-shoot targets.
+- Non-possessed player-owned survivors actively recruit: `SurvivorRecruitingAI` walks them to sensed neutral survivors (toggled by `RecruitNeutralSurvivors`, on in `Default`). See `SurvivorRecruitingAI.md`.
 - Neutral survivor weapons can only damage zombies.
 - Zombies treat neutral survivors as normal survivor targets.
 - Neutral survivor map icons use the neutral team color and appear only when sensed by player-owned survivors.

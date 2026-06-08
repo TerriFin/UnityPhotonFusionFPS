@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 3a750214b2d615a47b3b8f3328a9a929, type: 3}
   m_Name: MediumRoadsStubs
   m_EditorClassIdentifier: 
-  RequestedExitCount: 8
+  RequestedExitCount: 9
   MinExitSpacing: 6
   MinRoadSpacing: 1
   MaxRoadSpacing: 2

@@ -799,16 +799,16 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   Type: 3
   IsAutomatic: 0
-  Damage: 20
+  Damage: 18
   FireRate: 100
-  ProjectilesPerShot: 8
-  Dispersion: 2.4
+  ProjectilesPerShot: 12
+  Dispersion: 4
   HitMask:
     serializedVersion: 2
     m_Bits: 65
   MaxHitDistance: 100
-  BulletSpeed: 125
-  GravityScale: 1
+  BulletSpeed: 100
+  GravityScale: 1.25
   MaxClipAmmo: 6
   StartAmmo: 18
   ReloadTime: 1.5

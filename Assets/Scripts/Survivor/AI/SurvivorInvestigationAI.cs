@@ -33,9 +33,14 @@ namespace SimpleFPS
 		private int _lastHandledInvestigationTick;
 		private NetworkObject _observedTarget;
 		private bool _hasObservedTarget;
+		private bool _recruitmentOrigin;
 
 		public bool HasTask => _hasInvestigationTarget;
 		public bool IsReturning => _returningFromInvestigation;
+
+		// True when the current investigation was started as a recruitment hand-off (recruit killed or lost), not by
+		// a suspicious stimulus. Such investigations are governed by the recruiting setting, not the investigate one.
+		public bool IsRecruitmentOrigin => _recruitmentOrigin;
 
 		public bool TryStart(
 			Survivor survivor,
@@ -47,9 +52,11 @@ namespace SimpleFPS
 			bool alertAllies,
 			NetworkObject observedTarget = null,
 			bool allowSameTick = false,
-			bool force = false)
+			bool force = false,
+			bool recruitmentOrigin = false)
 		{
-			if (investigateEnabled == false)
+			// A recruitment hand-off does not depend on the investigate setting; recruiting owns that decision.
+			if (recruitmentOrigin == false && investigateEnabled == false)
 				return false;
 			if (observedTarget != null && IsObservedTargetAlive(observedTarget) == false)
 				return false;
@@ -62,7 +69,7 @@ namespace SimpleFPS
 			if (TryResolveInvestigationTarget(survivor, target, out var investigationDestination) == false)
 				return false;
 
-			StartInvestigation(survivor, investigationDestination, stimulusTick, alertAllies, observedTarget);
+			StartInvestigation(survivor, investigationDestination, stimulusTick, alertAllies, observedTarget, recruitmentOrigin);
 			return true;
 		}
 
@@ -122,6 +129,7 @@ namespace SimpleFPS
 			_investigationLookYaw = 0f;
 			_observedTarget = null;
 			_hasObservedTarget = false;
+			_recruitmentOrigin = false;
 
 			if (returnToAnchor)
 				navigator?.SetDestination(anchor);
@@ -177,7 +185,7 @@ namespace SimpleFPS
 			_alertedAllies.Clear();
 		}
 
-		private void StartInvestigation(Survivor survivor, Vector3 target, int stimulusTick, bool alertAllies, NetworkObject observedTarget)
+		private void StartInvestigation(Survivor survivor, Vector3 target, int stimulusTick, bool alertAllies, NetworkObject observedTarget, bool recruitmentOrigin)
 		{
 			_investigationTarget = target;
 			_hasInvestigationTarget = true;
@@ -186,6 +194,7 @@ namespace SimpleFPS
 			_lastHandledInvestigationTick = stimulusTick;
 			_observedTarget = observedTarget;
 			_hasObservedTarget = observedTarget != null;
+			_recruitmentOrigin = recruitmentOrigin;
 			survivor.Navigator?.SetDestination(target);
 
 			if (alertAllies)

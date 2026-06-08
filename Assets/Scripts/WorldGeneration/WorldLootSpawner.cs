@@ -10,12 +10,45 @@ namespace SimpleFPS
 		public BuildingPlacementGenerator BuildingGenerator;
 		public WorldLootSpawnSettings Settings;
 		public NetworkRunner Runner;
+		public Gameplay Gameplay;
 
 		[Header("Generation")]
 		public bool ClearBeforeGenerate = true;
 		public bool FindRunnerIfMissing = true;
+		public bool FindGameplayIfMissing = true;
 
 		private readonly List<NetworkObject> _spawnedPickups = new();
+		private bool _isPrimary = true;
+		private bool _hasMatchStartReroll;
+		private bool _matchStartSeedActive;
+
+		private void Awake()
+		{
+			_isPrimary = IsPrimaryInstanceInScene();
+			if (_isPrimary)
+				return;
+
+			Debug.LogError($"{nameof(WorldLootSpawner)} expects exactly one active instance per scene. Disabling duplicate on '{name}'.", this);
+			enabled = false;
+		}
+
+		private void Update()
+		{
+			// Skirmish loot is spawned once by BuildingPlacementGenerator after generation. Once the match begins,
+			// re-roll on scene authority with a seed offset so the real match's loot differs from the skirmish preview.
+			if (_isPrimary == false || _hasMatchStartReroll)
+				return;
+
+			NetworkRunner runner = GetRunner();
+			if (runner == null || runner.IsSceneAuthority == false)
+				return;
+
+			ResolveGameplay();
+			if (Gameplay == null || Gameplay.State != EGameplayState.Running)
+				return;
+
+			RerollLootForMatchStart();
+		}
 
 		[ContextMenu("Generate Loot")]
 		public void Generate()
@@ -106,7 +139,48 @@ namespace SimpleFPS
 		private int GetSeed()
 		{
 			int roadSeed = BuildingGenerator != null && BuildingGenerator.RoadGenerator != null ? BuildingGenerator.RoadGenerator.Seed : 0;
-			return roadSeed + Settings.SeedOffset;
+			int matchStartOffset = _matchStartSeedActive ? Settings.MatchStartSeedOffset : 0;
+			return roadSeed + Settings.SeedOffset + matchStartOffset;
+		}
+
+		// Despawn the skirmish loot and re-spawn with the match-start seed offset so the live match gets a fresh layout.
+		[ContextMenu("Reroll Loot For Match Start")]
+		public void RerollLootForMatchStart()
+		{
+			NetworkRunner runner = GetRunner();
+			if (CanSpawnLoot(runner) == false)
+				return;
+
+			_hasMatchStartReroll = true;
+			_matchStartSeedActive = true;
+
+			ClearSpawnedPickups(runner);
+			SpawnLoot();
+		}
+
+		private void ResolveGameplay()
+		{
+			if (Gameplay == null && FindGameplayIfMissing)
+				Gameplay = FindObjectOfType<Gameplay>();
+		}
+
+		private bool IsPrimaryInstanceInScene()
+		{
+			WorldLootSpawner primary = null;
+			foreach (GameObject root in gameObject.scene.GetRootGameObjects())
+			{
+				var spawners = root.GetComponentsInChildren<WorldLootSpawner>(true);
+				for (int i = 0; i < spawners.Length; i++)
+				{
+					var spawner = spawners[i];
+					if (spawner == null)
+						continue;
+					if (primary == null || spawner.GetInstanceID() < primary.GetInstanceID())
+						primary = spawner;
+				}
+			}
+
+			return primary == null || primary == this;
 		}
 
 		private List<PickupSpawnPoint> CollectValidMarkers()

@@ -200,6 +200,28 @@ namespace SimpleFPS
 			return null;
 		}
 
+		/// <summary>
+		/// Moves a survivor's lookup entry from its previous owner/index to its current one. Recruitment changes
+		/// <see cref="Survivor.OwnerRef"/>/<see cref="Survivor.CharacterIndex"/> through networked replication, which
+		/// does not fire Spawned/Despawned, so non-authority peers never moved the recruit out of the neutral list
+		/// into the owning team's cache. Survivors call this from Render when they detect their identity changed, so
+		/// every peer's lookup (cycling, AI commands, death-switching) sees recruited survivors.
+		/// </summary>
+		public void ReregisterSurvivor(Survivor character, PlayerRef previousOwnerRef, int previousCharacterIndex)
+		{
+			if (character == null)
+				return;
+
+			_neutralSurvivors.Remove(character);
+			if (_characterCache.TryGetValue(previousOwnerRef, out var previousDict)
+			    && previousDict.TryGetValue(previousCharacterIndex, out var existing) && existing == character)
+			{
+				previousDict.Remove(previousCharacterIndex);
+			}
+
+			RegisterSurvivor(character);
+		}
+
 		public bool TryRecruitNeutralSurvivor(Survivor neutral, Survivor recruiter)
 		{
 			if (HasStateAuthority == false)
@@ -235,6 +257,29 @@ namespace SimpleFPS
 
 			ApplyRecruitmentOrder(neutral, recruiter);
 			return true;
+		}
+
+		/// <summary>
+		/// True when <paramref name="position"/> is within <paramref name="flatDistance"/> (height ignored) of any
+		/// player spawn point currently assigned to a connected player. Used by the neutral survivor orchestrator to
+		/// keep neutral spawns away from in-use player spawns. Spawn assignments are local state-authority data (not
+		/// networked), so this is only meaningful on the scene/state authority peer that owns the spawn placement.
+		/// </summary>
+		public bool IsWithinActivePlayerSpawn(Vector3 position, float flatDistance)
+		{
+			if (flatDistance <= 0f)
+				return false;
+
+			float distanceSqr = flatDistance * flatDistance;
+			foreach (var pair in _spawnPointsByPlayer)
+			{
+				if (pair.Value == null)
+					continue;
+				if (FlatDistanceSqr(position, pair.Value.position) < distanceSqr)
+					return true;
+			}
+
+			return false;
 		}
 
 		public Material GetTeamColorMaterial(int teamColorIndex)
