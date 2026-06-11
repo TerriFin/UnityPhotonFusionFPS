@@ -9,6 +9,11 @@ namespace SimpleFPS
 	{
 		public RectTransform IconRoot;
 		public GameMapAwarenessTracker AwarenessTracker;
+
+		// When set (raid host "inspect" mode), this survivor is drawn enlarged instead of the networked active
+		// character. Null for normal players, who keep the active-character highlight. Set by GameUI each frame.
+		[HideInInspector]
+		public Survivor InspectHighlightSurvivor;
 		[Tooltip("Sprite drawn for survivor icons (both own team and detected enemies). The sprite is tinted with the team color, so it should be a light/white silhouette with transparent background and point upward so SetRotation maps yaw=0 to map-up. Leave empty to fall back to the legacy solid square.")]
 		public Sprite SurvivorIconSprite;
 		public Vector2 OwnIconSize = new Vector2(18f, 18f);
@@ -126,7 +131,10 @@ namespace SimpleFPS
 					continue;
 
 				UpdateIconTransform(mapView, icon, survivor.transform.position, survivor.transform.eulerAngles.y);
-				icon.SetActiveSurvivor(hasLocalData && localData.ActiveCharacterIndex == survivor.CharacterIndex);
+				bool highlighted = InspectHighlightSurvivor != null
+					? survivor == InspectHighlightSurvivor
+					: hasLocalData && localData.ActiveCharacterIndex == survivor.CharacterIndex;
+				icon.SetActiveSurvivor(highlighted);
 			}
 
 			DestroyStaleIcons(_ownIcons, _staleSurvivors);

@@ -17,10 +17,6 @@ namespace SimpleFPS
 		public float PanSpeed = 80f;
 		public float CameraHeight = 300f;
 
-		[Header("Dev")]
-		[Tooltip("Debug only: reveals every survivor, zombie, and pickup on the map at its live position, regardless of whether your own survivors sense it. Leave off for normal play.")]
-		public bool RevealEverything;
-
 		private Bounds _bounds;
 		private bool _hasBounds;
 

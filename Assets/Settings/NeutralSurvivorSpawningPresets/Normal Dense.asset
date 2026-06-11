@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: Normal Dense
   m_EditorClassIdentifier: 
   DesiredNeutralSurvivorCount: 10
-  MinDistanceBetweenSelectedSpawnPoints: 34
+  MinDistanceBetweenSelectedSpawnPoints: 28
   MinDistanceToActivePlayerSpawns: 32
   SeedOffset: 0
   MatchStartSeedOffset: 7919
@@ -22,7 +22,7 @@ MonoBehaviour:
   RecruitmentRadius: 3
   RecruitmentCheckInterval: 0.25
   ApplyNeutralStatOverrides: 1
-  NeutralMovementSpeed: 4.75
+  NeutralMovementSpeed: 4
   NeutralVisionDistance: 18
   NeutralAllAroundDetectionRange: 4
   NeutralSensorInterval: 0.3

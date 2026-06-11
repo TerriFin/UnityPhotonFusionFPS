@@ -9,6 +9,8 @@ The startup menu supports two launch paths:
 
 Players who use Quick Play may join a configured room. Their local generated map and match rules must match the host's chosen profile.
 
+The `raid mode` / `starting survivors for non-hosts in raid mode` values configure the asymmetric FPS-vs-RTS format. How raid mode is enforced at runtime (host lock, no possession, map camera) is documented in `Docs/RaidMode.md`.
+
 ## Runtime Flow
 
 Configured rooms publish one compact Photon session property when the host creates the room:
@@ -40,7 +42,7 @@ The first hosting menu exposes:
 map width
 map height
 starting survivors per player
-game length: 5, 10, 15, or 20 minutes
+game length: 1, 5, 10, 15, or 20 minutes
 fog density
 raid mode
 starting survivors for non-hosts in raid mode

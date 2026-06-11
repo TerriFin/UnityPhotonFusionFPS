@@ -22,6 +22,7 @@ namespace SimpleFPS
 		public UISettingsView SettingsView;
 		public GameObject     DisconnectedView;
 		public GameMapView    MapView;
+		public RaidModeController RaidController;
 
 		// Called from NetworkEvents on NetworkRunner object
 		public void OnRunnerShutdown(NetworkRunner runner, ShutdownReason reason)
@@ -53,6 +54,11 @@ namespace SimpleFPS
 			if (MapView != null)
 				MapView.Initialize();
 
+			if (RaidController == null)
+				RaidController = GetComponent<RaidModeController>() ?? gameObject.AddComponent<RaidModeController>();
+			if (MapView != null)
+				MapView.RaidController = RaidController;
+
 			if (GameplayView != null && GameplayView.MinimapView == null)
 				GameplayView.MinimapView = GameplayView.GetComponentInChildren<GameMinimapView>(true);
 			if (GameplayView != null && GameplayView.MinimapView != null && GameplayView.MinimapView.MainMapView == null)
@@ -82,6 +88,25 @@ namespace SimpleFPS
 
 			var keyboard = Keyboard.current;
 			bool gameplayActive = Gameplay.State < EGameplayState.Finished;
+			// Tick the raid controller before the map so the inspect target / camera are current this frame.
+			if (RaidController != null)
+				RaidController.Tick(Gameplay, Runner, MapView, gameplayActive);
+
+			// For the raid host, draw the inspected survivor enlarged on the map/minimap (instead of the active
+			// character, which the host does not have). Normal players leave this null and keep their highlight.
+			Survivor inspectHighlight = RaidController != null && RaidController.IsLocalRaidHost ? RaidController.InspectTarget : null;
+			if (MapView != null && MapView.IconController != null)
+				MapView.IconController.InspectHighlightSurvivor = inspectHighlight;
+			if (GameplayView != null && GameplayView.MinimapView != null)
+			{
+				if (GameplayView.MinimapView.IconController != null)
+					GameplayView.MinimapView.IconController.InspectHighlightSurvivor = inspectHighlight;
+				// The raid host has no possessed PlayerObject for the minimap to follow, so point it at the
+				// inspected survivor instead. Only touched for the host; normal players keep their default.
+				if (RaidController != null && RaidController.IsLocalRaidHost)
+					GameplayView.MinimapView.OverrideFollowTarget = inspectHighlight != null ? inspectHighlight.transform : null;
+			}
+
 			if (MapView != null)
 				MapView.Tick(gameplayActive, Runner, Gameplay);
 			if (GameplayView != null && GameplayView.MinimapView != null)

@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: Neutral Survivor Spawn Settings
   m_EditorClassIdentifier: 
   DesiredNeutralSurvivorCount: 20
-  MinDistanceBetweenSelectedSpawnPoints: 54
+  MinDistanceBetweenSelectedSpawnPoints: 46
   MinDistanceToActivePlayerSpawns: 40
   SeedOffset: 0
   MatchStartSeedOffset: 7919

@@ -8,7 +8,7 @@ namespace SimpleFPS
 {
 	public sealed class MatchHostingMenuController : FusionMenuUIScreen
 	{
-		private static readonly int[] GameLengthMinutes = { 5, 10, 15, 20 };
+		private static readonly int[] GameLengthMinutes = { 1, 5, 10, 15, 20 };
 
 		[Header("Match Settings")]
 		public TMP_InputField MapWidth;
@@ -175,7 +175,7 @@ namespace SimpleFPS
 
 		private void PopulateDropdowns()
 		{
-			PopulateDropdown(GameLength, new[] { "5 minutes", "10 minutes", "15 minutes", "20 minutes" }, false);
+			PopulateDropdown(GameLength, new[] { "1 minute", "5 minutes", "10 minutes", "15 minutes", "20 minutes" }, false);
 
 			MatchHostingSettingsCatalog catalog = GetCatalog();
 			PopulateDropdown(HeightGenerationPreset, catalog?.GetHeightGenerationPresetNames(), true);

@@ -569,14 +569,16 @@ namespace SimpleFPS
 		private int GetSpawnBudget()
 		{
 			float interval = GetPulseInterval();
-			float rate = _isOvertime ? Settings.EndSpawnRatePerMinute : Mathf.Lerp(Settings.StartSpawnRatePerMinute, Settings.EndSpawnRatePerMinute, GetProgress01());
-			_spawnRemainder += Mathf.Max(0f, rate) * interval / 60f;
+			// Spawn rate is per connected player: every additional player raises the effective rate by the
+			// configured per-player rate. A two-player match spawns twice as fast as a one-player match.
+			float ratePerPlayer = _isOvertime ? Settings.OvertimeSpawnRatePerMinute : Mathf.Lerp(Settings.StartSpawnRatePerMinute, Settings.EndSpawnRatePerMinute, GetProgress01());
+			float rate = Mathf.Max(0f, ratePerPlayer) * Mathf.Max(1, GetConnectedPlayerCount());
+			_spawnRemainder += rate * interval / 60f;
 
 			int budget = Mathf.FloorToInt(_spawnRemainder);
 			_spawnRemainder -= budget;
 
-			int pulseCap = Mathf.Max(0, Settings.MaxSpawnPerPulsePerPlayer) * Mathf.Max(1, GetConnectedPlayerCount());
-			return Mathf.Min(Mathf.Max(0, budget), pulseCap);
+			return Mathf.Max(0, budget);
 		}
 
 		private int GetConnectedPlayerCount()

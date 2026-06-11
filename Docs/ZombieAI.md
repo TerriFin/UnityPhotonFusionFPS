@@ -169,11 +169,14 @@ Hunting begins in overtime.
 
 Rules:
 
-- Ignore normal detection gating.
-- Periodically choose the nearest living survivor globally.
-- Stagger the first acquisition so the horde does not scan for survivors on one tick.
+- Ignore normal detection gating for the *global* target.
+- On first acquisition, pick a random player that still owns at least one alive survivor and **commit** to that player, then target that player's closest survivor. Picking the player first (rather than the globally nearest survivor) shares overtime pressure evenly between players regardless of how their survivors are spread across the map. A player hiding survivors in a corner no longer offloads their share of the horde onto better-positioned teams. Even sharing comes from each newly spawned zombie's random commitment, not from constant re-rolling.
+- **Stay committed to that player.** Periodic retargets only re-pick the closest survivor *of the committed player* (so the zombie follows the nearest as survivors move or die); they do **not** re-roll the player. Re-roll the player only once the committed team has no alive survivors left (then commit to a new random player). Re-rolling the player every interval made in-transit zombies flip target teams mid-journey, so a horde caught between two holed-up teams oscillated back and forth and never arrived.
+- Exclude neutral survivors from the global pick. They are not owned by a player, so counting them would unbalance pressure. They are still attacked through normal sensing (next rule).
+- A directly sensed enemy always overrides the committed target. If a hunting zombie senses any survivor on the way to its assigned target — neutral survivors included — it attacks that survivor instead. This keeps neutrals threatened and stops zombies from walking past a survivor they can clearly see. The committed player is left untouched, so the zombie resumes heading to its team once the sensed enemy is killed or lost.
+- Stagger the first acquisition so the horde does not scan for survivors on one tick. A target that dies mid-hunt re-picks immediately without waiting for the stagger.
 - Add interval jitter so the horde does not permanently synchronize.
-- Keep the current target between checks unless it dies.
+- Keep the current target between checks unless it dies or a closer enemy is sensed.
 - Move through the shared explicit-goal routing policy.
 - Use overtime stats.
 - Ignore alerts because all zombies already have hunting knowledge.

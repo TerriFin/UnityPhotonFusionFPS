@@ -45,4 +45,4 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   MaxSpawnCountPerPulse: 4
-  NonForcedSurvivorBlockRadius: 28
+  NonForcedSurvivorBlockRadius: 30

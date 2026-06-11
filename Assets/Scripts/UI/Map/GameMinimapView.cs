@@ -36,6 +36,8 @@ namespace SimpleFPS
 		[Header("Behaviour")]
 		[Tooltip("Minimap automatically hides while the full GameMapView is open so the two overlays do not double up.")]
 		public bool HideWhileFullMapIsOpen = true;
+		[Tooltip("When on, the minimap constantly shows every survivor, zombie, and pickup at its live position (no fog of war). It uses its own awareness model so this does not reveal anything on the full map.")]
+		public bool RevealEverything = true;
 		public bool LogSetupStatus;
 
 		private NetworkRunner _runner;
@@ -96,12 +98,17 @@ namespace SimpleFPS
 			UpdateCameraTransform(runner);
 
 			if (IconController != null)
-				IconController.Tick(this, gameplay, runner);
+				IconController.Tick(this, gameplay, runner, RevealEverything);
 		}
 
 		private void TryAdoptSharedTracker()
 		{
 			if (IconController == null)
+				return;
+
+			// A constantly-revealing minimap must keep its own awareness tracker. Sharing the full map's tracker
+			// would seed every entity into the shared memory, leaking the reveal onto the (fog-of-war) full map.
+			if (RevealEverything)
 				return;
 
 			GameMapAwarenessTracker desired = SharedAwarenessTracker;

@@ -411,6 +411,10 @@ namespace SimpleFPS
 			if (HasStateAuthority == false)
 				return;
 
+			// The raid host commands via the map and never possesses a survivor.
+			if (RaidModeRules.IsRaidControlledPlayer(this, owner))
+				return;
+
 			if (_lastSwitchTicks.TryGetValue(owner, out int lastTick) && Runner.Tick - lastTick < SwitchCooldownTicks)
 				return;
 
@@ -428,6 +432,10 @@ namespace SimpleFPS
 		public void SwitchToCharacter(PlayerRef owner, int targetCharacterIndex)
 		{
 			if (HasStateAuthority == false)
+				return;
+
+			// The raid host commands via the map and never possesses a survivor (blocks map-based possess too).
+			if (RaidModeRules.IsRaidControlledPlayer(this, owner))
 				return;
 
 			if (_lastSwitchTicks.TryGetValue(owner, out int lastTick) && Runner.Tick - lastTick < SwitchCooldownTicks)
@@ -695,7 +703,9 @@ namespace SimpleFPS
 			}
 
 			var playerData = PlayerData.Get(playerRef);
-			playerData.ActiveCharacterIndex = 0;
+			// The raid host is a pure RTS commander: they never possess a survivor, so they start with no
+			// active character (-1). All of their survivors then run AI and they command via the map only.
+			playerData.ActiveCharacterIndex = RaidModeRules.IsRaidControlledPlayer(this, playerRef) ? -1 : 0;
 			playerData.SetFirstAliveCharacters(count);
 			playerData.CharacterCount       = count;
 			playerData.IsAlive              = true;

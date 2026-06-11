@@ -24,6 +24,15 @@ namespace SimpleFPS
 		[Header("Input")]
 		public Key MapKey = Key.LeftAlt;
 
+		[Header("Dev")]
+		[Tooltip("Debug only: reveals every survivor, zombie, and pickup on the full map at its live position, regardless of whether your own survivors sense it. Leave off for normal play.")]
+		public bool RevealEverything;
+
+		// Set by GameUI. Lets the selection controller route map-Space to "inspect" instead of "possess" for the
+		// raid host. Null for normal players.
+		[HideInInspector]
+		public RaidModeController RaidController;
+
 		private CursorLockMode _previousCursorLockState;
 		private bool _previousCursorVisible;
 		private bool _isMapOpen;
@@ -35,6 +44,11 @@ namespace SimpleFPS
 
 		public static bool IsAnyMapOpen { get; private set; }
 		public bool IsMapOpen => _isMapOpen;
+
+		// When true the map is held open and cannot be closed by the player (Alt toggle or possess close are
+		// ignored). Used by raid mode to lock the RTS host into the map. The match-end path still force-closes
+		// the map so the game-over screen can appear. Owned by RaidModeController; GameMapView stays raid-agnostic.
+		public bool LockedOpen { get; set; }
 
 		public void Initialize()
 		{
@@ -64,9 +78,21 @@ namespace SimpleFPS
 
 			if (gameplayActive == false)
 			{
+				// Force-close at match end regardless of the lock so the game-over screen can show.
+				LockedOpen = false;
 				if (_isMapOpen)
-					CloseMap();
+					CloseMapInternal();
 
+				return;
+			}
+
+			if (LockedOpen)
+			{
+				// Held open (raid host): keep it open and skip toggle input so it cannot be closed.
+				if (_isMapOpen == false)
+					OpenMap();
+
+				TickOpenMap(gameplay);
 				return;
 			}
 
@@ -102,6 +128,16 @@ namespace SimpleFPS
 		}
 
 		public void CloseMap()
+		{
+			// Locked open (raid host): ignore player-driven close requests (Alt toggle, map-possess close).
+			// The match-end path uses CloseMapInternal to bypass this.
+			if (LockedOpen)
+				return;
+
+			CloseMapInternal();
+		}
+
+		private void CloseMapInternal()
 		{
 			EnsureInitialized();
 
@@ -190,6 +226,14 @@ namespace SimpleFPS
 
 		private void TickOpenMap(Gameplay gameplay)
 		{
+			// Re-assert the free cursor every frame while the map is open. Unity drops the cursor's
+			// visible/lock state when the window loses then regains focus (alt-tab), and the map
+			// otherwise only sets the cursor once in OpenMap. Without this a raid host — whose map
+			// never closes — permanently loses the mouse, and even opening the pause menu then
+			// captures the bad state. Mirrors UIGameOverView, which enforces the cursor the same way.
+			Cursor.lockState = CursorLockMode.None;
+			Cursor.visible = true;
+
 			if (CameraController == null)
 				return;
 
@@ -210,7 +254,7 @@ namespace SimpleFPS
 			CameraController.Tick(Time.unscaledDeltaTime, panInput.normalized, zoomInput);
 
 			if (IconController != null)
-				IconController.Tick(this, gameplay, _runner, CameraController != null && CameraController.RevealEverything);
+				IconController.Tick(this, gameplay, _runner, RevealEverything);
 			if (SelectionController != null)
 				SelectionController.Tick(this, gameplay, _runner);
 		}
@@ -222,9 +266,39 @@ namespace SimpleFPS
 				NetworkObject playerObject = _runner.GetPlayerObject(_runner.LocalPlayer);
 				if (playerObject != null)
 					return playerObject.transform.position;
+
+				// No possessed survivor (the raid host): center on the local team's first alive survivor.
+				if (TryGetLocalTeamCenter(out Vector3 teamCenter))
+					return teamCenter;
 			}
 
 			return Vector3.zero;
+		}
+
+		private bool TryGetLocalTeamCenter(out Vector3 position)
+		{
+			position = default;
+			if (_gameplay == null || _runner == null)
+				return false;
+
+			PlayerRef localPlayer = _runner.LocalPlayer;
+			if (_gameplay.PlayerData.TryGet(localPlayer, out var data) == false)
+				return false;
+
+			for (int i = 0; i < data.CharacterCount; i++)
+			{
+				if (data.IsCharacterAlive(i) == false)
+					continue;
+
+				var survivor = _gameplay.GetSurvivor(localPlayer, i);
+				if (survivor == null)
+					continue;
+
+				position = survivor.transform.position;
+				return true;
+			}
+
+			return false;
 		}
 
 		private void SetMapVisible(bool visible)

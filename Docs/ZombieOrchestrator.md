@@ -25,7 +25,7 @@ Configured hosted matches may override the scene's `ZombieOrchestratorSettings` 
 - Existing zombies do not scale up during normal match time.
 - Newly spawned zombies receive stats based on current match progress.
 - When overtime starts, every alive zombie immediately receives super stats.
-- Overtime zombies always know the nearest alive survivor and hunt them.
+- Overtime zombies always have a target to hunt: each picks a random alive player, then that player's nearest survivor, so overtime pressure is shared evenly between players regardless of positioning.
 
 ## Spawn Markers
 
@@ -79,10 +79,9 @@ ZombieOrchestratorSettings
 	float MatchDurationSeconds;
 	bool ScaleDuringSkirmish;
 
-	float StartSpawnRatePerMinute;
-	float EndSpawnRatePerMinute;
+	float StartSpawnRatePerMinute; // per connected player
+	float EndSpawnRatePerMinute;   // per connected player
 	float SpawnPulseInterval;
-	int MaxSpawnPerPulsePerPlayer;
 
 	float SpawnNavMeshSampleDistance;
 	float MinimumSpawnConnectedNavMeshRadius;
@@ -95,6 +94,8 @@ ZombieOrchestratorSettings
 	float EndMoveSpeed;
 	float StartAlertRadius;
 	float EndAlertRadius;
+
+	float OvertimeSpawnRatePerMinute; // per connected player
 
 	float OvertimeHealth;
 	float OvertimeDamage;
@@ -113,10 +114,10 @@ StartMaxZombies: 100
 EndMaxZombies: 400
 InitialPopulation: 0
 MatchDurationSeconds: match setting
-StartSpawnRatePerMinute: 12
-EndSpawnRatePerMinute: 60
+StartSpawnRatePerMinute: 12   (per connected player)
+EndSpawnRatePerMinute: 60     (per connected player)
 SpawnPulseInterval: 5s
-MaxSpawnPerPulsePerPlayer: 8
+OvertimeSpawnRatePerMinute: 60 (per connected player)
 SpawnNavMeshSampleDistance: 1.5
 MinimumSpawnConnectedNavMeshRadius: 8
 UnderpopulatedRegionBias: 0.65
@@ -167,11 +168,16 @@ moveSpeed = lerp(StartMoveSpeed, EndMoveSpeed, progress)
 alertRadius = lerp(StartAlertRadius, EndAlertRadius, progress)
 ```
 
-Spawn rate:
+Spawn rate is **per connected player**: every additional player raises the effective rate by the configured per-player value, so a two-player match spawns twice as fast as a one-player match, and a twenty-player match twenty times as fast.
 
 ```text
-spawnRatePerMinute = lerp(StartSpawnRatePerMinute, EndSpawnRatePerMinute, progress)
+ratePerPlayer       = lerp(StartSpawnRatePerMinute, EndSpawnRatePerMinute, progress)
+spawnRatePerMinute  = ratePerPlayer × connectedPlayerCount
 ```
+
+There is no separate per-pulse cap anymore — the per-player rate is the only control over how fast zombies arrive. The total population is still bounded by the current max-zombies cap. Disconnected players are not counted (the count is clamped to a minimum of 1), so a player drop reduces pressure rather than continuing to spawn the original headcount's worth of zombies.
+
+During overtime the spawn rate is no longer derived from `EndSpawnRatePerMinute`. It uses the dedicated `OvertimeSpawnRatePerMinute` instead (also per connected player). This lets overtime pressure be tuned independently of where the normal end-of-match curve lands.
 
 Existing zombies keep their spawn-time stats during normal time. This lets old zombies stay weak while newer zombies naturally become more dangerous.
 
@@ -181,11 +187,12 @@ When `matchElapsed >= MatchDurationSeconds`:
 
 - Overtime begins.
 - The zombie cap becomes `EndMaxZombies`.
+- The per-player spawn rate switches to `OvertimeSpawnRatePerMinute`, independent of the normal spawn-rate curve.
 - All alive zombies immediately receive overtime stats.
 - Existing zombies preserve their current health percentage when their max health changes. For example, a zombie at `50%` health becomes `50%` of `OvertimeHealth`, not fully healed.
 - Newly spawned zombies receive overtime stats.
 - Zombie AI switches to hunting behavior.
-- Zombies do not need normal sensory discovery or alerting to know a target; they continuously choose the nearest alive survivor.
+- Zombies do not need normal sensory discovery or alerting to find a target. Each hunting zombie picks a random player that still has at least one alive survivor, then targets that player's closest survivor. Neutral survivors are excluded from this global pick so pressure is balanced per player, but a hunting zombie that directly senses any survivor — neutral included — attacks it instead. Hunting target selection is documented in `Docs/ZombieAI.md`.
 
 Overtime does not instantly end the match. It turns the city into a closing pressure system and asks which team survives longest.
 
@@ -198,12 +205,12 @@ Each pulse:
 1. Count alive zombies.
 2. Compute current max zombies.
 3. If alive zombies are at or above the current max, do nothing.
-4. Compute spawn budget from spawn rate, capped by `MaxSpawnPerPulsePerPlayer × current connected player count`.
+4. Compute spawn budget from the per-player spawn rate × current connected player count (overtime uses `OvertimeSpawnRatePerMinute`).
 5. Gather valid forced and non-forced spawn points.
 6. Score valid spawn points by regional underpopulation.
 7. Spawn up to the budget, respecting each spawn point's `MaxSpawnCountPerPulse`.
 
-The per-pulse spawn cap scales linearly with the number of currently connected players. A two-player match uses half the per-pulse cap of a four-player match using the same settings asset, and a twenty-player match uses five times the cap. The spawn rate itself (`Start/EndSpawnRatePerMinute`) is not affected — it stays constant. This means the per-player cap only kicks in once the spawn rate produces more zombies per pulse than would be appropriate for the smaller match. Disconnected players are not counted; the cap follows the live match population so a player drop reduces pressure rather than continuing to spawn the original headcount's worth of zombies.
+The spawn rate scales linearly with the number of currently connected players: each connected player adds `Start/EndSpawnRatePerMinute` (or `OvertimeSpawnRatePerMinute`) worth of zombies-per-minute to the budget. A four-player match arrives four times as fast as a one-player match using the same settings asset. Disconnected players are not counted; the rate follows the live match population so a player drop reduces pressure rather than continuing to spawn the original headcount's worth of zombies. The current max-zombies cap still bounds the total alive population per pulse.
 
 Example:
 

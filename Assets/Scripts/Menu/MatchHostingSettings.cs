@@ -28,7 +28,7 @@ namespace SimpleFPS
 		private const string NeutralSurvivorPresetKey = "np";
 		private const string PreferredNeutralSurvivorCountKey = "nc";
 
-		private static readonly int[] AllowedGameLengths = { 5, 10, 15, 20 };
+		private static readonly int[] AllowedGameLengths = { 1, 5, 10, 15, 20 };
 
 		[Min(3)]
 		public int MapWidth = 12;

@@ -1,6 +1,5 @@
 using Fusion;
 using UnityEngine;
-using UnityEngine.Serialization;
 
 namespace SimpleFPS
 {
@@ -18,12 +17,12 @@ namespace SimpleFPS
 		public float MatchDurationSeconds = 0f;
 		public bool ScaleDuringSkirmish;
 
-		[Header("Spawn Rate")]
+		[Header("Spawn Rate (per connected player)")]
+		[Tooltip("Zombies spawned per minute for each connected player at match start. The effective spawn rate is this value multiplied by the number of connected players, so every additional player raises the rate by this much.")]
 		public float StartSpawnRatePerMinute = 12f;
+		[Tooltip("Zombies spawned per minute for each connected player at full match progress. The effective spawn rate is this value multiplied by the number of connected players.")]
 		public float EndSpawnRatePerMinute = 60f;
 		public float SpawnPulseInterval = 5f;
-		[FormerlySerializedAs("MaxSpawnPerPulse")]
-		public int MaxSpawnPerPulsePerPlayer = 8;
 
 		[Header("Spawn Validity")]
 		public float SpawnNavMeshSampleDistance = 1.5f;
@@ -38,6 +37,10 @@ namespace SimpleFPS
 		public float EndMoveSpeed = 4.5f;
 		public float StartAlertRadius = 8f;
 		public float EndAlertRadius = 24f;
+
+		[Header("Overtime Spawn Rate (per connected player)")]
+		[Tooltip("Zombies spawned per minute for each connected player during overtime, independent of the normal Start/End spawn rate. Multiplied by the number of connected players.")]
+		public float OvertimeSpawnRatePerMinute = 60f;
 
 		[Header("Overtime Stats")]
 		public float OvertimeHealth = 180f;
@@ -59,7 +62,7 @@ namespace SimpleFPS
 			StartSpawnRatePerMinute = Mathf.Max(0f, StartSpawnRatePerMinute);
 			EndSpawnRatePerMinute = Mathf.Max(0f, EndSpawnRatePerMinute);
 			SpawnPulseInterval = Mathf.Max(0.25f, SpawnPulseInterval);
-			MaxSpawnPerPulsePerPlayer = Mathf.Max(0, MaxSpawnPerPulsePerPlayer);
+			OvertimeSpawnRatePerMinute = Mathf.Max(0f, OvertimeSpawnRatePerMinute);
 			SpawnNavMeshSampleDistance = Mathf.Max(0.1f, SpawnNavMeshSampleDistance);
 			MinimumSpawnConnectedNavMeshRadius = Mathf.Max(0f, MinimumSpawnConnectedNavMeshRadius);
 			StartHealth = Mathf.Max(1f, StartHealth);

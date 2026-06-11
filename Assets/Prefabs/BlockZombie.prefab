@@ -1222,9 +1222,9 @@ MonoBehaviour:
   IdleWanderIntervalMax: 7
   IdleWanderRetryDelayMin: 1
   IdleWanderRetryDelayMax: 2
-  IdleWanderRadius: 18
-  IdleWanderAvoidZombieRadius: 16
-  IdleWanderCandidateCount: 6
+  IdleWanderRadius: 20
+  IdleWanderAvoidZombieRadius: 18
+  IdleWanderCandidateCount: 3
   AttackRetargetInterval: 1
   HuntingRetargetInterval: 6
   HuntingRetargetIntervalJitter: 2
@@ -1235,8 +1235,8 @@ MonoBehaviour:
   ReachablePointSampleDistance: 8
   ExplicitGoalStoppingDistance: 0.66
   ExplicitGoalRouteRefreshInterval: 0.5
-  DirectRouteLengthMultiplier: 1.65
-  MaxDirectTraversalDistance: 30
+  DirectRouteLengthMultiplier: 1.6
+  MaxDirectTraversalDistance: 20
   ExplicitGoalHeightTolerance: 0.75
   CanClimbDirectGoals: 1
   ClimbSpeedMultiplier: 0.45
@@ -1272,7 +1272,7 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 1
   DisableWhenPossessed: 1
-  SensorInterval: 0.33
+  SensorInterval: 0.4
   MemoryDuration: 3
   MaxKnownEntries: 4
   MaxKnownPickups: 0

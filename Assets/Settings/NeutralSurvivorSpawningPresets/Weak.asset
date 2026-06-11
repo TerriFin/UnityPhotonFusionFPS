@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: Weak
   m_EditorClassIdentifier: 
   DesiredNeutralSurvivorCount: 10
-  MinDistanceBetweenSelectedSpawnPoints: 54
+  MinDistanceBetweenSelectedSpawnPoints: 48
   MinDistanceToActivePlayerSpawns: 40
   SeedOffset: 0
   MatchStartSeedOffset: 7919
@@ -22,7 +22,7 @@ MonoBehaviour:
   RecruitmentRadius: 3
   RecruitmentCheckInterval: 0.25
   ApplyNeutralStatOverrides: 1
-  NeutralMovementSpeed: 3.5
+  NeutralMovementSpeed: 3
   NeutralVisionDistance: 12
   NeutralAllAroundDetectionRange: 3
   NeutralSensorInterval: 0.4

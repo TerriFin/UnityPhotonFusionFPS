@@ -357,6 +357,14 @@ namespace SimpleFPS
 			if (target == null || IsSelectable(target, gameplay, runner) == false)
 				return false;
 
+			// The raid host inspects instead of possessing: switch the camera's inspect target and leave the map
+			// open. Normal players possess the survivor and close the map.
+			if (mapView.RaidController != null && mapView.RaidController.IsLocalRaidHost)
+			{
+				mapView.RaidController.SetInspectTarget(target);
+				return true;
+			}
+
 			gameplay.RequestSwitchActiveCharacter(target.CharacterIndex);
 			mapView.CloseMap();
 			return true;

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Fusion;
 using UnityEngine;
 using UnityEngine.AI;
@@ -73,6 +74,8 @@ namespace SimpleFPS
 
 		private ZombieCharacter _zombie;
 		private NetworkObject _target;
+		private PlayerRef _huntPlayer;
+		private bool _hasHuntPlayer;
 		private Vector3 _investigationTarget;
 		private Vector3 _lastKnownTargetPosition;
 		private float _nextIdleWanderTime;
@@ -100,6 +103,10 @@ namespace SimpleFPS
 		private const int TraversalHitBufferSize = 16;
 
 		private readonly RaycastHit[] _traversalHits = new RaycastHit[TraversalHitBufferSize];
+
+		// Reused only inside TryPickRandomHuntPlayer, which runs synchronously on state authority, so a single
+		// shared buffer avoids a per-retarget allocation across hundreds of zombies.
+		private static readonly List<PlayerRef> HuntPlayerBuffer = new(32);
 
 		public void Activate(ZombieCharacter zombie)
 		{
@@ -140,6 +147,7 @@ namespace SimpleFPS
 		{
 			State = EZombieAIState.Hunting;
 			_target = null;
+			_hasHuntPlayer = false;
 			_nextRetargetTime = Time.timeSinceLevelLoad + Random.Range(0f, Mathf.Max(0f, HuntingInitialRetargetStaggerMax));
 			ClearExplicitGoalRoute();
 		}
@@ -257,18 +265,15 @@ namespace SimpleFPS
 
 		private NetworkedInput UpdateHunting()
 		{
-			bool targetAlive = IsTargetAlive(_target);
-			if (_target == null)
-			{
-				if (Time.timeSinceLevelLoad < _nextRetargetTime)
-					return default;
-
-				RefreshHuntingTarget();
-			}
-			else if (targetAlive == false || Time.timeSinceLevelLoad >= _nextRetargetTime)
-			{
-				RefreshHuntingTarget();
-			}
+			// A directly sensed enemy always overrides the committed global target. The global picker
+			// deliberately ignores neutral survivors so overtime pressure is shared evenly between
+			// players, but a zombie that senses any survivor (neutral included) on the way to its
+			// target should still attack whoever it ran into. This is temporary: the committed player
+			// is left untouched, so the zombie resumes heading to its team once the sensed enemy is lost.
+			if (TryGetDirectEnemy(out var sensed))
+				SetHuntTarget(sensed.Object);
+			else
+				EnsureCommittedHuntTarget();
 
 			if (_target == null)
 				return default;
@@ -285,14 +290,42 @@ namespace SimpleFPS
 			return BuildExplicitGoalMoveInput(targetPosition, ExplicitGoalStoppingDistance, true);
 		}
 
-		private void RefreshHuntingTarget()
+		// A hunting zombie commits to one player and keeps hunting that player's team until the team is wiped
+		// out (or the zombie dies). Periodic refreshes only re-pick the closest survivor of the committed
+		// player; they do NOT re-roll the player. Re-rolling the player every interval made in-transit zombies
+		// flip target teams mid-journey, so a horde caught between two holed-up teams just oscillated back and
+		// forth and never arrived. The player is only re-rolled once the committed team has no alive survivors.
+		private void EnsureCommittedHuntTarget()
 		{
-			NetworkObject previousTarget = _target;
-			_target = FindClosestAliveSurvivor();
-			if (_target != previousTarget)
-				ClearExplicitGoalRoute();
+			bool targetAlive = IsTargetAlive(_target);
 
+			if (targetAlive)
+			{
+				// Keep heading to the committed survivor until the next refresh tick.
+				if (Time.timeSinceLevelLoad < _nextRetargetTime)
+					return;
+			}
+			else if (_target == null && _hasHuntPlayer == false && Time.timeSinceLevelLoad < _nextRetargetTime)
+			{
+				// First acquisition only: honor the stagger so the whole horde does not scan on the same tick
+				// when overtime begins. A target that died mid-hunt re-picks immediately (no stagger wait).
+				return;
+			}
+
+			if (_hasHuntPlayer == false || PlayerHasAliveSurvivor(_huntPlayer) == false)
+				_hasHuntPlayer = TryPickRandomHuntPlayer(out _huntPlayer);
+
+			SetHuntTarget(_hasHuntPlayer ? FindClosestSurvivorForOwner(_huntPlayer) : null);
 			ScheduleNextHuntingRetarget();
+		}
+
+		private void SetHuntTarget(NetworkObject target)
+		{
+			if (target == _target)
+				return;
+
+			_target = target;
+			ClearExplicitGoalRoute();
 		}
 
 		private void StartAttack(KnownEnemyInfo enemy)
@@ -830,23 +863,74 @@ namespace SimpleFPS
 			};
 		}
 
-		private NetworkObject FindClosestAliveSurvivor()
+		// Picks a random player that still owns at least one alive survivor. Choosing the player (instead of
+		// the globally nearest survivor) shares overtime pressure evenly between players regardless of how their
+		// survivors are spread across the map, so hiding in a corner no longer offloads zombies onto better-
+		// positioned teams. Neutral survivors are excluded from this global pick on purpose; they are still
+		// attacked through normal sensing (see UpdateHunting). The zombie then commits to this player.
+		private bool TryPickRandomHuntPlayer(out PlayerRef player)
+		{
+			player = default;
+			HuntPlayerBuffer.Clear();
+
+			var sensors = CharacterSensor.ActiveSensors;
+			for (int i = sensors.Count - 1; i >= 0; i--)
+			{
+				var sensor = sensors[i];
+				if (sensor == null)
+				{
+					sensors.RemoveAt(i);
+					continue;
+				}
+
+				var survivor = sensor.Survivor;
+				if (IsHuntableSurvivor(survivor) == false)
+					continue;
+
+				PlayerRef owner = survivor.OwnerRef;
+				if (HuntPlayerBuffer.Contains(owner) == false)
+					HuntPlayerBuffer.Add(owner);
+			}
+
+			if (HuntPlayerBuffer.Count == 0)
+				return false;
+
+			player = HuntPlayerBuffer[Random.Range(0, HuntPlayerBuffer.Count)];
+			return true;
+		}
+
+		private static bool PlayerHasAliveSurvivor(PlayerRef owner)
+		{
+			var sensors = CharacterSensor.ActiveSensors;
+			for (int i = 0; i < sensors.Count; i++)
+			{
+				var sensor = sensors[i];
+				if (sensor == null)
+					continue;
+
+				var survivor = sensor.Survivor;
+				if (IsHuntableSurvivor(survivor) && survivor.OwnerRef == owner)
+					return true;
+			}
+
+			return false;
+		}
+
+		private NetworkObject FindClosestSurvivorForOwner(PlayerRef owner)
 		{
 			NetworkObject closest = null;
 			float closestDistanceSqr = float.MaxValue;
 			Vector3 origin = transform.position;
 
-			for (int i = CharacterSensor.ActiveSensors.Count - 1; i >= 0; i--)
+			var sensors = CharacterSensor.ActiveSensors;
+			for (int i = 0; i < sensors.Count; i++)
 			{
-				var sensor = CharacterSensor.ActiveSensors[i];
+				var sensor = sensors[i];
 				if (sensor == null)
-				{
-					CharacterSensor.ActiveSensors.RemoveAt(i);
 					continue;
-				}
 
 				var survivor = sensor.Survivor;
-				if (survivor == null || survivor.Health == null || survivor.Health.IsAlive == false)
+				if (IsHuntableSurvivor(survivor) == false || survivor.OwnerRef != owner)
 					continue;
 
 				float distanceSqr = FlatDistanceSqr(origin, survivor.transform.position);
@@ -858,6 +942,13 @@ namespace SimpleFPS
 			}
 
 			return closest;
+		}
+
+		private static bool IsHuntableSurvivor(Survivor survivor)
+		{
+			return survivor != null &&
+			       survivor.Health != null && survivor.Health.IsAlive &&
+			       CharacterFactionUtility.IsPlayerOwnedSurvivor(survivor);
 		}
 
 		private static bool IsTargetAlive(NetworkObject target)

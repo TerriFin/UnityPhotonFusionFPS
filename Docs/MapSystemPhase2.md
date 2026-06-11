@@ -129,6 +129,15 @@ Rules:
 
 This UI memory is client-local. It does not need to be `[Networked]`.
 
+### Reveal everything (no fog of war)
+
+`GameMapAwarenessTracker.Tick(gameplay, runner, revealAll)` takes a `revealAll` flag. When set, it seeds every survivor, zombie, and pickup into memory at its live position each tick (full opacity, never fades) before the normal sensor pass. Each map view owns whether it reveals:
+
+- `GameMapView.RevealEverything` — a Dev-only toggle on the full map (default off). It was moved here from `GameMapCameraController`, where it did not belong.
+- `GameMinimapView.RevealEverything` — default **on**, so the minimap constantly shows everything.
+
+Because the reveal writes into the awareness tracker's shared memory, a revealing minimap must use its **own** tracker rather than adopting the full map's via `TryAdoptSharedTracker` — otherwise the constant reveal would leak onto the (fog-of-war) full map, and toggling the full map's reveal would leak onto the minimap for the forget-delay window. `GameMinimapView` therefore skips tracker adoption while `RevealEverything` is on.
+
 `CharacterSensor` now exposes direct known enemies through `GetDirectKnownEnemies(...)`. Direct vision/proximity scans are allowed to run on the owning client for map UI purposes, while noise and bullet-impact recording still use the existing state-authority sensing path.
 
 Potential implementation:

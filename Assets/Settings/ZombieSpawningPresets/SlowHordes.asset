@@ -13,15 +13,14 @@ MonoBehaviour:
   m_Name: SlowHordes
   m_EditorClassIdentifier: 
   ZombiePrefab: {fileID: 3297568450549869079, guid: 1f02166891b80b94eb78a0c324123106, type: 3}
-  StartMaxZombies: 120
-  EndMaxZombies: 220
+  StartMaxZombies: 100
+  EndMaxZombies: 120
   InitialPopulation: 0.9
   MatchDurationSeconds: 0
   ScaleDuringSkirmish: 0
-  StartSpawnRatePerMinute: 34
-  EndSpawnRatePerMinute: 120
-  SpawnPulseInterval: 22
-  MaxSpawnPerPulsePerPlayer: 46
+  StartSpawnRatePerMinute: 28
+  EndSpawnRatePerMinute: 62
+  SpawnPulseInterval: 7
   SpawnNavMeshSampleDistance: 1
   MinimumSpawnConnectedNavMeshRadius: 24
   StartHealth: 20
@@ -32,9 +31,10 @@ MonoBehaviour:
   EndMoveSpeed: 4
   StartAlertRadius: 6
   EndAlertRadius: 10
-  OvertimeHealth: 100
+  OvertimeSpawnRatePerMinute: 80
+  OvertimeHealth: 150
   OvertimeDamage: 12
   OvertimeMoveSpeed: 5
-  UnderpopulatedRegionBias: 0.5
-  RegionGridSize: 4
+  UnderpopulatedRegionBias: 0.6
+  RegionGridSize: 6
   SeedOffset: 30000
