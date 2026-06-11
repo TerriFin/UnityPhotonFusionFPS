@@ -43,8 +43,20 @@ namespace SimpleFPS
 
 		public bool IsOwnSurvivorVisible(Survivor survivor)
 		{
+			return IsIconVisible(_ownIcons, survivor);
+		}
+
+		// Visible as either an own icon or an other-team (enemy/neutral) icon. Used by the defeated spectator,
+		// who has no own survivors and selects any team's survivors from their revealed enemy icons.
+		public bool IsSurvivorVisible(Survivor survivor)
+		{
+			return IsIconVisible(_ownIcons, survivor) || IsIconVisible(_enemyIcons, survivor);
+		}
+
+		private static bool IsIconVisible(Dictionary<Survivor, GameMapIcon> icons, Survivor survivor)
+		{
 			return survivor != null
-				&& _ownIcons.TryGetValue(survivor, out var icon)
+				&& icons.TryGetValue(survivor, out var icon)
 				&& icon != null
 				&& icon.gameObject.activeSelf;
 		}
@@ -67,7 +79,23 @@ namespace SimpleFPS
 
 		public GameMapIcon FindOwnIconAt(Vector2 screenPosition, Camera eventCamera)
 		{
-			foreach (var icon in _ownIcons.Values)
+			return FindIconAt(_ownIcons, screenPosition, eventCamera);
+		}
+
+		// Finds a survivor icon under the cursor. When includeOtherTeams is set (defeated spectator), it also
+		// searches the revealed enemy/neutral icons so any team's survivor can be picked.
+		public GameMapIcon FindSelectableIconAt(Vector2 screenPosition, Camera eventCamera, bool includeOtherTeams)
+		{
+			GameMapIcon icon = FindIconAt(_ownIcons, screenPosition, eventCamera);
+			if (icon == null && includeOtherTeams)
+				icon = FindIconAt(_enemyIcons, screenPosition, eventCamera);
+
+			return icon;
+		}
+
+		private static GameMapIcon FindIconAt(Dictionary<Survivor, GameMapIcon> icons, Vector2 screenPosition, Camera eventCamera)
+		{
+			foreach (var icon in icons.Values)
 			{
 				if (icon != null && icon.gameObject.activeSelf && icon.ContainsScreenPoint(screenPosition, eventCamera))
 					return icon;
@@ -81,8 +109,10 @@ namespace SimpleFPS
 			if (survivor == null)
 				return;
 
-			if (_ownIcons.TryGetValue(survivor, out var icon) && icon != null)
-				icon.SetSelected(selected);
+			if (_ownIcons.TryGetValue(survivor, out var ownIcon) && ownIcon != null)
+				ownIcon.SetSelected(selected);
+			if (_enemyIcons.TryGetValue(survivor, out var enemyIcon) && enemyIcon != null)
+				enemyIcon.SetSelected(selected);
 		}
 
 		private void EnsureSetup(IGameMapView mapView)
@@ -174,6 +204,8 @@ namespace SimpleFPS
 
 					UpdateIconTransform(mapView, icon, memory.LastKnownPosition, memory.LastKnownRotationY);
 					icon.SetOpacity(GameMapAwarenessTracker.ComputeOpacity(now, memory.LastSenseTime, forgetDelay));
+					// Enlarge the inspected survivor for a defeated spectator, who watches other teams' icons.
+					icon.SetActiveSurvivor(survivor == InspectHighlightSurvivor);
 				}
 			}
 

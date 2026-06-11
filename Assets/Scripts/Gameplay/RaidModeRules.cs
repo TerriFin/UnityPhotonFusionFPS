@@ -21,7 +21,7 @@ namespace SimpleFPS
 		/// code (team spawning, active-character switching), the same assumption the rest of the raid spawn logic
 		/// already makes (see <c>Gameplay.GetStartingCharacterCount</c>). The host peer's own local view detects
 		/// the raid host differently, via <c>Gameplay.RaidMode &amp;&amp; Gameplay.HasStateAuthority</c>
-		/// (see <see cref="RaidModeController"/>).
+		/// (see <see cref="SpectatorController"/>).
 		/// </summary>
 		public static bool IsRaidControlledPlayer(Gameplay gameplay, PlayerRef playerRef)
 		{

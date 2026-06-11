@@ -70,47 +70,34 @@ state-authority gameplay code:
   every possession path (Shift/Ctrl cycling and the map's Space / double-click possess, which route through
   `RequestSwitchActiveCharacter`).
 
-### `RaidModeController` (`Assets/Scripts/UI/RaidModeController.cs`)
+### `SpectatorController` + `SpectatorCamera`
 
-Local, host-peer `MonoBehaviour` that owns the inspect UX. `GameUI` auto-adds it and ticks it each frame
-before `GameMapView.Tick`.
+The host's inspect UX is **one mode of a shared spectator system** that also powers defeated-player spectating.
+Raid is the `RaidCommander` mode of `SpectatorController`; the orbit camera is the shared `SpectatorCamera`.
+Both are documented in `Docs/SpectateMode.md`. In `RaidCommander` mode specifically:
 
-- Detects the local raid host as `Gameplay.RaidMode && Gameplay.HasStateAuthority` (uniquely true on the host
-  peer; clients have no state authority). This is the local-view counterpart to `RaidModeRules.IsRaidControlledPlayer`,
-  which is the state-authority counterpart — both identify the same host.
-- Tracks the **inspect target** (`InspectTarget`): the lowest-index alive owned survivor by default
-  (auto-advances when the current one dies). `SetInspectTarget(Survivor)` is called by the map's Space handler.
-  While the map is closed it reads **Ctrl/Shift** to cycle to the previous/next living survivor.
-- Drives the host's third-person **spectator camera**. It lazily creates a runtime `CinemachineVirtualCamera`
-  (world-space `CinemachineTransposer` body + `CinemachineComposer` aim) pointed at the inspect target. While the
-  map is closed, **WASD** orbits the camera (A/D = yaw, W/S = pitch) by recomputing the transposer's follow
-  offset each frame. A `CinemachineCollider` extension (PullCameraForward, colliding against Default +
-  MapNonVisible) pulls the camera in off buildings instead of clipping through them. Target switches glide via
-  transposer/composer damping; the camera only snaps (`PreviousStateIsValid = false`) the first time it turns
-  on, to avoid swooping in from the origin. The vcam is
-  disabled (and its priority dropped) whenever the local peer is not the raid host or the match is not running,
-  so non-host peers never create it and the Cinemachine brain ignores it. Orbit distance/pitch limits/speeds,
-  look-at offset, FOV, damping, and priority are inspector-tunable.
-- Exposes `IsLocalRaidHost` and `InspectTarget` for other systems (`GameUI` uses them to draw the inspected
-  survivor enlarged on the map/minimap; `GameMapSelectionController` uses them to route map-Space to inspect).
-
-Its only serialized fields are the spectator-camera tunables; the per-frame inputs are passed into `Tick`, so
-it needs no scene wiring.
+- The mode is detected as `Gameplay.RaidMode && Gameplay.HasStateAuthority && localData.IsAlive` (uniquely true
+  on the host peer while it still has survivors). This is the local-view counterpart to
+  `RaidModeRules.IsRaidControlledPlayer`, which is the state-authority counterpart — both identify the same host.
+- The inspect target is the lowest-index alive **own** survivor (auto-advances on death); Ctrl/Shift (map closed)
+  cycle within the own team; map-Space sets the inspect target; WASD orbits the `SpectatorCamera`.
+- The host's map **auto-opens once** at the start (their RTS tool) but stays closeable — unlike a lock.
+- When the host loses its last survivor mid-match, `Mode` falls through to `DefeatedSpectator` and they spectate
+  all teams without command (see `Docs/SpectateMode.md`).
 
 ### Map integration
 
-- `GameMapView.RaidController` is set by `GameUI` so `GameMapSelectionController.HandleKeyboardPossess` can route
-  the host's map-Space to `RaidModeController.SetInspectTarget` (switch inspect target, leave the map open)
-  instead of the normal possess + `CloseMap()`.
-- `GameMapIconController.InspectHighlightSurvivor` (set by `GameUI` for the host) enlarges the inspected survivor
-  via the existing `GameMapIcon.SetActiveSurvivor` 1.35× highlight, instead of the networked active character.
-  The same control runs for both the full map and the minimap.
-- `GameMinimapView.OverrideFollowTarget` (set by `GameUI` for the host) makes the minimap follow the inspected
-  survivor. The minimap normally follows the local `PlayerObject`, which the host does not have.
+- `GameMapView.Spectator` (a `SpectatorController`) is set by `GameUI`. `GameMapSelectionController` routes
+  map-Space to `Spectator.SetInspectTarget` whenever `Spectator.IsActive` (raid host or defeated spectator),
+  leaving the map open, instead of the normal possess + `CloseMap()`.
+- `GameMapIconController.InspectHighlightSurvivor` (set by `GameUI`) enlarges the inspected survivor via the
+  existing `GameMapIcon.SetActiveSurvivor` 1.35× highlight, on both the full map and minimap, and on own or
+  other-team icons.
+- `GameMinimapView.OverrideFollowTarget` (set by `GameUI` in `RaidCommander` mode) makes the host's minimap
+  follow the inspected survivor, since the host has no possessed `PlayerObject` to follow. Defeated spectators
+  have no minimap (`GameMinimapView.Suppressed`).
 - `GameMapView.GetInitialCenterPosition` centers the opened map on the local team's first alive survivor when
   there is no possessed `PlayerObject`, so the host's map opens on their team rather than world origin.
-- `GameMapView.LockedOpen` remains as a generic "hold the map open" capability but raid mode no longer engages
-  it — the host opens/closes the map normally.
 
 ## Hosting Settings
 

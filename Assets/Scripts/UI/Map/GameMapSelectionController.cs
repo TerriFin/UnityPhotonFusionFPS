@@ -31,6 +31,10 @@ namespace SimpleFPS
 		private bool _areaCircleVisible;
 		private Survivor _lastClickedSurvivor;
 		private float _lastClickTime;
+		// Per-frame mode flags from the spectator controller: a defeated spectator can select any team's survivor
+		// but cannot issue orders.
+		private bool _canSelectAnyTeam;
+		private bool _commandsAllowed = true;
 		private Image _assignedAreaFillImage;
 		private Image _assignedAreaBorderImage;
 		private Sprite _circleSprite;
@@ -42,6 +46,9 @@ namespace SimpleFPS
 		{
 			if (mapView == null || gameplay == null || runner == null || IconController == null)
 				return;
+
+			_canSelectAnyTeam = mapView.Spectator != null && mapView.Spectator.CanInspectAnyTeam;
+			_commandsAllowed = mapView.Spectator == null || mapView.Spectator.CanIssueCommands;
 
 			EnsureSelectionBox(mapView);
 			EnsureAssignedAreaCircle(mapView);
@@ -90,14 +97,16 @@ namespace SimpleFPS
 
 		private void HandleClick(Gameplay gameplay, NetworkRunner runner, Vector2 screenPosition, Camera eventCamera)
 		{
-			GameMapIcon icon = IconController.FindOwnIconAt(screenPosition, eventCamera);
+			GameMapIcon icon = IconController.FindSelectableIconAt(screenPosition, eventCamera, _canSelectAnyTeam);
 			if (icon == null || IsSelectable(icon.Survivor, gameplay, runner) == false)
 			{
 				ClearSelection();
 				return;
 			}
 
-			if (_lastClickedSurvivor == icon.Survivor && Time.unscaledTime - _lastClickTime <= DoubleClickTime)
+			// Double-click select-all only makes sense for an own-team commander, not a spectator picking which
+			// of many teams' survivors to watch.
+			if (_canSelectAnyTeam == false && _lastClickedSurvivor == icon.Survivor && Time.unscaledTime - _lastClickTime <= DoubleClickTime)
 			{
 				SelectAllVisibleOwnIcons(gameplay, runner);
 			}
@@ -144,6 +153,11 @@ namespace SimpleFPS
 
 		private void HandleRightMouseOrder(GameMapView mapView, Gameplay gameplay, NetworkRunner runner, Vector2 mousePosition, Camera eventCamera)
 		{
+			// Defeated spectators cannot issue orders (the server rejects them too); skip the whole interaction
+			// so no order preview shows and no RPC is sent.
+			if (_commandsAllowed == false)
+				return;
+
 			var mouse = Mouse.current;
 			if (mouse == null)
 				return;
@@ -357,11 +371,11 @@ namespace SimpleFPS
 			if (target == null || IsSelectable(target, gameplay, runner) == false)
 				return false;
 
-			// The raid host inspects instead of possessing: switch the camera's inspect target and leave the map
-			// open. Normal players possess the survivor and close the map.
-			if (mapView.RaidController != null && mapView.RaidController.IsLocalRaidHost)
+			// Spectators (raid host or defeated) inspect instead of possessing: switch the camera's inspect target
+			// and leave the map open. Normal players possess the survivor and close the map.
+			if (mapView.Spectator != null && mapView.Spectator.IsActive)
 			{
-				mapView.RaidController.SetInspectTarget(target);
+				mapView.Spectator.SetInspectTarget(target);
 				return true;
 			}
 
@@ -372,6 +386,9 @@ namespace SimpleFPS
 
 		private void HandleKeyboardCommands(Gameplay gameplay, NetworkRunner runner)
 		{
+			if (_commandsAllowed == false)
+				return;
+
 			var keyboard = Keyboard.current;
 			if (keyboard == null)
 				return;
@@ -415,9 +432,14 @@ namespace SimpleFPS
 				return false;
 			if (survivor.Object == null || survivor.Object.IsValid == false)
 				return false;
-			if (survivor.OwnerRef != runner.LocalPlayer)
-				return false;
 			if (survivor.Health == null || survivor.Health.IsAlive == false)
+				return false;
+
+			// Defeated spectator: any team's player survivor that is visible on the map (never neutrals).
+			if (_canSelectAnyTeam)
+				return CharacterFactionUtility.IsPlayerOwnedSurvivor(survivor) && IconController.IsSurvivorVisible(survivor);
+
+			if (survivor.OwnerRef != runner.LocalPlayer)
 				return false;
 			if (IconController.IsOwnSurvivorVisible(survivor) == false)
 				return false;

@@ -6,6 +6,13 @@ using UnityEngine.UI;
 
 namespace SimpleFPS
 {
+	public enum EMapRevealMode
+	{
+		Auto,
+		ForceOff,
+		ForceOn,
+	}
+
 	public sealed class GameMapView : MonoBehaviour, IGameMapView
 	{
 		[Header("Setup")]
@@ -24,14 +31,14 @@ namespace SimpleFPS
 		[Header("Input")]
 		public Key MapKey = Key.LeftAlt;
 
-		[Header("Dev")]
-		[Tooltip("Debug only: reveals every survivor, zombie, and pickup on the full map at its live position, regardless of whether your own survivors sense it. Leave off for normal play.")]
-		public bool RevealEverything;
+		[Header("Reveal")]
+		[Tooltip("Auto: the full map reveals everything only for a defeated spectator (otherwise fog of war). ForceOn/ForceOff: debug override that always reveals / never reveals, ignoring the spectator state.")]
+		public EMapRevealMode RevealMode = EMapRevealMode.Auto;
 
-		// Set by GameUI. Lets the selection controller route map-Space to "inspect" instead of "possess" for the
-		// raid host. Null for normal players.
+		// Set by GameUI. Lets the selection controller route map-Space to "inspect" instead of "possess" and
+		// decides reveal/selection rules for raid and spectate modes. Null until GameUI wires it.
 		[HideInInspector]
-		public RaidModeController RaidController;
+		public SpectatorController Spectator;
 
 		private CursorLockMode _previousCursorLockState;
 		private bool _previousCursorVisible;
@@ -45,9 +52,10 @@ namespace SimpleFPS
 		public static bool IsAnyMapOpen { get; private set; }
 		public bool IsMapOpen => _isMapOpen;
 
-		// When true the map is held open and cannot be closed by the player (Alt toggle or possess close are
-		// ignored). Used by raid mode to lock the RTS host into the map. The match-end path still force-closes
-		// the map so the game-over screen can appear. Owned by RaidModeController; GameMapView stays raid-agnostic.
+		// Generic "hold the map open" capability: while true the map cannot be closed by the player (Alt toggle or
+		// possess close are ignored), and the match-end path still force-closes it so the game-over screen appears.
+		// Currently unused by spectate/raid (the host's map auto-opens once but stays closeable), kept as a reusable
+		// hook for any future "locked map" mode.
 		public bool LockedOpen { get; set; }
 
 		public void Initialize()
@@ -254,9 +262,21 @@ namespace SimpleFPS
 			CameraController.Tick(Time.unscaledDeltaTime, panInput.normalized, zoomInput);
 
 			if (IconController != null)
-				IconController.Tick(this, gameplay, _runner, RevealEverything);
+				IconController.Tick(this, gameplay, _runner, ShouldRevealEverything());
 			if (SelectionController != null)
 				SelectionController.Tick(this, gameplay, _runner);
+		}
+
+		// Reveal everything is a debug tool, off by default. The one automatic case in normal play is a defeated
+		// spectator's full map. A ForceOn/ForceOff set in the inspector overrides that.
+		private bool ShouldRevealEverything()
+		{
+			return RevealMode switch
+			{
+				EMapRevealMode.ForceOn => true,
+				EMapRevealMode.ForceOff => false,
+				_ => Spectator != null && Spectator.Mode == ESpectatorMode.DefeatedSpectator,
+			};
 		}
 
 		private Vector3 GetInitialCenterPosition()

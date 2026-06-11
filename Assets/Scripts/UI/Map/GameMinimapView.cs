@@ -36,8 +36,11 @@ namespace SimpleFPS
 		[Header("Behaviour")]
 		[Tooltip("Minimap automatically hides while the full GameMapView is open so the two overlays do not double up.")]
 		public bool HideWhileFullMapIsOpen = true;
-		[Tooltip("When on, the minimap constantly shows every survivor, zombie, and pickup at its live position (no fog of war). It uses its own awareness model so this does not reveal anything on the full map.")]
-		public bool RevealEverything = true;
+		[Tooltip("Debug only: when on, the minimap shows every survivor, zombie, and pickup at its live position (no fog of war). Off for normal play. Uses its own awareness model so it does not reveal anything on the full map.")]
+		public bool RevealEverything;
+		[Tooltip("Set by GameUI to hide the minimap entirely (defeated spectators have no minimap).")]
+		[HideInInspector]
+		public bool Suppressed;
 		public bool LogSetupStatus;
 
 		private NetworkRunner _runner;
@@ -85,7 +88,7 @@ namespace SimpleFPS
 				return;
 
 			bool fullMapOpen = HideWhileFullMapIsOpen && GameMapView.IsAnyMapOpen;
-			bool shouldShow = gameplayActive && fullMapOpen == false;
+			bool shouldShow = gameplayActive && fullMapOpen == false && Suppressed == false;
 
 			SetVisible(shouldShow);
 			if (MinimapCamera != null)
