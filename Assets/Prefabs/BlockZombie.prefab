@@ -1243,6 +1243,8 @@ MonoBehaviour:
   ClimbObstacleProbeDistance: 1.25
   ClimbCommitDuration: 0.75
   ClimbMantleMaxSnapHeight: 1.75
+  AvoidClimbingToRoofedGoals: 1
+  RoofCheckHeight: 20
   MaxAlertRecipients: 16
   AlertCooldown: 2
   StuckSampleRadius: 0.6
@@ -1295,6 +1297,10 @@ MonoBehaviour:
   SampleMaxDistance: 2
   ReachablePointSampleMaxDistance: 8
   AreaMask: -1
+  UnreachableDistance: 12
+  MidpointBisectionAttempts: 2
+  MidpointSampleDistance: 6
+  MidpointSurroundingRadius: 8
   LaneOffset: 0
   MaxLaneOffset: 2.5
   LaneOffsetTaperDistance: 4

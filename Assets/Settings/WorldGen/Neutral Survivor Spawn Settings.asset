@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: dfb6cd533f538f544b116feba882b7e9, type: 3}
   m_Name: Neutral Survivor Spawn Settings
   m_EditorClassIdentifier: 
-  DesiredNeutralSurvivorCount: 20
+  DesiredNeutralSurvivorCount: 500
   MinDistanceBetweenSelectedSpawnPoints: 46
   MinDistanceToActivePlayerSpawns: 40
   SeedOffset: 0

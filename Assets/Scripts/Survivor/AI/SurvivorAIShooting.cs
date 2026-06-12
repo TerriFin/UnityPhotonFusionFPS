@@ -40,6 +40,12 @@ namespace SimpleFPS
 		public float MaxYawDegreesPerTick = 8f;
 		public float MaxPitchDegreesPerTick = 6f;
 
+		[Header("Targeting")]
+		[Tooltip("Stay on the current target unless another enemy is at least this many metres closer. Prevents the " +
+		         "first-shot timer from resetting every sensor tick when a pack surrounds the survivor and the closest " +
+		         "enemy flickers between several near-equal candidates — which otherwise leaves it never firing.")]
+		public float TargetSwitchHysteresis = 1.5f;
+
 		private Survivor _survivor;
 		private NetworkObject _currentTarget;
 		private float _aimYawError;
@@ -161,6 +167,11 @@ namespace SimpleFPS
 			_survivor.Sensor.GetDirectKnownEnemies(_directTargets);
 
 			float closestDistanceSqr = float.MaxValue;
+			KnownEnemyInfo closest = default;
+			float currentDistanceSqr = float.MaxValue;
+			KnownEnemyInfo current = default;
+			bool hasCurrent = false;
+
 			Vector3 origin = transform.position;
 			for (int i = 0; i < _directTargets.Count; i++)
 			{
@@ -171,16 +182,36 @@ namespace SimpleFPS
 					continue;
 
 				float distanceSqr = (candidate.LastKnownPosition - origin).sqrMagnitude;
-				if (distanceSqr >= closestDistanceSqr)
-					continue;
+				if (distanceSqr < closestDistanceSqr)
+				{
+					closestDistanceSqr = distanceSqr;
+					closest = candidate;
+				}
 
-				closestDistanceSqr = distanceSqr;
-				enemy = candidate;
+				if (_currentTarget != null && candidate.Object == _currentTarget)
+				{
+					currentDistanceSqr = distanceSqr;
+					current = candidate;
+					hasCurrent = true;
+				}
 			}
 
 			_directTargets.Clear();
 			if (closestDistanceSqr == float.MaxValue)
 				return false;
+
+			// Target stickiness: keep the still-valid current target unless a different enemy is decisively closer.
+			// Without this, a surrounding pack makes the "closest" enemy flip between several near-equal candidates
+			// every sensor tick; each flip resets the first-shot delay in UpdateTargetState, so the survivor stays
+			// perpetually "about to fire" and never actually shoots.
+			enemy = closest;
+			if (hasCurrent && current.Object != closest.Object)
+			{
+				float closestDistance = Mathf.Sqrt(closestDistanceSqr);
+				float currentDistance = Mathf.Sqrt(currentDistanceSqr);
+				if (currentDistance - closestDistance <= Mathf.Max(0f, TargetSwitchHysteresis))
+					enemy = current;
+			}
 
 			hasLineOfFire = HasLineOfFire(enemy);
 			return true;

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Fusion;
 using UnityEngine;
@@ -11,6 +12,7 @@ namespace SimpleFPS
 		public GameMapIconController IconController;
 		public RectTransform SelectionBox;
 		public RectTransform AssignedAreaCircle;
+		public RectTransform InputBlocker;
 		public float DragThreshold = 8f;
 		public float DoubleClickTime = 0.35f;
 		public Color SelectionBoxColor = new Color(0.3f, 0.8f, 1f, 0.2f);
@@ -41,6 +43,34 @@ namespace SimpleFPS
 		private Sprite _ringSprite;
 
 		public bool IsDraggingAssignedArea => _areaDragging;
+		public IReadOnlyCollection<Survivor> SelectedSurvivors => _selected;
+		public event Action SelectionChanged;
+		public event Action<Survivor> SurvivorSelected;
+
+		public bool IsSelected(Survivor survivor)
+		{
+			return survivor != null && _selected.Contains(survivor);
+		}
+
+		public void SelectSingleFromRoster(Survivor survivor, Gameplay gameplay, NetworkRunner runner)
+		{
+			bool changed = ClearSelection(false);
+			if (AddSelection(survivor, gameplay, runner, requireMapVisibility: false, notify: false))
+				changed = true;
+
+			if (changed)
+				NotifySelectionChanged();
+		}
+
+		public CharacterMask128 BuildSelectedCommandMask(Gameplay gameplay, NetworkRunner runner)
+		{
+			return BuildSelectedMask(gameplay, runner);
+		}
+
+		public bool IsCommandSelectable(Survivor survivor, Gameplay gameplay, NetworkRunner runner)
+		{
+			return IsSelectable(survivor, gameplay, runner, requireMapVisibility: false);
+		}
 
 		public void Tick(GameMapView mapView, Gameplay gameplay, NetworkRunner runner)
 		{
@@ -60,6 +90,15 @@ namespace SimpleFPS
 
 			Vector2 mousePosition = mouse.position.ReadValue();
 			Camera eventCamera = mapView.GetEventCamera();
+			if (IsPointerBlocked(mousePosition, eventCamera))
+			{
+				_dragging = false;
+				_areaDragging = false;
+				SetSelectionBoxVisible(false);
+				SetAssignedAreaCircleVisible(false);
+				return;
+			}
+
 			HandleKeyboardSelection(gameplay, runner);
 			HandleKeyboardCommands(gameplay, runner);
 			if (HandleKeyboardPossess(mapView, gameplay, runner))
@@ -269,7 +308,7 @@ namespace SimpleFPS
 			var mask = new CharacterMask128();
 			foreach (var survivor in _selected)
 			{
-				if (IsSelectable(survivor, gameplay, runner) == false)
+				if (IsCommandSelectable(survivor, gameplay, runner) == false)
 					continue;
 
 				mask.Set(survivor.CharacterIndex, true);
@@ -278,12 +317,19 @@ namespace SimpleFPS
 			return mask;
 		}
 
-		private void ClearSelection()
+		private bool ClearSelection(bool notify = true)
 		{
+			if (_selected.Count == 0)
+				return false;
+
 			foreach (var survivor in _selected)
 				IconController.SetSelected(survivor, false);
 
 			_selected.Clear();
+			if (notify)
+				NotifySelectionChanged();
+
+			return true;
 		}
 
 		private void RemoveHiddenOrInvalidSelections(Gameplay gameplay, NetworkRunner runner)
@@ -294,7 +340,7 @@ namespace SimpleFPS
 			_selectionRemoval.Clear();
 			foreach (var survivor in _selected)
 			{
-				if (IsSelectable(survivor, gameplay, runner) == false)
+				if (IsCommandSelectable(survivor, gameplay, runner) == false)
 				{
 					_selectionRemoval.Add(survivor);
 				}
@@ -306,15 +352,23 @@ namespace SimpleFPS
 				IconController.SetSelected(_selectionRemoval[i], false);
 			}
 
+			if (_selectionRemoval.Count > 0)
+				NotifySelectionChanged();
+
 			_selectionRemoval.Clear();
 		}
 
-		private void AddSelection(Survivor survivor, Gameplay gameplay, NetworkRunner runner)
+		private bool AddSelection(Survivor survivor, Gameplay gameplay, NetworkRunner runner, bool requireMapVisibility = true, bool notify = true)
 		{
-			if (IsSelectable(survivor, gameplay, runner) == false || _selected.Add(survivor) == false)
-				return;
+			if (IsSelectable(survivor, gameplay, runner, requireMapVisibility) == false || _selected.Add(survivor) == false)
+				return false;
 
 			IconController.SetSelected(survivor, true);
+			SurvivorSelected?.Invoke(survivor);
+			if (notify)
+				NotifySelectionChanged();
+
+			return true;
 		}
 
 		private void HandleKeyboardSelection(Gameplay gameplay, NetworkRunner runner)
@@ -428,6 +482,11 @@ namespace SimpleFPS
 
 		private bool IsSelectable(Survivor survivor, Gameplay gameplay, NetworkRunner runner)
 		{
+			return IsSelectable(survivor, gameplay, runner, requireMapVisibility: true);
+		}
+
+		private bool IsSelectable(Survivor survivor, Gameplay gameplay, NetworkRunner runner, bool requireMapVisibility)
+		{
 			if (survivor == null || gameplay == null || runner == null)
 				return false;
 			if (survivor.Object == null || survivor.Object.IsValid == false)
@@ -437,16 +496,28 @@ namespace SimpleFPS
 
 			// Defeated spectator: any team's player survivor that is visible on the map (never neutrals).
 			if (_canSelectAnyTeam)
-				return CharacterFactionUtility.IsPlayerOwnedSurvivor(survivor) && IconController.IsSurvivorVisible(survivor);
+				return CharacterFactionUtility.IsPlayerOwnedSurvivor(survivor) && (requireMapVisibility == false || IconController.IsSurvivorVisible(survivor));
 
 			if (survivor.OwnerRef != runner.LocalPlayer)
 				return false;
-			if (IconController.IsOwnSurvivorVisible(survivor) == false)
+			if (requireMapVisibility && IconController.IsOwnSurvivorVisible(survivor) == false)
 				return false;
 			if (gameplay.PlayerData.TryGet(runner.LocalPlayer, out var data) == false)
 				return false;
 
 			return survivor.CharacterIndex != data.ActiveCharacterIndex;
+		}
+
+		private void NotifySelectionChanged()
+		{
+			SelectionChanged?.Invoke();
+		}
+
+		private bool IsPointerBlocked(Vector2 screenPosition, Camera eventCamera)
+		{
+			return InputBlocker != null &&
+			       InputBlocker.gameObject.activeInHierarchy &&
+			       RectTransformUtility.RectangleContainsScreenPoint(InputBlocker, screenPosition, eventCamera);
 		}
 
 		private void EnsureSelectionBox(GameMapView mapView)

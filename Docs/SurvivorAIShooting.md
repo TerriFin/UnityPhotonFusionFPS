@@ -46,6 +46,8 @@ public float AimErrorRefreshInterval = 0.8f;
 public float FireAlignmentAngle = 10f;
 public float MaxYawDegreesPerTick = 8f;
 public float MaxPitchDegreesPerTick = 6f;
+
+public float TargetSwitchHysteresis = 1.5f;
 ```
 
 `Survivor.Spawned()` finds an existing component or auto-adds one if missing. Add it to prefabs directly when designer-tuned values are needed.
@@ -54,7 +56,7 @@ public float MaxPitchDegreesPerTick = 6f;
 
 `SurvivorAIShooting.TryGetInput(...)`:
 
-- Reads the closest directly detected enemy from `CharacterSensor` using vision/proximity memories.
+- Reads the closest directly detected enemy from `CharacterSensor` using vision/proximity memories, but keeps targeting **sticky** (see "Target Stickiness").
 - Refuses dead survivor targets defensively even if sensor memory has not pruned them yet.
 - Rotates toward an intentionally imperfect aim direction near the target's configured aim height.
 - Uses separate aim error values for survivor targets and zombie targets.
@@ -76,6 +78,15 @@ It does not call weapon code directly. `Survivor.ProcessInput(...)` still owns t
 Automatic weapons keep firing while `EInputButton.Fire` is held during the burst. Semi-auto weapons such as pistols and shotguns still behave like single shots because their weapon logic only fires on the press/allowed cadence.
 
 If line of fire is lost during a burst, the component releases `Fire` immediately. It uses the survivor sensor's `VisionBlockers` mask for this check, from the current weapon fire transform to the enemy's configured aim height. Noise and bullet-impact memories are valid look/investigation targets for the active AI behavior, but they are not valid shooting targets.
+
+## Target Stickiness
+
+Target selection picks the closest valid direct enemy, but it does **not** switch off the current target every time another enemy becomes marginally closer. The survivor keeps its current target until either:
+
+- the current target is no longer a valid direct enemy (dead, out of direct awareness, or not auto-attackable), or
+- a different enemy is closer than the current target by more than `TargetSwitchHysteresis` metres.
+
+This matters when a pack surrounds the survivor. Several zombies sit at near-equal distances, so a pure "closest enemy" choice flips between them on every sensor tick (every `SensorInterval`, default `0.2s`). Each flip changes the current target, which resets the first-shot delay (`FirstShotDelayMin..Max`, `0.5–1.4s`). Because the flip interval is shorter than that delay, the timer never elapses and the surrounded survivor never actually fires — it just keeps re-aiming. Stickiness locks onto one zombie long enough to complete the delay, fire, and continue, while still re-prioritising a zombie that pushes decisively closer (more than `TargetSwitchHysteresis` nearer than the current one). Set `TargetSwitchHysteresis` to `0` to restore the old always-closest behaviour.
 
 ## AI Weapon Selection
 

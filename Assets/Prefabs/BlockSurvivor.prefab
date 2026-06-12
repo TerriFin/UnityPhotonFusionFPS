@@ -1460,6 +1460,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 293074807b8a64e47a3d43aedb7284a9, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  RoamDwellTimeMin: 10
+  RoamDwellTimeMax: 25
 --- !u!114 &8282734940496870642
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1812,6 +1814,10 @@ MonoBehaviour:
   SampleMaxDistance: 2
   ReachablePointSampleMaxDistance: 8
   AreaMask: -1
+  UnreachableDistance: 12
+  MidpointBisectionAttempts: 2
+  MidpointSampleDistance: 6
+  MidpointSurroundingRadius: 8
   LaneOffset: 0
   MaxLaneOffset: 2.5
   LaneOffsetTaperDistance: 4

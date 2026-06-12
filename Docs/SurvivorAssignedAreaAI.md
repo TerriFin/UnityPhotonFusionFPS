@@ -66,8 +66,8 @@ The preview object does not need manual editor setup. `GameMapSelectionControlle
 
 ## Behavior Flow
 
-1. Resolve a reachable entry point inside the assigned circle before accepting the order.
-2. Move to that reachable entry point until inside the circle.
+1. Resolve a patrol-point set that is reachable **from the middle of the circle** before accepting the order. The survivor's own distance to the circle is irrelevant — a survivor across the map chains to the area through the navigator (the same midpoint-bisection fallback move orders use), so an order is only rejected when the circle itself contains no reachable NavMesh.
+2. Move toward an entry point inside the circle until inside it. A far entry point is reached by chaining, exactly like a move order; once the survivor is within the radius of the center it switches to patrolling.
 3. While travelling to the circle, do not start looting or investigation detours.
 4. Once inside the circle, optional behaviors can run again.
 5. If no higher-priority behavior is active, pick a reachable random patrol point inside the circle.
@@ -77,7 +77,7 @@ The preview object does not need manual editor setup. `GameMapSelectionControlle
 
 The dragged center may be on non-navigable terrain such as a rooftop, car, prop, or building corner. That is valid as long as the circle contains at least one reachable NavMesh point.
 
-For selected map orders, state authority resolves one shared reachable patrol-point set for the selected group. The first probe is the circle center. If that is not reachable, it checks fixed points near the north, east, south, west, and diagonal sides of the circle. These probes use one sampled survivor/NavMesh start point and one scratch path, and they test the circle point's X/Z at NavMesh height so a rooftop or car click can still find reachable ground inside the circle. If none of those probes are reachable, the command is ignored immediately and selected survivors keep their current assignments.
+For selected map orders, state authority resolves one shared reachable patrol-point set for the selected group. The first probe is the circle center. If that is not reachable, it checks fixed points near the north, east, south, west, and diagonal sides of the circle. **Reachability is evaluated from the middle of the circle, not from the survivor's position**: the start point is the circle center snapped onto the NavMesh (sampled out to the radius so a center landing on a rooftop, car, or building corner still resolves to walkable ground inside the circle), and each probe tests the candidate's X/Z at NavMesh height. Anchoring at the center means patrol points only have to be mutually reachable inside the area, so a far survivor with no in-budget path to the area is not wrongly rejected — it chains there like a move order. If none of those center-relative probes are reachable, the circle genuinely contains no reachable ground, the command is ignored immediately, and selected survivors keep their current assignments.
 
 Once the area is known to contain reachable terrain, the generator samples additional points inside the circle. The target count is based on the radius rounded up, so a radius of `3.14` tries to keep about `4` patrol points and a radius of `8.51` tries to keep about `9`. Each survivor receives the same point set but picks its own entry/patrol target, so the group can spread out without doing per-survivor area searches.
 

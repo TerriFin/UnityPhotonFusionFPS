@@ -548,7 +548,9 @@ namespace SimpleFPS
 					navigator.SetDestination(_anchorPosition);
 
 				navigator.Tick(_survivor.transform.position);
-				if (navigator.IsDestinationReached)
+				// Order reached, or close-but-blocked (navigator reports it unreachable): stop and hold rather than
+				// freezing mid-map or chasing a point we can never stand on.
+				if (navigator.IsDestinationReached || navigator.IsDestinationUnreachable)
 				{
 					SetHoldPosition(_anchorPosition);
 					return GetHoldInput();

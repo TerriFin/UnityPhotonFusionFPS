@@ -110,7 +110,13 @@ namespace SimpleFPS
 				return true;
 			}
 
-			if (TryCreateReachabilityQuery(navigator, survivor.transform.position, out var query) == false)
+			// Evaluate reachability from the MIDDLE of the area, not the survivor's position. A patrol order can be
+			// issued from across the map where the survivor has no in-budget NavMesh path to the area yet (it chains
+			// there via the navigator, exactly like a move order). Patrol points only need to be mutually reachable
+			// within the area, so anchoring the query at the centre stops a far order being wrongly rejected. Sample
+			// the centre out to the radius so a centre landing just off the NavMesh still resolves to walkable ground.
+			float centerSampleDistance = Mathf.Max(navigator.SampleMaxDistance, radius);
+			if (TryCreateReachabilityQuery(navigator, center, centerSampleDistance, out var query) == false)
 				return false;
 
 			int targetCount = Mathf.Max(1, Mathf.CeilToInt(radius));
@@ -212,15 +218,24 @@ namespace SimpleFPS
 
 		private bool TryCreateReachabilityQuery(CharacterNavigator navigator, Vector3 currentPosition, out ReachabilityQuery query)
 		{
+			return TryCreateReachabilityQuery(navigator, currentPosition, navigator.SampleMaxDistance, out query);
+		}
+
+		// startSampleDistance only widens how far the START is snapped onto the NavMesh (so an area centre that
+		// lands just off-mesh still resolves to walkable ground inside the area). Candidate patrol points are always
+		// sampled at the tight SampleMaxDistance so they stay on the intended ground.
+		private bool TryCreateReachabilityQuery(CharacterNavigator navigator, Vector3 startPosition, float startSampleDistance, out ReachabilityQuery query)
+		{
 			query = default;
 			if (_scratchPath == null)
 				_scratchPath = new NavMeshPath();
 
-			float sampleDistance = Mathf.Max(0.01f, navigator.SampleMaxDistance);
-			if (NavMesh.SamplePosition(currentPosition, out var startHit, sampleDistance, navigator.AreaMask) == false)
+			float candidateSampleDistance = Mathf.Max(0.01f, navigator.SampleMaxDistance);
+			float startSample = Mathf.Max(candidateSampleDistance, startSampleDistance);
+			if (NavMesh.SamplePosition(startPosition, out var startHit, startSample, navigator.AreaMask) == false)
 				return false;
 
-			query = new ReachabilityQuery(startHit.position, sampleDistance, navigator.AreaMask, _scratchPath);
+			query = new ReachabilityQuery(startHit.position, candidateSampleDistance, navigator.AreaMask, _scratchPath);
 			return true;
 		}
 

@@ -56,6 +56,16 @@ namespace SimpleFPS
 		public float ClimbCommitDuration = 0.75f;
 		public float ClimbMantleMaxSnapHeight = 2.0f;
 
+		[Header("Roof Avoidance")]
+		[Tooltip("When the chased goal has overhead cover (a roof/overhang above it), prefer pathfinding and do not " +
+		         "climb to reach it. Stops zombies scaling buildings to breach survivors hiding inside. A target on " +
+		         "an open rooftop (no overhead cover) is still reachable by climbing.")]
+		public bool AvoidClimbingToRoofedGoals = true;
+		[Tooltip("How far straight up to look for overhead cover above the goal. Must comfortably exceed a building's " +
+		         "interior floor-to-ceiling height, or a roof above a ground-floor survivor will be missed and the " +
+		         "zombie will fall back to climbing. The default storage buildings are ~8 units tall.")]
+		public float RoofCheckHeight = 12f;
+
 		[Header("Alerts")]
 		public int MaxAlertRecipients = 8;
 		public float AlertCooldown = 2f;
@@ -92,6 +102,8 @@ namespace SimpleFPS
 		private bool _isStuckElevated;
 		private Vector3 _stuckWanderDirection;
 		private float _stuckWanderEndTime;
+		private bool _goalUnderRoof;
+		private float _nextRoofCheckTime;
 
 		private const float ClimbCheckProbeHeight = 0.25f;
 		private const float MantleForwardDistanceScale = 0.75f;
@@ -100,6 +112,9 @@ namespace SimpleFPS
 		private const float MantleMinRise = 0.08f;
 		private const float MantleMinSurfaceNormalY = 0.65f;
 		private const float ClimbObstacleBeyondGoalBuffer = 0.15f;
+		private const float RoofCheckStartHeight = 0.5f;
+		// Sheltered-goal sub-policy threshold (see BuildShelteredGoalMoveInput).
+		private const float ShelteredGoalClimbMinRise = 0.5f; // survivor must be this much higher before we climb
 		private const int TraversalHitBufferSize = 16;
 
 		private readonly RaycastHit[] _traversalHits = new RaycastHit[TraversalHitBufferSize];
@@ -372,6 +387,14 @@ namespace SimpleFPS
 
 		private NetworkedInput BuildExplicitGoalMoveInput(Vector3 goal, float stoppingDistance, bool directFinalApproach)
 		{
+			// A roofed goal (survivor sheltered inside a structure) is the one exception to the unified
+			// route-vs-direct policy: climbing toward it would just scale the building and strand the zombie on the
+			// roof above the survivor. Hand it to a dedicated sub-policy that navigates in and only climbs upward to
+			// a survivor on unreachable interior terrain — never above the survivor's own height.
+			RefreshGoalUnderRoof(goal);
+			if (_goalUnderRoof)
+				return BuildShelteredGoalMoveInput(goal, stoppingDistance);
+
 			EnsureExplicitGoalRoute(goal);
 
 			if (_useDirectExplicitGoalMovement)
@@ -481,6 +504,12 @@ namespace SimpleFPS
 
 		private bool ShouldClimbTowardGoal(Vector3 direction, Vector3 goal)
 		{
+			// For a sheltered (roofed) goal, only ever climb to rise toward a survivor that is still above us — e.g.
+			// standing on a crate inside the building. Once we have reached their height, stop: anything higher is the
+			// roof, not the survivor. This caps the climb at the survivor's own level and wins over the climb commit.
+			if (_goalUnderRoof && goal.y - transform.position.y <= ShelteredGoalClimbMinRise)
+				return false;
+
 			float now = Time.timeSinceLevelLoad;
 			if (now < _climbCommitUntil)
 				return true;
@@ -497,6 +526,64 @@ namespace SimpleFPS
 
 			_climbCommitUntil = now + Mathf.Max(0.05f, ClimbCommitDuration);
 			return true;
+		}
+
+		private void RefreshGoalUnderRoof(Vector3 goal)
+		{
+			float now = Time.timeSinceLevelLoad;
+			if (now < _nextRoofCheckTime)
+				return;
+
+			_nextRoofCheckTime = now + Mathf.Max(0.05f, ExplicitGoalRouteRefreshInterval);
+			_goalUnderRoof = IsGoalUnderRoof(goal);
+		}
+
+		private bool IsGoalUnderRoof(Vector3 goal)
+		{
+			if (AvoidClimbingToRoofedGoals == false || RoofCheckHeight <= 0f)
+				return false;
+
+			// Straight-up ray from just above the goal. A non-character world hit means the target sits under a roof
+			// or overhang (hiding inside / beneath a building), so it should be reached by a ground route rather than
+			// by climbing the structure. Character colliders are ignored, so the survivor's own body never counts.
+			Vector3 origin = goal + Vector3.up * RoofCheckStartHeight;
+			return HasNonCharacterTraversalHit(GetPhysicsScene(), origin, Vector3.up, RoofCheckHeight, GetTraversalMask());
+		}
+
+		// Movement toward a sheltered (roofed) survivor — the one exception to the unified route-vs-direct policy.
+		// Reach them by a ground route through the structure; only climb upward to a survivor on unreachable interior
+		// terrain (a crate), never onto the roof; and shuffle off if we somehow end up above them.
+		private NetworkedInput BuildShelteredGoalMoveInput(Vector3 goal, float stoppingDistance)
+		{
+			Vector3 position = transform.position;
+
+			// Drive the navigator straight at the survivor. Its midpoint-chaining gets us as close as the interior
+			// NavMesh allows — through the entrance, across the floor, up to the foot of whatever they stand on. A
+			// non-zero move means we are still travelling.
+			var navigator = _zombie.Navigator;
+			if (navigator != null)
+			{
+				navigator.SetDestination(goal);
+				NetworkedInput navInput = BuildMoveInput(goal, stoppingDistance, true);
+				if (navInput.MoveDirection != Vector2.zero)
+					return navInput;
+
+				// Zero move while a route still exists is just a transient corner stop — stay on the navigator and
+				// do not switch to climbing until it has genuinely brought us as close as it can.
+				if (navigator.HasPath && navigator.IsDestinationReached == false)
+					return navInput;
+			}
+
+			// As close as the NavMesh gets us. If the survivor is meaningfully above us they are on interior terrain
+			// the NavMesh does not cover (a crate) — climb up to them. ShouldClimbTowardGoal caps the climb at the
+			// survivor's own height so it cannot overshoot onto the roof.
+			if (CanClimbDirectGoals && goal.y - position.y > ShelteredGoalClimbMinRise && CanUseDirectExplicitGoalMovement(goal))
+				return BuildDirectExplicitGoalMoveInput(goal, stoppingDistance);
+
+			// Level with the survivor (face them, melee takes over) — or, if a zombie ended up above a sheltered
+			// survivor (on the roof), no downward path and no upward climb apply, so it simply holds here facing them.
+			// We deliberately do not herd it off the roof for now, to avoid walking a roof-edge zombie off the map.
+			return BuildLookInput(goal);
 		}
 
 		private bool HasClimbObstacleAhead(Vector3 direction, float probeDistance)
@@ -627,6 +714,7 @@ namespace SimpleFPS
 			// surface does not keep climbing the next tick).
 			_explicitRouteTarget = default;
 			_nextExplicitGoalRouteRefreshTime = 0f;
+			_nextRoofCheckTime = 0f;
 			_hasExplicitRouteTarget = false;
 			_useDirectExplicitGoalMovement = false;
 			_explicitRouteEndsBeforeGoal = false;

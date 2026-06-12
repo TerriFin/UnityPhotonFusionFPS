@@ -352,6 +352,17 @@ namespace SimpleFPS
 			RPC_RequestMapCombatSettings(selectedCharacterMask.Mask0, selectedCharacterMask.Mask1, selectedCharacterMask.Mask2, selectedCharacterMask.Mask3, enabled);
 		}
 
+		public void RequestMapAISetting(CharacterMask128 selectedCharacterMask, ESurvivorAISetting setting, bool enabled)
+		{
+			if (HasStateAuthority)
+			{
+				SurvivorAICommands.ApplySelectedTeamAISetting(Runner.LocalPlayer, selectedCharacterMask, setting, enabled);
+				return;
+			}
+
+			RPC_RequestMapAISetting(selectedCharacterMask.Mask0, selectedCharacterMask.Mask1, selectedCharacterMask.Mask2, selectedCharacterMask.Mask3, (int)setting, enabled);
+		}
+
 		public void RequestSwitchActiveCharacter(int targetCharacterIndex)
 		{
 			if (HasStateAuthority)
@@ -1200,6 +1211,18 @@ namespace SimpleFPS
 
 			var selectedCharacterMask = new CharacterMask128(selectedMask0, selectedMask1, selectedMask2, selectedMask3);
 			SurvivorAICommands.ApplySelectedTeamCombatSettings(info.Source, selectedCharacterMask, enabled);
+		}
+
+		[Rpc(RpcSources.All, RpcTargets.StateAuthority, Channel = RpcChannel.Reliable)]
+		private void RPC_RequestMapAISetting(int selectedMask0, int selectedMask1, int selectedMask2, int selectedMask3, int settingId, bool enabled, RpcInfo info = default)
+		{
+			if (IsValidMapOrderSource(info.Source) == false)
+				return;
+			if (System.Enum.IsDefined(typeof(ESurvivorAISetting), settingId) == false)
+				return;
+
+			var selectedCharacterMask = new CharacterMask128(selectedMask0, selectedMask1, selectedMask2, selectedMask3);
+			SurvivorAICommands.ApplySelectedTeamAISetting(info.Source, selectedCharacterMask, (ESurvivorAISetting)settingId, enabled);
 		}
 
 		[Rpc(RpcSources.All, RpcTargets.StateAuthority, Channel = RpcChannel.Reliable)]

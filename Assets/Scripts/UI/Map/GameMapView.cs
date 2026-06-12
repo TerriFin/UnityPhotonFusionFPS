@@ -21,6 +21,7 @@ namespace SimpleFPS
 		public GameMapCameraController CameraController;
 		public GameMapIconController IconController;
 		public GameMapSelectionController SelectionController;
+		public SurvivorRosterController RosterController;
 
 		[Header("Render Texture")]
 		public RenderTexture MapRenderTexture;
@@ -265,6 +266,8 @@ namespace SimpleFPS
 				IconController.Tick(this, gameplay, _runner, ShouldRevealEverything());
 			if (SelectionController != null)
 				SelectionController.Tick(this, gameplay, _runner);
+			if (RosterController != null)
+				RosterController.Tick(this, gameplay, _runner);
 		}
 
 		// Reveal everything is a debug tool, off by default. The one automatic case in normal play is a defeated
@@ -355,6 +358,19 @@ namespace SimpleFPS
 
 			if (SelectionController != null && SelectionController.IconController == null)
 				SelectionController.IconController = IconController;
+
+			if (RosterController == null)
+				RosterController = GetComponentInChildren<SurvivorRosterController>(true) ?? GetComponent<SurvivorRosterController>();
+
+			if (RosterController != null)
+			{
+				if (RosterController.MapView == null)
+					RosterController.MapView = this;
+				if (RosterController.SelectionController == null)
+					RosterController.SelectionController = SelectionController;
+				if (RosterController.IconController == null)
+					RosterController.IconController = IconController;
+			}
 
 			if (_canvas == null)
 				_canvas = GetComponentInParent<Canvas>();

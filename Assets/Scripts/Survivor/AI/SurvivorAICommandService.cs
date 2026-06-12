@@ -6,6 +6,15 @@ using UnityEngine.Serialization;
 
 namespace SimpleFPS
 {
+	public enum ESurvivorAISetting
+	{
+		CollectVisiblePickups = 0,
+		InvestigateSuspiciousStimuli = 1,
+		RecruitNeutralSurvivors = 2,
+		AllowCombatAIActivation = 3,
+		CombatMovement = 4,
+	}
+
 	[Serializable]
 	public sealed class SurvivorAICommandSettings
 	{
@@ -292,6 +301,23 @@ namespace SimpleFPS
 			}
 		}
 
+		public void ApplySelectedTeamAISetting(PlayerRef owner, CharacterMask128 selectedCharacterMask, ESurvivorAISetting setting, bool enabled)
+		{
+			if (TryGetSelectedCommandContext(owner, selectedCharacterMask, out var data, out var survivors) == false)
+				return;
+
+			foreach (var pair in survivors)
+			{
+				int characterIndex = pair.Key;
+				var survivor = pair.Value;
+
+				if (IsSelectedCommandTargetValid(data, selectedCharacterMask, characterIndex, survivor) == false)
+					continue;
+
+				ApplyAISetting(survivor, setting, enabled);
+			}
+		}
+
 		private void ApplyNearbyTeamCommand(
 			PlayerRef owner,
 			PlayerData data,
@@ -335,6 +361,51 @@ namespace SimpleFPS
 			}
 
 			_laneTargetBuffer.Clear();
+		}
+
+		private static void ApplyAISetting(Survivor survivor, ESurvivorAISetting setting, bool enabled)
+		{
+			if (survivor == null)
+				return;
+
+			switch (setting)
+			{
+				case ESurvivorAISetting.CollectVisiblePickups:
+				{
+					var settings = survivor.NonCombatAISettings;
+					settings.CollectVisiblePickups = enabled;
+					survivor.SetNonCombatAISettings(settings);
+					break;
+				}
+				case ESurvivorAISetting.InvestigateSuspiciousStimuli:
+				{
+					var settings = survivor.NonCombatAISettings;
+					settings.InvestigateSuspiciousStimuli = enabled;
+					survivor.SetNonCombatAISettings(settings);
+					break;
+				}
+				case ESurvivorAISetting.RecruitNeutralSurvivors:
+				{
+					var settings = survivor.NonCombatAISettings;
+					settings.RecruitNeutralSurvivors = enabled;
+					survivor.SetNonCombatAISettings(settings);
+					break;
+				}
+				case ESurvivorAISetting.AllowCombatAIActivation:
+				{
+					var settings = survivor.NonCombatAISettings;
+					settings.AllowCombatAIActivation = enabled;
+					survivor.SetNonCombatAISettings(settings);
+					break;
+				}
+				case ESurvivorAISetting.CombatMovement:
+				{
+					var settings = survivor.CombatAISettings;
+					settings.CombatMovementEnabled = enabled;
+					survivor.SetCombatAISettings(settings);
+					break;
+				}
+			}
 		}
 
 		private bool TryGetLookPoint(Survivor origin, out Vector3 destination)

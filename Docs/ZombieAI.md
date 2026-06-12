@@ -195,13 +195,32 @@ Route decisions are cached for `ExplicitGoalRouteRefreshInterval`. Direct traver
 
 `MaxDirectTraversalDistance` is a hard leash around reckless traversal. If the straight-line world distance to the raw goal is greater than this value, the zombie will not enter direct movement or climbing. This prevents distant alerts from making zombies scale buildings across the map. A zombie may still pathfind closer to an off-NavMesh goal and begin direct traversal once it enters the allowed range.
 
+**Sheltered goals are the one exception to the unified route-vs-direct policy** (see "Sheltered-Goal Movement" below). When `AvoidClimbingToRoofedGoals` is enabled, a single ray is cast straight up from just above the goal (`RoofCheckStartHeight` to `RoofCheckHeight`, traversal mask, character colliders ignored) on its own refresh timer. If it hits world geometry, the goal is *under a roof or overhang* — a survivor sheltered inside/beneath a building — and `BuildExplicitGoalMoveInput` routes the whole approach through the sheltered sub-policy instead of the steps above. A target with open sky above it (e.g. standing exposed on a rooftop) is **not** sheltered and uses the normal policy, so it stays reachable by climbing. The up-ray ignores character colliders, so the survivor's own body never registers as a roof.
+
+`RoofCheckHeight` must comfortably exceed a building's interior floor-to-ceiling height. The ray starts at `goal.y + RoofCheckStartHeight` (≈ the survivor's feet), so for a survivor on the ground floor of an 8-unit-tall building the roof sits ~8 units up; a `RoofCheckHeight` shorter than that misses the roof entirely, `_goalUnderRoof` stays false, and every zombie reverts to the old climb-the-wall behaviour. The default storage buildings are ~8 units tall, so the default is `12`.
+
 This makes the policy configurable:
 
 - A low `DirectRouteLengthMultiplier` makes zombies reckless and likely to climb walls or drop from ledges.
 - A high value makes zombies prefer roads, ramps, and doors unless the target is genuinely unreachable.
 - `MaxDirectTraversalDistance` limits how far away direct traversal may begin.
+- `AvoidClimbingToRoofedGoals` / `RoofCheckHeight` route sheltered targets through the interior instead of over the roof.
 - `ReachablePointSampleDistance` controls how far around an off-NavMesh goal the approach search may snap.
 - `ExplicitGoalRouteRefreshInterval` controls route resolution cost for moving targets.
+
+## Sheltered-Goal Movement
+
+Buildings have normal interior meshes and the NavMesh covers their floors, so a survivor hiding inside is usually directly navigable through the entrance. The problem the roof check solves is narrow: when the entrance is on the far side, the normal "route is much longer than straight-line, so push directly" shortcut used to send the zombie *over the wall onto the roof*, where it ended up on top of — and unable to reach — the survivor below.
+
+When the goal is sheltered, `BuildShelteredGoalMoveInput` takes over with a small, self-contained policy:
+
+1. **Navigate in.** Point the navigator straight at the survivor. The navigator's normal path-following and midpoint-chaining bring the zombie as close as the interior NavMesh allows — through the entrance, across the floor, up to the foot of whatever the survivor is standing on. While it is still travelling, that move input is used.
+2. **Climb the last bit only if the survivor is above us.** Once the navigator can get no closer, if the survivor is more than `ShelteredGoalClimbMinRise` above the zombie they are on interior terrain the NavMesh does not cover (a crate, a shelf). The zombie then climbs directly toward them — but `ShouldClimbTowardGoal` caps the climb at the survivor's own height, so it rises onto the crate and **stops there instead of continuing up onto the roof**.
+3. **Level with the survivor.** If the survivor is not above the zombie, it is already as close as it can get; the zombie faces the goal and the melee/attack logic takes over.
+
+This keeps a single coherent rule for the interior exception — *navigate to the survivor; only climb upward to reach them, never above them* — while leaving the general route-vs-direct policy and all open-air climbing untouched.
+
+A zombie that ends up *above* a sheltered survivor (left over on a roof) has no downward path and no upward climb, so it falls through to simply facing the survivor and holding on the roof. Herding it back down is intentionally **not** done for now: a random walk to find a roof edge risks walking a roof-edge zombie off the map. If roof-stranding becomes a real problem it can be revisited.
 
 ## Direct Traversal And Climbing
 
@@ -211,6 +230,7 @@ Direct traversal is deliberately crude and threatening:
 - A single forward raycast at approximately knee height in front of a directly moving zombie detects walls, low props, and ledge faces and enables climbing.
 - Climb and mantle probes ignore colliders that belong to zombies or survivors. Packed hordes should press against each other through ordinary separation, not mistake another character for climbable geometry or hoist onto one.
 - A nearby higher goal also enables climbing.
+- For a **sheltered goal**, `ShouldClimbTowardGoal` caps the climb at the survivor's own height: it only returns true while the survivor is more than `ShelteredGoalClimbMinRise` above the zombie, so the zombie rises onto a crate the survivor stands on but never continues up onto the roof. This cap wins over the climb commit timer. See "Sheltered-Goal Movement".
 - While Attacking or Hunting, a zombie that is already inside `ZombieStats.AttackRange` holds position and faces the target during attack cooldown instead of continuing to push forward. This prevents packed zombies from trying to climb the wall behind a survivor they can already hit.
 - Climb obstacle probes are capped before the current goal point. A wall behind the survivor is not treated as climbable progress toward the survivor.
 - A short commitment timer prevents the climb impulse from flickering off while the zombie rises past an obstacle edge. The commit deliberately persists across state transitions (Investigating → Attacking when the zombie crests the ledge and finally sees the survivor, for example). Resetting it on the state change would cause the climb impulse to switch off the same tick the survivor becomes visible, the zombie would drop back below the ledge, re-engage the climb on the next obstacle hit, and loop.
@@ -245,6 +265,8 @@ ClimbSpeedMultiplier
 ClimbObstacleProbeDistance
 ClimbCommitDuration
 ClimbMantleMaxSnapHeight
+AvoidClimbingToRoofedGoals
+RoofCheckHeight
 ```
 
 `ExplicitGoalStoppingDistance` is treated as a final-goal/attack-position tuning value.
@@ -269,6 +291,8 @@ ClimbSpeedMultiplier: 0.5
 ClimbObstacleProbeDistance: 1.25
 ClimbCommitDuration: 0.75
 ClimbMantleMaxSnapHeight: 2.0
+AvoidClimbingToRoofedGoals: true
+RoofCheckHeight: 12
 ```
 
 ## Idle Off-NavMesh Recovery

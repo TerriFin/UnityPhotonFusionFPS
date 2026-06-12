@@ -39,6 +39,16 @@ GameUI
 
 The panel should be anchored to the side of the map. On narrow screens it can use one column; on wider screens it can use two columns. If there are more survivors than fit vertically, the roster scrolls.
 
+Implemented scripts:
+
+```text
+Assets/Scripts/UI/Map/SurvivorRosterController.cs
+Assets/Scripts/UI/Map/SurvivorRosterEntry.cs
+Assets/Scripts/UI/Map/ResponsiveRosterGrid.cs
+```
+
+`GameMapView` has a `RosterController` reference. If a `SurvivorRosterController` exists under the map object, `GameMapView` wires it automatically. The controller can also create a plain runtime panel when `CreateRuntimeUIIfMissing` is enabled, which is useful for testing before making a polished prefab.
+
 ## Responsive Grid Setup
 
 Unity's built-in `GridLayoutGroup` is good for arranging cards, but it does not automatically choose a good column count from available panel width. The clean first implementation should use a tiny helper component, for example `ResponsiveRosterGrid`, attached to the `Content` object.
@@ -212,6 +222,8 @@ Rules:
 
 The first pass can make a card click replace the current selection. Modifier selection can be added later if wanted.
 
+When a survivor is selected from the map, keyboard cycling, drag select, or the roster itself, the roster scrolls that survivor's card into view. During multi-selection this happens for every newly selected survivor, so the final scroll position follows the latest survivor added to the selection.
+
 ## Hover Link
 
 When the mouse hovers a survivor card, draw a line from the card's bottom-right corner to that survivor's map icon.
@@ -274,6 +286,8 @@ public enum ESurvivorAISetting
 Gameplay.RequestMapAISetting(CharacterMask128 mask, ESurvivorAISetting setting, bool enabled)
 SurvivorAICommandService.ApplySelectedTeamAISetting(PlayerRef owner, CharacterMask128 mask, ESurvivorAISetting setting, bool enabled)
 ```
+
+This request path is now implemented. The UI still sends a local `CharacterMask128`, and state authority validates ownership, alive state, active-survivor exclusion, and the setting enum before applying the change.
 
 State authority must validate the same things current map setting requests validate:
 

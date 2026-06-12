@@ -115,6 +115,27 @@ namespace SimpleFPS
 				enemyIcon.SetSelected(selected);
 		}
 
+		public bool TryGetVisibleSurvivorIconRect(Survivor survivor, out RectTransform rectTransform)
+		{
+			rectTransform = null;
+			if (survivor == null)
+				return false;
+
+			if (_ownIcons.TryGetValue(survivor, out var ownIcon) && ownIcon != null && ownIcon.gameObject.activeSelf)
+			{
+				rectTransform = ownIcon.RectTransform;
+				return rectTransform != null;
+			}
+
+			if (_enemyIcons.TryGetValue(survivor, out var enemyIcon) && enemyIcon != null && enemyIcon.gameObject.activeSelf)
+			{
+				rectTransform = enemyIcon.RectTransform;
+				return rectTransform != null;
+			}
+
+			return false;
+		}
+
 		private void EnsureSetup(IGameMapView mapView)
 		{
 			if (IconRoot == null)
