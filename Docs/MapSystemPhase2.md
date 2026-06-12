@@ -97,6 +97,8 @@ Icons are local UI objects. They should not be networked. Each client builds its
 
 The icon and awareness layers must ignore survivor objects until their Fusion `NetworkObject` is valid/spawned. This prevents map UI from reading `[Networked]` properties such as `OwnerRef` or `CharacterIndex` during the short join window before `Spawned()` has completed locally.
 
+A survivor icon's kind (own / enemy / neutral) and colour are **recomputed every tick from the live survivor**, not cached at icon creation. A neutral survivor can be recruited mid-session — its networked `OwnerRef` flips from "no real player" to the recruiter — and the icon must follow it from the neutral appearance to the new owner's team appearance. (This is most visible to a defeated spectator using reveal-everything, where another team's recruits are drawn as enemy icons; before the per-tick refresh they stayed frozen as white neutral icons.)
+
 ## Enemy Survivor Icons
 
 Enemy icons are visible only when one of the local player's survivors currently senses that enemy as a direct enemy.

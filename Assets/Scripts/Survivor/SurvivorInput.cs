@@ -141,10 +141,6 @@ namespace SimpleFPS
 				_accumulatedInput.Buttons.Set(EInputButton.Shotgun, keyboard.digit3Key.isPressed || keyboard.numpad3Key.isPressed);
 				_accumulatedInput.Buttons.Set(EInputButton.CommandFollow, keyboard.fKey.isPressed);
 				_accumulatedInput.Buttons.Set(EInputButton.CommandMove, keyboard.mKey.isPressed);
-				_accumulatedInput.Buttons.Set(EInputButton.CommandIdle, keyboard.iKey.isPressed);
-				_accumulatedInput.Buttons.Set(EInputButton.CommandEnableNonCombatAI, keyboard.oKey.isPressed);
-				_accumulatedInput.Buttons.Set(EInputButton.CommandDisableCombatAI, keyboard.kKey.isPressed);
-				_accumulatedInput.Buttons.Set(EInputButton.CommandEnableCombatAI, keyboard.lKey.isPressed);
 				_accumulatedInput.Buttons.Set(EInputButton.PrevCharacter, keyboard.leftShiftKey.isPressed);
 				_accumulatedInput.Buttons.Set(EInputButton.NextCharacter, keyboard.leftCtrlKey.isPressed);
 			}

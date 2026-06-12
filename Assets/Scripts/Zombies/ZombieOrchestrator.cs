@@ -45,6 +45,7 @@ namespace SimpleFPS
 		private bool _isOvertime;
 		private bool _isStarted;
 		private bool _hasRunInitialPopulation;
+		private bool _hasMatchStartReroll;
 		private bool _isPrimary = true;
 		private bool _loggedMissingRunner;
 		private bool _loggedNotSceneAuthority;
@@ -147,7 +148,14 @@ namespace SimpleFPS
 
 			_loggedNoSpawnPoints = false;
 
-			TryRunInitialPopulation();
+			// Match-start reroll, mirroring the neutral survivor orchestrator: once the match leaves skirmish, clear
+			// the skirmish horde and re-seed a fresh match-start layout. Until then, run the normal one-time initial
+			// population (which happens during skirmish). Gameplay.IsRunning is guarded against the pre-Spawned()
+			// window, so it is safe to read here.
+			if (_hasMatchStartReroll == false && Gameplay != null && Gameplay.IsRunning)
+				RerollZombiesForMatchStart();
+			else
+				TryRunInitialPopulation();
 
 			if (ShouldRunSpawner() == false)
 				return;
@@ -249,6 +257,59 @@ namespace SimpleFPS
 				return;
 
 			RunInitialPopulation(runner);
+		}
+
+		// When the match transitions out of skirmish, despawn the skirmish horde and re-seed a fresh layout with the
+		// match-start offset, then re-run the initial population. Mirrors NeutralSurvivorOrchestrator's match-start
+		// re-roll so the live match does not inherit the skirmish-preview zombies.
+		[ContextMenu("Reroll Zombies For Match Start")]
+		public void RerollZombiesForMatchStart()
+		{
+			NetworkRunner runner = GetRunner();
+			if (runner == null || runner.IsSceneAuthority == false)
+				return;
+			if (HasUsableSettings == false)
+				return;
+
+			_hasMatchStartReroll = true;
+
+			ClearAllZombies(runner);
+
+			if (_spawnPoints.Count == 0)
+				CollectSpawnPoints();
+			if (_spawnPoints.Count == 0)
+				return;
+
+			// Re-seed with the match-start offset so the layout differs from the skirmish preview, then allow the
+			// initial population burst to run again from the clean slate.
+			_random = new System.Random(GetSeed() + (Settings != null ? Settings.MatchStartSeedOffset : 0));
+			_hasRunInitialPopulation = false;
+			_spawnRemainder = 0f;
+			_nextPulseTime = Time.timeSinceLevelLoad + GetPulseInterval();
+
+			RunInitialPopulation(runner);
+		}
+
+		private void ClearAllZombies(NetworkRunner runner)
+		{
+			if (runner == null || runner.IsSceneAuthority == false)
+				return;
+
+			for (int i = ZombieCharacter.ActiveZombies.Count - 1; i >= 0; i--)
+			{
+				var zombie = ZombieCharacter.ActiveZombies[i];
+				if (zombie == null)
+				{
+					ZombieCharacter.ActiveZombies.RemoveAt(i);
+					continue;
+				}
+				if (zombie.Object == null || zombie.Object.IsValid == false)
+					continue;
+
+				runner.Despawn(zombie.Object);
+			}
+
+			_spawnedZombies.Clear();
 		}
 
 		[ContextMenu("Start Overtime")]
@@ -555,15 +616,28 @@ namespace SimpleFPS
 			if (_isOvertime)
 				return true;
 
-			ResolveGameplay();
-			if (Gameplay == null)
+			if (TryGetGameplayState(out EGameplayState state) == false)
 				return SpawnDuringSkirmish;
-			if (Gameplay.State == EGameplayState.Running)
+			if (state == EGameplayState.Running)
 				return true;
-			if (Gameplay.State == EGameplayState.Skirmish)
+			if (state == EGameplayState.Skirmish)
 				return SpawnDuringSkirmish;
 
 			return false;
+		}
+
+		// Gameplay.State (a [Networked] property) throws until the gameplay object is Spawned(). Treat an unspawned
+		// gameplay as "no readable state yet" so spawn logic falls back to its pre-match behaviour instead of crashing
+		// during the brief window before Fusion spawns the scene gameplay object.
+		private bool TryGetGameplayState(out EGameplayState state)
+		{
+			state = default;
+			ResolveGameplay();
+			if (Gameplay == null || Gameplay.Object == null || Gameplay.Object.IsValid == false)
+				return false;
+
+			state = Gameplay.State;
+			return true;
 		}
 
 		private int GetSpawnBudget()
@@ -583,7 +657,8 @@ namespace SimpleFPS
 
 		private int GetConnectedPlayerCount()
 		{
-			if (Gameplay == null)
+			// PlayerData is also a [Networked] property; guard the pre-Spawned() window like the State reads.
+			if (Gameplay == null || Gameplay.Object == null || Gameplay.Object.IsValid == false)
 				return 0;
 
 			int count = 0;
@@ -644,13 +719,12 @@ namespace SimpleFPS
 			if (duration <= 0f)
 				return 0f;
 
-			ResolveGameplay();
-			if (Gameplay != null)
+			if (TryGetGameplayState(out EGameplayState state))
 			{
-				if (Gameplay.State == EGameplayState.Skirmish && Settings.ScaleDuringSkirmish == false)
+				if (state == EGameplayState.Skirmish && Settings.ScaleDuringSkirmish == false)
 					return 0f;
 
-				if (Gameplay.State == EGameplayState.Running)
+				if (state == EGameplayState.Running)
 				{
 					float remaining = Gameplay.RemainingTime.RemainingTime(Gameplay.Runner).GetValueOrDefault();
 					return Mathf.Clamp01((duration - remaining) / duration);

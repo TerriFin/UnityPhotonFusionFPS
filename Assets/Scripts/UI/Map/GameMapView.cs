@@ -258,8 +258,10 @@ namespace SimpleFPS
 				if (keyboard.dKey.isPressed) { panInput += Vector2.right; }
 			}
 
-			bool suppressZoom = SelectionController != null && SelectionController.IsDraggingAssignedArea;
-			float zoomInput = mouse != null && suppressZoom == false ? mouse.scroll.ReadValue().y * 0.01f : 0f;
+			float zoomInput = 0f;
+			if (mouse != null && CanZoomMapAtPointer(mouse.position.ReadValue()))
+				zoomInput = mouse.scroll.ReadValue().y * 0.01f;
+
 			CameraController.Tick(Time.unscaledDeltaTime, panInput.normalized, zoomInput);
 
 			if (IconController != null)
@@ -280,6 +282,20 @@ namespace SimpleFPS
 				EMapRevealMode.ForceOff => false,
 				_ => Spectator != null && Spectator.Mode == ESpectatorMode.DefeatedSpectator,
 			};
+		}
+
+		private bool CanZoomMapAtPointer(Vector2 screenPosition)
+		{
+			if (SelectionController != null && SelectionController.IsDraggingAssignedArea)
+				return false;
+			if (MapImage == null)
+				return false;
+
+			Camera eventCamera = GetEventCamera();
+			if (SelectionController != null && SelectionController.IsPointerBlocked(screenPosition, eventCamera))
+				return false;
+
+			return RectTransformUtility.RectangleContainsScreenPoint(MapImage.rectTransform, screenPosition, eventCamera);
 		}
 
 		private Vector3 GetInitialCenterPosition()

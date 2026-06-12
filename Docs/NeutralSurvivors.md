@@ -59,8 +59,8 @@ On recruitment:
 1. State authority validates the recruiting survivor is player-owned and alive.
 2. Neutral survivor is removed from the neutral collection.
 3. Survivor is assigned to the recruiting player's team.
-4. A new character index is appended to that player's team.
-5. Player `CharacterCount`, `AliveCharacterMask`, and `IsAlive` are updated.
+4. The recruited survivor is inserted directly after the recruiting survivor in that player's character order.
+5. Later character indices and the alive mask are shifted up by one so cycling and roster order keep the recruit grouped with the recruiter.
 6. Existing gear and health are preserved.
 7. Visual team color updates from neutral to the recruiting player's color.
 8. Temporary neutral-only stat overrides are restored to the survivor prefab's normal values.
@@ -434,7 +434,7 @@ The hosting menu also exposes a separate neutral survivor count input. That valu
 7. Initialize neutral color and neutral faction.
 8. Assign marker patrol area through existing non-combat/assigned-area AI.
 9. Add proximity recruitment by player-controlled survivors.
-10. Append recruited survivor to the player's team while preserving health and gear.
+10. Insert recruited survivor directly after the recruiter while preserving health and gear.
 11. Make zombies consider neutral survivors valid targets.
 12. Make player-owned AI survivors ignore neutral survivors as enemies.
 13. Ensure neutral survivor attacks/damage only affect zombies.
@@ -452,7 +452,7 @@ The first pass is implemented with these runtime pieces:
 - The `NeutralSurvivor` runtime component snapshots and applies neutral stat overrides after spawn, then restores the snapshot when recruited.
 - Neutral identity is represented by `Survivor.OwnerRef == PlayerRef.None` before recruitment.
 - `Gameplay` keeps neutral survivors out of player `PlayerData` until recruitment.
-- Recruitment appends the survivor to the recruiting player's team, assigns input authority to the survivor hierarchy, updates `CharacterCount` and `AliveCharacterMask`, restores neutral stat overrides, and assigns the post-recruitment order described in Neutral Ownership Model.
+- Recruitment inserts the survivor directly after the recruiter in the recruiting player's team order, assigns input authority to the survivor hierarchy, updates `CharacterCount` and `AliveCharacterMask`, restores neutral stat overrides, and assigns the post-recruitment order described in Neutral Ownership Model.
 - Because recruitment changes `OwnerRef`/`CharacterIndex` through networked replication (no Spawned/Despawned), each peer re-syncs its local character lookup in `Survivor.Render()` via `Gameplay.ReregisterSurvivor`, so recruited survivors appear in cycling, AI commands, and death-switching on every machine. See `TeamCharacterSystem.md`.
 - Survivor AI can still sense neutral survivors for map/UI purposes, but `SurvivorAIShooting` filters them out as auto-shoot targets.
 - Non-possessed player-owned survivors actively recruit: `SurvivorRecruitingAI` walks them to sensed neutral survivors (toggled by `RecruitNeutralSurvivors`, on in `Default`). See `SurvivorRecruitingAI.md`.

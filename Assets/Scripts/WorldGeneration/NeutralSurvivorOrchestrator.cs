@@ -228,8 +228,11 @@ namespace SimpleFPS
 
 		private bool IsMatchRunning()
 		{
+			// Gameplay.IsRunning is guarded against the pre-Spawned() window, so reading it here cannot throw
+			// "Networked properties can only be accessed when Spawned() has been called" if this Update wins the
+			// race against Fusion spawning the scene gameplay object.
 			ResolveGameplay();
-			return Gameplay != null && Gameplay.State == EGameplayState.Running;
+			return Gameplay != null && Gameplay.IsRunning;
 		}
 
 		// When the match transitions out of skirmish, all participating player spawns have been assigned.

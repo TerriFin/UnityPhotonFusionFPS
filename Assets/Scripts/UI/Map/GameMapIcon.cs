@@ -64,6 +64,15 @@ namespace SimpleFPS
 			RefreshColor();
 		}
 
+		// Updates both the kind and the base color. Used when a revealed neutral survivor is recruited mid-session:
+		// its OwnerRef changes, so it must flip from the neutral appearance to its new owner's team appearance.
+		public void SetSurvivorAppearance(GameMapIconKind kind, Color color)
+		{
+			Kind = kind;
+			_baseColor = color;
+			RefreshColor();
+		}
+
 		public void SetOpacity(float opacity)
 		{
 			_opacity = Mathf.Clamp01(opacity);

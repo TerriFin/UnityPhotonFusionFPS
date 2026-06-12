@@ -117,6 +117,12 @@ namespace SimpleFPS
 
 		public bool DoubleDamageActive => State == EGameplayState.Running && RemainingTime.RemainingTime(Runner).GetValueOrDefault() < DoubleDamageDuration;
 
+		// Safe to read before Spawned(): the gameplay scene NetworkObject exists from scene load, but its
+		// [Networked] State cannot be accessed until Fusion has spawned it. World-generation systems poll for the
+		// match start from Update() before that is guaranteed, so this returns false instead of throwing until the
+		// state is actually readable.
+		public bool IsRunning => Object != null && Object.IsValid && State == EGameplayState.Running;
+
 		private bool _isNicknameSent;
 		private float _runningStateTime;
 		private List<Survivor> _spawnedPlayers = new(16);
@@ -248,20 +254,56 @@ namespace SimpleFPS
 
 			_neutralSurvivors.Remove(neutral);
 
-			int newCharacterIndex = Mathf.Clamp(playerData.CharacterCount, 0, CharacterMask128.Capacity - 1);
 			PlayerRef owner = recruiter.OwnerRef;
+			int oldCharacterCount = playerData.CharacterCount;
+			int newCharacterIndex = Mathf.Clamp(recruiter.CharacterIndex + 1, 0, oldCharacterCount);
+			ShiftCharacterIndicesForRecruitment(owner, newCharacterIndex, oldCharacterCount);
+
 			AssignInputAuthorityToHierarchy(neutral, owner);
 			neutral.OwnerRef = owner;
 			neutral.CharacterIndex = newCharacterIndex;
 			RegisterSurvivor(neutral);
 
-			playerData.CharacterCount = Mathf.Max(playerData.CharacterCount + 1, newCharacterIndex + 1);
-			playerData.SetCharacterAlive(newCharacterIndex, true);
+			playerData.AliveCharacterMask = InsertAliveCharacter(playerData.AliveCharacterMask, newCharacterIndex, oldCharacterCount);
+			playerData.CharacterCount = oldCharacterCount + 1;
+			if (playerData.ActiveCharacterIndex >= newCharacterIndex)
+				playerData.ActiveCharacterIndex++;
 			playerData.IsAlive = true;
 			PlayerData.Set(owner, playerData);
 
 			ApplyRecruitmentOrder(neutral, recruiter);
 			return true;
+		}
+
+		private void ShiftCharacterIndicesForRecruitment(PlayerRef owner, int insertIndex, int oldCharacterCount)
+		{
+			if (_characterCache.TryGetValue(owner, out var survivors) == false)
+				return;
+
+			for (int i = oldCharacterCount - 1; i >= insertIndex; i--)
+			{
+				if (survivors.TryGetValue(i, out var survivor) == false || survivor == null)
+					continue;
+
+				survivors.Remove(i);
+				survivor.CharacterIndex = i + 1;
+				survivors[i + 1] = survivor;
+			}
+		}
+
+		private static CharacterMask128 InsertAliveCharacter(CharacterMask128 oldMask, int insertIndex, int oldCharacterCount)
+		{
+			var newMask = new CharacterMask128();
+			for (int i = 0; i < oldCharacterCount; i++)
+			{
+				if (oldMask.Contains(i) == false)
+					continue;
+
+				newMask.Set(i >= insertIndex ? i + 1 : i, true);
+			}
+
+			newMask.Set(insertIndex, true);
+			return newMask;
 		}
 
 		/// <summary>

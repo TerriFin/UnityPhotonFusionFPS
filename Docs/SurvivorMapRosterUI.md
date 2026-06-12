@@ -186,12 +186,12 @@ This should use the same direct sensor knowledge that map icons use. Do not run 
 
 The currently possessed survivor should show a crown icon or equivalent clear marker.
 
-Current map rules make the possessed survivor not selectable for command masks. The roster should preserve that unless we deliberately change the command rules later:
+Movement/follow/defend command masks still exclude the possessed survivor. Fine-grained roster behavior toggles are allowed to include the possessed survivor, because they only update stored AI settings that matter when that survivor becomes uncontrolled.
 
 - show the possessed survivor in the list,
 - mark it with the crown,
-- do not include it in map command selection masks,
-- behavior toggles may still update its stored settings if desired, but those settings only matter after it becomes uncontrolled.
+- do not include it in map movement/follow/defend command masks,
+- allow individual behavior toggles to update its stored settings.
 
 ## Selection Behavior
 
@@ -212,17 +212,18 @@ SurvivorRosterController
 
 Rules:
 
-- left click a roster card: select that survivor,
+- left click an unselected roster card: add that survivor to the current selection,
+- left click an already selected roster card: remove that survivor from the current selection,
 - selected roster cards are highlighted,
 - map-selected survivors are highlighted in the roster,
 - dead/off-team/invalid survivors cannot be selected,
-- the possessed survivor is marked but not command-selectable,
+- the possessed survivor is marked but not command-selectable for movement/follow/defend orders,
 - right click outside the map does nothing,
 - while the map is open, left clicking empty non-interactive UI/map space clears the current selection.
 
-The first pass can make a card click replace the current selection. Modifier selection can be added later if wanted.
+Roster card selection is additive by default so the player can build groups from the list without keyboard modifiers. Clicking an already selected card toggles it off.
 
-When a survivor is selected from the map, keyboard cycling, drag select, or the roster itself, the roster scrolls that survivor's card into view. During multi-selection this happens for every newly selected survivor, so the final scroll position follows the latest survivor added to the selection.
+When a survivor is selected from the map, keyboard cycling, drag select, or the roster itself, the roster scrolls that survivor's card into view. During multi-selection this happens for every newly selected survivor, so the final scroll position follows the latest survivor added to the selection. Shift/Ctrl keyboard cycling remains active while the pointer is over the roster; only map pointer actions are blocked by the roster panel.
 
 ## Hover Link
 
@@ -264,14 +265,7 @@ Initial combat toggles should map to current combat settings:
 Combat movement / combat AI enabled
 ```
 
-The current keyboard shortcuts only toggle broad setting presets:
-
-- `I` disables all optional non-combat/combat-activation settings,
-- `O` enables all optional non-combat/combat-activation settings,
-- `K` disables combat settings,
-- `L` enables combat settings.
-
-The roster needs finer-grained requests. Planned command-service extension:
+The old broad keyboard setting shortcuts (`I`, `O`, `K`, `L`) have been removed. AI behavior settings are controlled through the roster's individual and bulk toggles. The roster uses the finer-grained request path:
 
 ```csharp
 public enum ESurvivorAISetting
@@ -287,7 +281,7 @@ Gameplay.RequestMapAISetting(CharacterMask128 mask, ESurvivorAISetting setting, 
 SurvivorAICommandService.ApplySelectedTeamAISetting(PlayerRef owner, CharacterMask128 mask, ESurvivorAISetting setting, bool enabled)
 ```
 
-This request path is now implemented. The UI still sends a local `CharacterMask128`, and state authority validates ownership, alive state, active-survivor exclusion, and the setting enum before applying the change.
+This request path is now implemented. The UI still sends a local `CharacterMask128`, and state authority validates ownership, alive state, and the setting enum before applying the change. Unlike movement/follow/defend orders, individual AI setting toggles are allowed to include the currently possessed survivor.
 
 State authority must validate the same things current map setting requests validate:
 

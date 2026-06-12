@@ -52,6 +52,8 @@ namespace SimpleFPS
 		public float UnderpopulatedRegionBias = 0.65f;
 		public int RegionGridSize = 4;
 		public int SeedOffset = 30000;
+		[Tooltip("Added to the world seed for the match-start re-roll. When the match leaves skirmish, the skirmish horde is despawned and a fresh layout is re-seeded with this offset so the live match differs from the skirmish preview.")]
+		public int MatchStartSeedOffset = 7919;
 
 		private void OnValidate()
 		{

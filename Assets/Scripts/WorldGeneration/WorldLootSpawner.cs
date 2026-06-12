@@ -44,7 +44,10 @@ namespace SimpleFPS
 				return;
 
 			ResolveGameplay();
-			if (Gameplay == null || Gameplay.State != EGameplayState.Running)
+			// Gameplay.IsRunning is guarded against the pre-Spawned() window. Reading Gameplay.State directly here
+			// threw "Networked properties can only be accessed when Spawned() has been called" because this Update
+			// runs (and finds the scene Gameplay via FindObjectOfType) before Fusion has spawned it.
+			if (Gameplay == null || Gameplay.IsRunning == false)
 				return;
 
 			RerollLootForMatchStart();

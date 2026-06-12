@@ -13,6 +13,8 @@ namespace SimpleFPS
 		public GameMapSelectionController SelectionController;
 		public GameMapIconController IconController;
 		public RectTransform RosterRoot;
+		[Tooltip("Rect that blocks map clicks while the pointer is over the roster. Leave empty to use the scroll view when available, otherwise the roster root.")]
+		public RectTransform PointerBlocker;
 		public ScrollRect ScrollRect;
 		public RectTransform Content;
 		public ResponsiveRosterGrid ResponsiveGrid;
@@ -107,10 +109,23 @@ namespace SimpleFPS
 
 			if (CreateRuntimeUIIfMissing)
 				EnsureRuntimeUI();
-			if (SelectionController != null && RosterRoot != null)
-				SelectionController.InputBlocker = RosterRoot;
+			else
+				EnsureHoverLine();
+
+			if (SelectionController != null)
+				SelectionController.InputBlocker = GetPointerBlocker();
 
 			AttachListeners();
+		}
+
+		private RectTransform GetPointerBlocker()
+		{
+			if (PointerBlocker != null)
+				return PointerBlocker;
+			if (ScrollRect != null)
+				return ScrollRect.transform as RectTransform;
+
+			return RosterRoot;
 		}
 
 		private void AttachListeners()
@@ -227,7 +242,7 @@ namespace SimpleFPS
 			if (SelectionController == null || _gameplay == null || _runner == null)
 				return;
 
-			SelectionController.SelectSingleFromRoster(survivor, _gameplay, _runner);
+			SelectionController.ToggleSelectionFromRoster(survivor, _gameplay, _runner);
 		}
 
 		private void HandleEntryHoverChanged(Survivor survivor, bool hovered)
@@ -529,6 +544,7 @@ namespace SimpleFPS
 			}
 
 			HoverLine.gameObject.SetActive(true);
+			HoverLine.SetAsLastSibling();
 			HoverLine.anchoredPosition = (cardLocal + iconLocal) * 0.5f;
 			HoverLine.sizeDelta = new Vector2(length, Mathf.Max(1f, HoverLineThickness));
 			HoverLine.localRotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(delta.y, delta.x) * Mathf.Rad2Deg);

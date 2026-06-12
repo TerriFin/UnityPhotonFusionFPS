@@ -210,12 +210,22 @@ namespace SimpleFPS
 
 					_staleSurvivors.Remove(survivor);
 
+					// Recompute appearance every tick. A revealed neutral can be recruited mid-session — its OwnerRef
+					// changes, flipping it from the neutral icon to its new owner's team icon. Without this refresh the
+					// icon stays frozen at whatever it was when first revealed, so a recruited survivor keeps showing
+					// the neutral colour (only visible at all with the "reveal everything" debug / spectator view).
+					GameMapIconKind kind = survivor.IsNeutral ? GameMapIconKind.NeutralSurvivor : GameMapIconKind.EnemySurvivor;
+					Color fallbackColor = survivor.IsNeutral ? FallbackNeutralColor : FallbackEnemyColor;
+					Color teamColor = GetTeamColor(gameplay, survivor, fallbackColor);
+
 					if (_enemyIcons.TryGetValue(survivor, out var icon) == false || icon == null)
 					{
-						GameMapIconKind kind = survivor.IsNeutral ? GameMapIconKind.NeutralSurvivor : GameMapIconKind.EnemySurvivor;
-						Color fallbackColor = survivor.IsNeutral ? FallbackNeutralColor : FallbackEnemyColor;
-						icon = CreateIcon(survivor, kind, GetTeamColor(gameplay, survivor, fallbackColor), EnemyIconSize);
+						icon = CreateIcon(survivor, kind, teamColor, EnemyIconSize);
 						_enemyIcons[survivor] = icon;
+					}
+					else
+					{
+						icon.SetSurvivorAppearance(kind, teamColor);
 					}
 
 					bool visible = mapView.IsWorldPositionVisibleOnMap(memory.LastKnownPosition);

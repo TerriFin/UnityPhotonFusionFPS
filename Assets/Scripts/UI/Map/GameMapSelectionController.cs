@@ -52,13 +52,15 @@ namespace SimpleFPS
 			return survivor != null && _selected.Contains(survivor);
 		}
 
-		public void SelectSingleFromRoster(Survivor survivor, Gameplay gameplay, NetworkRunner runner)
+		public void ToggleSelectionFromRoster(Survivor survivor, Gameplay gameplay, NetworkRunner runner)
 		{
-			bool changed = ClearSelection(false);
-			if (AddSelection(survivor, gameplay, runner, requireMapVisibility: false, notify: false))
-				changed = true;
+			if (survivor != null && _selected.Contains(survivor))
+			{
+				RemoveSelection(survivor);
+				return;
+			}
 
-			if (changed)
+			if (AddSelection(survivor, gameplay, runner, requireMapVisibility: false, notify: false))
 				NotifySelectionChanged();
 		}
 
@@ -90,6 +92,11 @@ namespace SimpleFPS
 
 			Vector2 mousePosition = mouse.position.ReadValue();
 			Camera eventCamera = mapView.GetEventCamera();
+
+			HandleKeyboardSelection(gameplay, runner);
+			if (HandleKeyboardPossess(mapView, gameplay, runner))
+				return;
+
 			if (IsPointerBlocked(mousePosition, eventCamera))
 			{
 				_dragging = false;
@@ -98,11 +105,6 @@ namespace SimpleFPS
 				SetAssignedAreaCircleVisible(false);
 				return;
 			}
-
-			HandleKeyboardSelection(gameplay, runner);
-			HandleKeyboardCommands(gameplay, runner);
-			if (HandleKeyboardPossess(mapView, gameplay, runner))
-				return;
 
 			if (mouse.leftButton.wasPressedThisFrame)
 			{
@@ -371,6 +373,18 @@ namespace SimpleFPS
 			return true;
 		}
 
+		private bool RemoveSelection(Survivor survivor, bool notify = true)
+		{
+			if (survivor == null || _selected.Remove(survivor) == false)
+				return false;
+
+			IconController.SetSelected(survivor, false);
+			if (notify)
+				NotifySelectionChanged();
+
+			return true;
+		}
+
 		private void HandleKeyboardSelection(Gameplay gameplay, NetworkRunner runner)
 		{
 			if (_selected.Count > 1)
@@ -438,31 +452,6 @@ namespace SimpleFPS
 			return true;
 		}
 
-		private void HandleKeyboardCommands(Gameplay gameplay, NetworkRunner runner)
-		{
-			if (_commandsAllowed == false)
-				return;
-
-			var keyboard = Keyboard.current;
-			if (keyboard == null)
-				return;
-
-			bool idlePressed = keyboard.iKey.wasPressedThisFrame;
-			bool enablePressed = keyboard.oKey.wasPressedThisFrame;
-			bool combatOffPressed = keyboard.kKey.wasPressedThisFrame;
-			bool combatOnPressed = keyboard.lKey.wasPressedThisFrame;
-
-			CharacterMask128 selectedMask = BuildSelectedMask(gameplay, runner);
-			if (selectedMask.IsEmpty)
-				return;
-
-			if (idlePressed != enablePressed)
-				gameplay.RequestMapNonCombatSettings(selectedMask, enablePressed);
-
-			if (combatOffPressed != combatOnPressed)
-				gameplay.RequestMapCombatSettings(selectedMask, combatOnPressed);
-		}
-
 		private Survivor FindNextSelectableSurvivor(Gameplay gameplay, NetworkRunner runner, PlayerData data, int startIndex, int direction)
 		{
 			int count = Mathf.Max(0, data.CharacterCount);
@@ -513,7 +502,7 @@ namespace SimpleFPS
 			SelectionChanged?.Invoke();
 		}
 
-		private bool IsPointerBlocked(Vector2 screenPosition, Camera eventCamera)
+		public bool IsPointerBlocked(Vector2 screenPosition, Camera eventCamera)
 		{
 			return InputBlocker != null &&
 			       InputBlocker.gameObject.activeInHierarchy &&

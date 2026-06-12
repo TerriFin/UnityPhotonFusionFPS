@@ -311,7 +311,7 @@ namespace SimpleFPS
 				int characterIndex = pair.Key;
 				var survivor = pair.Value;
 
-				if (IsSelectedCommandTargetValid(data, selectedCharacterMask, characterIndex, survivor) == false)
+				if (IsSelectedCommandTargetValid(data, selectedCharacterMask, characterIndex, survivor, allowActiveCharacter: true) == false)
 					continue;
 
 				ApplyAISetting(survivor, setting, enabled);
@@ -462,11 +462,11 @@ namespace SimpleFPS
 			return _survivorsByOwner.TryGetValue(owner, out survivors);
 		}
 
-		private bool IsSelectedCommandTargetValid(PlayerData data, CharacterMask128 selectedCharacterMask, int characterIndex, Survivor survivor)
+		private bool IsSelectedCommandTargetValid(PlayerData data, CharacterMask128 selectedCharacterMask, int characterIndex, Survivor survivor, bool allowActiveCharacter = false)
 		{
 			if (survivor == null || survivor.Health == null || survivor.Health.IsAlive == false)
 				return false;
-			if (characterIndex == data.ActiveCharacterIndex)
+			if (allowActiveCharacter == false && characterIndex == data.ActiveCharacterIndex)
 				return false;
 			if (selectedCharacterMask.Contains(characterIndex) == false)
 				return false;

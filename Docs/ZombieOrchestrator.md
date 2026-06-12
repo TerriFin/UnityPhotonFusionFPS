@@ -104,6 +104,7 @@ ZombieOrchestratorSettings
 	float UnderpopulatedRegionBias;
 	int RegionGridSize;
 	int SeedOffset;
+	int MatchStartSeedOffset;
 }
 ```
 
@@ -134,6 +135,16 @@ RegionGridSize: 3 or 4
 ```
 
 The initial population pass still respects each spawn point's `MaxSpawnCountPerPulse`, survivor-blocking rules, NavMesh validation, and regional spawn selection. If the map does not have enough valid spawn points or per-point capacity, fewer zombies spawn.
+
+## Skirmish vs Match Start
+
+The orchestrator spawns zombies during skirmish (the initial population and, if `SpawnDuringSkirmish` is set, ongoing pulses). When the match transitions out of skirmish (`Gameplay.State` reaches `Running`), it performs a one-time **match-start reroll**, mirroring the neutral survivor and loot spawners:
+
+1. Despawn the entire skirmish horde (every active zombie) so the live match starts from a clean slate.
+2. Re-seed the spawn RNG with `+ MatchStartSeedOffset` so the match layout differs from the skirmish preview.
+3. Re-run the initial population pass and resume normal spawn pulses.
+
+This is what keeps the match from simply inheriting the zombies that wandered around during skirmish. Player proximity is still respected: the re-rolled initial population uses the same survivor-blocking rules, so it does not seed zombies on top of just-spawned player survivors, and `Gameplay.SpawnTeam` additionally clears zombies near each player spawn. The trigger is polled via `Gameplay.IsRunning`, which is safe to read before the gameplay `NetworkObject` is spawned (it returns `false` until then instead of throwing).
 
 `UnderpopulatedRegionBias` controls how strongly the orchestrator prefers cleared areas:
 

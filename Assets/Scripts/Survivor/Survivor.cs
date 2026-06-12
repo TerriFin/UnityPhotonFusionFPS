@@ -458,26 +458,6 @@ namespace SimpleFPS
 				_sceneObjects.Gameplay.SurvivorAICommands.MoveNearbyTeamToLookPoint(OwnerRef, CharacterIndex);
 			}
 
-			if (input.Buttons.WasPressed(_previousButtons, EInputButton.CommandIdle) && isActive && HasStateAuthority)
-			{
-				_sceneObjects.Gameplay.SurvivorAICommands.SetNearbyTeamNonCombatSettings(OwnerRef, CharacterIndex, false);
-			}
-
-			if (input.Buttons.WasPressed(_previousButtons, EInputButton.CommandEnableNonCombatAI) && isActive && HasStateAuthority)
-			{
-				_sceneObjects.Gameplay.SurvivorAICommands.SetNearbyTeamNonCombatSettings(OwnerRef, CharacterIndex, true);
-			}
-
-			if (input.Buttons.WasPressed(_previousButtons, EInputButton.CommandDisableCombatAI) && isActive && HasStateAuthority)
-			{
-				_sceneObjects.Gameplay.SurvivorAICommands.SetNearbyTeamCombatSettings(OwnerRef, CharacterIndex, false);
-			}
-
-			if (input.Buttons.WasPressed(_previousButtons, EInputButton.CommandEnableCombatAI) && isActive && HasStateAuthority)
-			{
-				_sceneObjects.Gameplay.SurvivorAICommands.SetNearbyTeamCombatSettings(OwnerRef, CharacterIndex, true);
-			}
-
 			if (input.Buttons.WasPressed(_previousButtons, EInputButton.Spray) && HasStateAuthority)
 			{
 				if (Runner.GetPhysicsScene().Raycast(CameraHandle.position, KCC.LookDirection, out var hit, 2.5f, LayerMask.GetMask("Default"), QueryTriggerInteraction.Ignore))
