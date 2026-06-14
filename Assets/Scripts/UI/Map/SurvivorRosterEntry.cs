@@ -34,7 +34,9 @@ namespace SimpleFPS
 		public Toggle InvestigateToggle;
 		public Toggle RecruitToggle;
 		public Toggle CombatActivationToggle;
+		[HideInInspector]
 		public Toggle CombatMovementToggle;
+		public SurvivorWeaponPreferenceControl WeaponPreferenceControl;
 
 		[Header("Colors")]
 		public Color NormalBackgroundColor = new Color(0.08f, 0.1f, 0.12f, 0.82f);
@@ -54,9 +56,11 @@ namespace SimpleFPS
 		public event Action<Survivor> Clicked;
 		public event Action<Survivor, bool> HoverChanged;
 		public event Action<Survivor, ESurvivorAISetting, bool> SettingChanged;
+		public event Action<Survivor, ESurvivorWeaponPreference> WeaponPreferenceChanged;
 
 		private void Awake()
 		{
+			DisableLegacyCombatMovementToggle();
 			EnsureRuntimeLayout();
 			AttachListeners();
 		}
@@ -156,7 +160,7 @@ namespace SimpleFPS
 			SetToggleWithoutNotify(InvestigateToggle, _survivor.NonCombatAISettings.InvestigateSuspiciousStimuli);
 			SetToggleWithoutNotify(RecruitToggle, _survivor.NonCombatAISettings.RecruitNeutralSurvivors);
 			SetToggleWithoutNotify(CombatActivationToggle, _survivor.NonCombatAISettings.AllowCombatAIActivation);
-			SetToggleWithoutNotify(CombatMovementToggle, _survivor.CombatAISettings.CombatMovementEnabled);
+			WeaponPreferenceControl?.SetValueWithoutNotify(_survivor.CombatAISettings.WeaponPreference);
 			_suppressToggleEvents = false;
 		}
 
@@ -180,7 +184,8 @@ namespace SimpleFPS
 			AddToggleListener(InvestigateToggle, ESurvivorAISetting.InvestigateSuspiciousStimuli);
 			AddToggleListener(RecruitToggle, ESurvivorAISetting.RecruitNeutralSurvivors);
 			AddToggleListener(CombatActivationToggle, ESurvivorAISetting.AllowCombatAIActivation);
-			AddToggleListener(CombatMovementToggle, ESurvivorAISetting.CombatMovement);
+			if (WeaponPreferenceControl != null)
+				WeaponPreferenceControl.ValueChanged += HandleWeaponPreferenceChanged;
 
 			_listenersAttached = true;
 		}
@@ -205,6 +210,14 @@ namespace SimpleFPS
 				return;
 
 			SettingChanged?.Invoke(_survivor, setting, value);
+		}
+
+		private void HandleWeaponPreferenceChanged(ESurvivorWeaponPreference preference)
+		{
+			if (_suppressToggleEvents || _survivor == null)
+				return;
+
+			WeaponPreferenceChanged?.Invoke(_survivor, preference);
 		}
 
 		private void EnsureRuntimeLayout()
@@ -316,30 +329,41 @@ namespace SimpleFPS
 			    InvestigateToggle != null &&
 			    RecruitToggle != null &&
 			    CombatActivationToggle != null &&
-			    CombatMovementToggle != null)
+			    WeaponPreferenceControl != null)
 				return;
 
-			var row = new GameObject("Toggle Row", typeof(RectTransform), typeof(HorizontalLayoutGroup));
-			row.transform.SetParent(transform, false);
-			var rect = row.GetComponent<RectTransform>();
-			rect.anchorMin = new Vector2(0f, 0f);
-			rect.anchorMax = new Vector2(1f, 0f);
-			rect.pivot = new Vector2(0.5f, 0f);
-			rect.offsetMin = new Vector2(54f, 6f);
-			rect.offsetMax = new Vector2(-8f, 30f);
-			var layout = row.GetComponent<HorizontalLayoutGroup>();
-			layout.spacing = 4f;
-			layout.childAlignment = TextAnchor.MiddleLeft;
-			layout.childControlWidth = false;
-			layout.childControlHeight = true;
-			layout.childForceExpandWidth = false;
-			layout.childForceExpandHeight = true;
+			Transform row = transform.Find("Toggle Row");
+			if (row == null)
+			{
+				var rowObject = new GameObject("Toggle Row", typeof(RectTransform), typeof(HorizontalLayoutGroup));
+				rowObject.transform.SetParent(transform, false);
+				row = rowObject.transform;
+				var rect = rowObject.GetComponent<RectTransform>();
+				rect.anchorMin = new Vector2(0f, 0f);
+				rect.anchorMax = new Vector2(1f, 0f);
+				rect.pivot = new Vector2(0.5f, 0f);
+				rect.offsetMin = new Vector2(54f, 6f);
+				rect.offsetMax = new Vector2(-8f, 30f);
+				var layout = rowObject.GetComponent<HorizontalLayoutGroup>();
+				layout.spacing = 4f;
+				layout.childAlignment = TextAnchor.MiddleLeft;
+				layout.childControlWidth = false;
+				layout.childControlHeight = true;
+				layout.childForceExpandWidth = false;
+				layout.childForceExpandHeight = true;
+			}
 
-			CollectPickupsToggle ??= CreateToggle(row.transform, "P");
-			InvestigateToggle ??= CreateToggle(row.transform, "?");
-			RecruitToggle ??= CreateToggle(row.transform, "+");
-			CombatActivationToggle ??= CreateToggle(row.transform, "!");
-			CombatMovementToggle ??= CreateToggle(row.transform, "M");
+			CollectPickupsToggle ??= CreateToggle(row, "P");
+			InvestigateToggle ??= CreateToggle(row, "?");
+			RecruitToggle ??= CreateToggle(row, "+");
+			CombatActivationToggle ??= CreateToggle(row, "!");
+			WeaponPreferenceControl ??= CreateWeaponPreferenceControl(row);
+		}
+
+		private void DisableLegacyCombatMovementToggle()
+		{
+			if (CombatMovementToggle != null)
+				CombatMovementToggle.gameObject.SetActive(false);
 		}
 
 		private Toggle CreateToggle(Transform parent, string label)
@@ -382,6 +406,23 @@ namespace SimpleFPS
 			toggle.targetGraphic = background;
 			toggle.graphic = check;
 			return toggle;
+		}
+
+		private SurvivorWeaponPreferenceControl CreateWeaponPreferenceControl(Transform parent)
+		{
+			var root = new GameObject(
+				"Weapon Preference",
+				typeof(RectTransform),
+				typeof(Image),
+				typeof(Button),
+				typeof(LayoutElement),
+				typeof(SurvivorWeaponPreferenceControl));
+			root.transform.SetParent(parent, false);
+			root.GetComponent<RectTransform>().sizeDelta = new Vector2(54f, 22f);
+			var layout = root.GetComponent<LayoutElement>();
+			layout.preferredWidth = 54f;
+			layout.preferredHeight = 22f;
+			return root.GetComponent<SurvivorWeaponPreferenceControl>();
 		}
 	}
 }

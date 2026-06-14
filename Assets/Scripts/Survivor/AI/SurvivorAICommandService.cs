@@ -12,7 +12,6 @@ namespace SimpleFPS
 		InvestigateSuspiciousStimuli = 1,
 		RecruitNeutralSurvivors = 2,
 		AllowCombatAIActivation = 3,
-		CombatMovement = 4,
 	}
 
 	[Serializable]
@@ -152,10 +151,11 @@ namespace SimpleFPS
 			if (TryGetCommandContext(owner, originCharacterIndex, out var data, out var origin) == false)
 				return;
 
-			var settings = enabled ? SurvivorCombatAISettings.Default : SurvivorCombatAISettings.Passive;
 			ForEachNearbyTeamSurvivor(owner, data, origin, originCharacterIndex, survivor =>
 			{
-				survivor.SetCombatAISettings(settings);
+				var settings = survivor.NonCombatAISettings;
+				settings.AllowCombatAIActivation = enabled;
+				survivor.SetNonCombatAISettings(settings);
 			});
 		}
 
@@ -288,7 +288,6 @@ namespace SimpleFPS
 			if (TryGetSelectedCommandContext(owner, selectedCharacterMask, out var data, out var survivors) == false)
 				return;
 
-			var settings = enabled ? SurvivorCombatAISettings.Default : SurvivorCombatAISettings.Passive;
 			foreach (var pair in survivors)
 			{
 				int characterIndex = pair.Key;
@@ -297,7 +296,9 @@ namespace SimpleFPS
 				if (IsSelectedCommandTargetValid(data, selectedCharacterMask, characterIndex, survivor) == false)
 					continue;
 
-				survivor.SetCombatAISettings(settings);
+				var settings = survivor.NonCombatAISettings;
+				settings.AllowCombatAIActivation = enabled;
+				survivor.SetNonCombatAISettings(settings);
 			}
 		}
 
@@ -315,6 +316,27 @@ namespace SimpleFPS
 					continue;
 
 				ApplyAISetting(survivor, setting, enabled);
+			}
+		}
+
+		public void ApplySelectedTeamWeaponPreference(
+			PlayerRef owner,
+			CharacterMask128 selectedCharacterMask,
+			ESurvivorWeaponPreference preference)
+		{
+			if (TryGetSelectedCommandContext(owner, selectedCharacterMask, out var data, out var survivors) == false)
+				return;
+
+			foreach (var pair in survivors)
+			{
+				int characterIndex = pair.Key;
+				Survivor survivor = pair.Value;
+				if (IsSelectedCommandTargetValid(data, selectedCharacterMask, characterIndex, survivor, allowActiveCharacter: true) == false)
+					continue;
+
+				var settings = survivor.CombatAISettings;
+				settings.WeaponPreference = preference;
+				survivor.SetCombatAISettings(settings);
 			}
 		}
 
@@ -396,13 +418,6 @@ namespace SimpleFPS
 					var settings = survivor.NonCombatAISettings;
 					settings.AllowCombatAIActivation = enabled;
 					survivor.SetNonCombatAISettings(settings);
-					break;
-				}
-				case ESurvivorAISetting.CombatMovement:
-				{
-					var settings = survivor.CombatAISettings;
-					settings.CombatMovementEnabled = enabled;
-					survivor.SetCombatAISettings(settings);
 					break;
 				}
 			}

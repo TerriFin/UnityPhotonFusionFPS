@@ -333,7 +333,9 @@ namespace SimpleFPS
 			neutral.ApplyNeutralStats(Settings);
 
 			survivor.SetNonCombatAISettings(SurvivorNonCombatAISettings.Default);
-			survivor.SetCombatAISettings(SurvivorCombatAISettings.Default);
+			var neutralCombatSettings = SurvivorCombatAISettings.Default;
+			neutralCombatSettings.WeaponPreference = ESurvivorWeaponPreference.PreferStrongWeapons;
+			survivor.SetCombatAISettings(neutralCombatSettings);
 
 			// Dynamic-spawn survivors roam between dynamic areas instead of staying put. They are still registered
 			// for recruitment below like any neutral, so players can recruit them mid-roam.

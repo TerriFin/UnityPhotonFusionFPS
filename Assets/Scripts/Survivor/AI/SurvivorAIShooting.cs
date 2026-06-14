@@ -9,12 +9,6 @@ namespace SimpleFPS
 	{
 		[Header("State")]
 		public bool AutoShootEnabled = true;
-		public EWeaponType[] WeaponPriority =
-		{
-			EWeaponType.Rifle,
-			EWeaponType.Shotgun,
-			EWeaponType.Pistol,
-		};
 
 		[Header("Timing")]
 		public float FirstShotDelayMin = 0.5f;
@@ -53,7 +47,16 @@ namespace SimpleFPS
 		private float _nextShotTime;
 		private float _nextAimErrorRefreshTime;
 		private float _triggerReleaseTime;
+		private EInputButton _lastWeaponSwitchButton;
+		private bool _weaponSwitchButtonHeld;
 		private readonly System.Collections.Generic.List<KnownEnemyInfo> _directTargets = new(8);
+
+		private enum EWeaponSwitchInputState
+		{
+			None,
+			Release,
+			Press,
+		}
 
 		public void SetAutoShootEnabled(bool enabled)
 		{
@@ -102,11 +105,14 @@ namespace SimpleFPS
 				Mathf.Clamp(pitchDelta, -MaxPitchDegreesPerTick, MaxPitchDegreesPerTick),
 				Mathf.Clamp(yawDelta, -MaxYawDegreesPerTick, MaxYawDegreesPerTick));
 
-			if (TryGetWeaponSwitchButton(out var weaponButton))
+			EWeaponSwitchInputState weaponSwitchInput = GetWeaponSwitchInput(enemy, out var weaponButton);
+			if (weaponSwitchInput == EWeaponSwitchInputState.Press)
 			{
 				input.Buttons.Set(weaponButton, true);
 				return true;
 			}
+			if (weaponSwitchInput == EWeaponSwitchInputState.Release)
+				return true;
 
 			if (AutoShootEnabled && Time.timeSinceLevelLoad < _triggerReleaseTime)
 			{
@@ -121,19 +127,45 @@ namespace SimpleFPS
 			return true;
 		}
 
-		private bool TryGetWeaponSwitchButton(out EInputButton button)
+		private EWeaponSwitchInputState GetWeaponSwitchInput(KnownEnemyInfo enemy, out EInputButton button)
 		{
 			button = default;
 
 			var weapons = _survivor != null ? _survivor.Weapons : null;
 			if (weapons == null || weapons.IsSwitching)
-				return false;
-			if (weapons.TryGetBestUsableWeapon(WeaponPriority, out var bestWeapon) == false)
-				return false;
-			if (bestWeapon == weapons.CurrentWeapon)
-				return false;
+			{
+				_weaponSwitchButtonHeld = false;
+				return EWeaponSwitchInputState.None;
+			}
 
-			return TryGetWeaponButton(bestWeapon.Type, out button);
+			SurvivorWeaponPreferenceAI preferenceAI = _survivor.WeaponPreferenceAI;
+			if (preferenceAI == null ||
+			    preferenceAI.TryGetDesiredWeapon(enemy, _survivor.CombatAISettings.WeaponPreference, out var bestWeapon) == false)
+			{
+				_weaponSwitchButtonHeld = false;
+				return EWeaponSwitchInputState.None;
+			}
+			if (bestWeapon == weapons.CurrentWeapon)
+			{
+				_weaponSwitchButtonHeld = false;
+				return EWeaponSwitchInputState.None;
+			}
+
+			if (TryGetWeaponButton(bestWeapon.Type, out button) == false)
+			{
+				_weaponSwitchButtonHeld = false;
+				return EWeaponSwitchInputState.None;
+			}
+
+			if (_weaponSwitchButtonHeld && button == _lastWeaponSwitchButton)
+			{
+				_weaponSwitchButtonHeld = false;
+				return EWeaponSwitchInputState.Release;
+			}
+
+			_lastWeaponSwitchButton = button;
+			_weaponSwitchButtonHeld = true;
+			return EWeaponSwitchInputState.Press;
 		}
 
 		private static bool TryGetWeaponButton(EWeaponType weaponType, out EInputButton button)
@@ -361,6 +393,7 @@ namespace SimpleFPS
 			_nextShotTime = 0f;
 			_nextAimErrorRefreshTime = 0f;
 			_triggerReleaseTime = 0f;
+			_weaponSwitchButtonHeld = false;
 		}
 
 		private static bool IsZombieTarget(NetworkObject target)

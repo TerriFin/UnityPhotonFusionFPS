@@ -25,7 +25,9 @@ namespace SimpleFPS
 		public Toggle BulkInvestigateToggle;
 		public Toggle BulkRecruitToggle;
 		public Toggle BulkCombatActivationToggle;
+		[HideInInspector]
 		public Toggle BulkCombatMovementToggle;
+		public SurvivorWeaponPreferenceControl BulkWeaponPreferenceControl;
 
 		[Header("Hover Link")]
 		public RectTransform HoverLine;
@@ -100,6 +102,8 @@ namespace SimpleFPS
 
 		private void EnsureSetup()
 		{
+			DisableLegacyCombatMovementToggle();
+
 			if (MapView == null)
 				MapView = GetComponentInParent<GameMapView>();
 			if (SelectionController == null && MapView != null)
@@ -143,7 +147,8 @@ namespace SimpleFPS
 			AddBulkToggleListener(BulkInvestigateToggle, ESurvivorAISetting.InvestigateSuspiciousStimuli);
 			AddBulkToggleListener(BulkRecruitToggle, ESurvivorAISetting.RecruitNeutralSurvivors);
 			AddBulkToggleListener(BulkCombatActivationToggle, ESurvivorAISetting.AllowCombatAIActivation);
-			AddBulkToggleListener(BulkCombatMovementToggle, ESurvivorAISetting.CombatMovement);
+			if (BulkWeaponPreferenceControl != null)
+				BulkWeaponPreferenceControl.ValueChanged += HandleBulkWeaponPreferenceChanged;
 
 			_listenersAttached = true;
 		}
@@ -176,6 +181,7 @@ namespace SimpleFPS
 					entry.Clicked += HandleEntryClicked;
 					entry.HoverChanged += HandleEntryHoverChanged;
 					entry.SettingChanged += HandleEntrySettingChanged;
+					entry.WeaponPreferenceChanged += HandleEntryWeaponPreferenceChanged;
 					forceLayout = true;
 				}
 
@@ -262,6 +268,16 @@ namespace SimpleFPS
 			_gameplay.RequestMapAISetting(mask, setting, enabled);
 		}
 
+		private void HandleEntryWeaponPreferenceChanged(Survivor survivor, ESurvivorWeaponPreference preference)
+		{
+			if (_gameplay == null || survivor == null)
+				return;
+
+			var mask = new CharacterMask128();
+			mask.Set(survivor.CharacterIndex, true);
+			_gameplay.RequestMapWeaponPreference(mask, preference);
+		}
+
 		private void HandleBulkToggleChanged(ESurvivorAISetting setting, bool enabled)
 		{
 			if (_suppressBulkToggleEvents || _gameplay == null || _runner == null)
@@ -273,6 +289,19 @@ namespace SimpleFPS
 
 			_gameplay.RequestMapAISetting(mask, setting, enabled);
 			SetBulkToggleVisual(setting, enabled);
+		}
+
+		private void HandleBulkWeaponPreferenceChanged(ESurvivorWeaponPreference preference)
+		{
+			if (_suppressBulkToggleEvents || _gameplay == null || _runner == null)
+				return;
+
+			CharacterMask128 mask = GetBulkTargetMask();
+			if (mask.IsEmpty)
+				return;
+
+			_gameplay.RequestMapWeaponPreference(mask, preference);
+			BulkWeaponPreferenceControl?.SetValueWithoutNotify(preference);
 		}
 
 		private void HandleSelectionChanged()
@@ -296,8 +325,36 @@ namespace SimpleFPS
 			SetToggleWithoutNotify(BulkInvestigateToggle, GetMajorityValue(_survivors, ESurvivorAISetting.InvestigateSuspiciousStimuli));
 			SetToggleWithoutNotify(BulkRecruitToggle, GetMajorityValue(_survivors, ESurvivorAISetting.RecruitNeutralSurvivors));
 			SetToggleWithoutNotify(BulkCombatActivationToggle, GetMajorityValue(_survivors, ESurvivorAISetting.AllowCombatAIActivation));
-			SetToggleWithoutNotify(BulkCombatMovementToggle, GetMajorityValue(_survivors, ESurvivorAISetting.CombatMovement));
+			BulkWeaponPreferenceControl?.SetValueWithoutNotify(GetMajorityWeaponPreference(_survivors));
 			_suppressBulkToggleEvents = false;
+		}
+
+		private static ESurvivorWeaponPreference GetMajorityWeaponPreference(List<Survivor> survivors)
+		{
+			int automatic = 0;
+			int strong = 0;
+			int pistol = 0;
+			for (int i = 0; i < survivors.Count; i++)
+			{
+				switch (survivors[i].CombatAISettings.WeaponPreference)
+				{
+					case ESurvivorWeaponPreference.PreferStrongWeapons:
+						strong++;
+						break;
+					case ESurvivorWeaponPreference.PreferPistol:
+						pistol++;
+						break;
+					default:
+						automatic++;
+						break;
+				}
+			}
+
+			if (strong > automatic && strong > pistol)
+				return ESurvivorWeaponPreference.PreferStrongWeapons;
+			if (pistol > automatic && pistol > strong)
+				return ESurvivorWeaponPreference.PreferPistol;
+			return ESurvivorWeaponPreference.Automatic;
 		}
 
 		private bool GetMajorityValue(List<Survivor> survivors, ESurvivorAISetting setting)
@@ -331,9 +388,6 @@ namespace SimpleFPS
 					break;
 				case ESurvivorAISetting.AllowCombatAIActivation:
 					SetToggleWithoutNotify(BulkCombatActivationToggle, enabled);
-					break;
-				case ESurvivorAISetting.CombatMovement:
-					SetToggleWithoutNotify(BulkCombatMovementToggle, enabled);
 					break;
 			}
 			_suppressBulkToggleEvents = false;
@@ -455,7 +509,6 @@ namespace SimpleFPS
 				ESurvivorAISetting.InvestigateSuspiciousStimuli => survivor.NonCombatAISettings.InvestigateSuspiciousStimuli,
 				ESurvivorAISetting.RecruitNeutralSurvivors => survivor.NonCombatAISettings.RecruitNeutralSurvivors,
 				ESurvivorAISetting.AllowCombatAIActivation => survivor.NonCombatAISettings.AllowCombatAIActivation,
-				ESurvivorAISetting.CombatMovement => survivor.CombatAISettings.CombatMovementEnabled,
 				_ => false,
 			};
 		}
@@ -558,6 +611,8 @@ namespace SimpleFPS
 			{
 				if (ResponsiveGrid == null)
 					ResponsiveGrid = Content.GetComponent<ResponsiveRosterGrid>();
+				if (BulkWeaponPreferenceControl == null)
+					EnsureRuntimeBulkBar();
 				EnsureHoverLine();
 				return;
 			}
@@ -619,7 +674,13 @@ namespace SimpleFPS
 			BulkInvestigateToggle ??= CreateBulkToggle(bar, "?");
 			BulkRecruitToggle ??= CreateBulkToggle(bar, "+");
 			BulkCombatActivationToggle ??= CreateBulkToggle(bar, "!");
-			BulkCombatMovementToggle ??= CreateBulkToggle(bar, "M");
+			BulkWeaponPreferenceControl ??= CreateBulkWeaponPreferenceControl(bar);
+		}
+
+		private void DisableLegacyCombatMovementToggle()
+		{
+			if (BulkCombatMovementToggle != null)
+				BulkCombatMovementToggle.gameObject.SetActive(false);
 		}
 
 		private void EnsureRuntimeScrollView()
@@ -706,6 +767,23 @@ namespace SimpleFPS
 			toggle.targetGraphic = background;
 			toggle.graphic = check;
 			return toggle;
+		}
+
+		private SurvivorWeaponPreferenceControl CreateBulkWeaponPreferenceControl(RectTransform parent)
+		{
+			var root = new GameObject(
+				"Weapon Preference",
+				typeof(RectTransform),
+				typeof(Image),
+				typeof(Button),
+				typeof(LayoutElement),
+				typeof(SurvivorWeaponPreferenceControl));
+			root.transform.SetParent(parent, false);
+			root.GetComponent<RectTransform>().sizeDelta = new Vector2(68f, 28f);
+			var layout = root.GetComponent<LayoutElement>();
+			layout.preferredWidth = 68f;
+			layout.preferredHeight = 28f;
+			return root.GetComponent<SurvivorWeaponPreferenceControl>();
 		}
 
 		private void EnsureHoverLine()

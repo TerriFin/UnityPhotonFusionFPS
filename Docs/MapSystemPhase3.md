@@ -36,16 +36,18 @@ This phase is only the UI/control surface for changing those per-survivor settin
 Initial ideas:
 
 ```text
-Use pistol for zombies, other guns for enemy survivors (default)
-Hold fire
-Use most powerful
+Automatic (default)
+Prefer strong weapons
+Prefer pistol
 ```
 
 Possible meaning:
 
-- `Use pistol for zombies, other guns for enemy survivors`: conserve better ammunition against low-value PvE targets.
-- `Hold fire`: do not shoot automatically, but still allow movement and sensing.
-- `Use most powerful`: prioritize strongest available weapon/ammo.
+- `Automatic`: conserve ammunition against ordinary zombies, but use range-appropriate strong weapons against enemy survivors, dangerous zombie groups, close zombies, and overtime.
+- `Prefer strong weapons`: use the best range-appropriate collected weapon against all targets.
+- `Prefer pistol`: use the pistol against all targets.
+
+See `Docs/SurvivorWeaponPreferenceAI.md`.
 
 ### Combat AI
 

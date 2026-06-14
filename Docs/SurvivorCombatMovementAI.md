@@ -14,7 +14,7 @@ The intended combat structure is:
 SurvivorCombatAI
 -> chooses enemy target
 -> checks SurvivorCombatAISettings
--> asks SurvivorCombatMovementAI for movement when movement is enabled
+-> asks SurvivorCombatMovementAI for movement when the single combat behavior toggle is enabled
 -> asks SurvivorAIShooting for aim/fire
 -> merges movement and shooting into normal NetworkedInput
 ```
@@ -108,24 +108,19 @@ Current implementation state:
 - Candidate search state is local to state authority and is not networked.
 - Reevaluations are staggered per survivor so large groups do not all run cover searches on the same simulation tick.
 - Nearby ally positions are cached once per reevaluation and reused for all candidate scores, instead of scanning every active survivor for every candidate.
-- If combat movement is disabled with K, the survivor still uses `SurvivorAIShooting` but stops tactical repositioning.
+- The roster has one combat behavior toggle. When disabled, survivor-vs-survivor tactical movement and shooting both stop.
+- Zombie retreat is a lightweight safety behavior owned by `SurvivorCombatAI`; it remains available while the combat toggle is disabled and does not use this component.
 - Candidates that fully block the survivor's own shot are rejected by default.
 - If a chosen combat destination appears to cause the survivor to lose its target, that destination is temporarily blacklisted. Lost-target investigation still starts immediately, but when combat resumes the movement AI avoids picking the same bad cover point again.
 - Combat movement is suppressed while a player movement order is still being fulfilled. Follow movement, unreached move orders, and first-time travel into an assigned defend area keep their ordered movement direction. Combat aim/fire may still merge into that movement, but tactical cover/range/spacing movement resumes only after the move destination is reached or the assigned area has been entered once.
 
 ## Preferred Weapon Ranges
 
-Each weapon type should have a minimum and maximum preferred combat range.
+Each `Weapon` exposes `AIEffectiveMaxRange`. Combat movement should use the currently selected weapon's value as its outer preferred range rather than keeping a second hardcoded maximum-range table by weapon type.
 
-Suggested first-pass defaults:
+Minimum preferred range may remain part of combat-movement tuning because it describes movement comfort rather than whether the weapon is effective. Maximum effective range belongs to the weapon itself and is shared with `SurvivorWeaponPreferenceAI`.
 
-```text
-Pistol: 6m - 18m
-Shotgun: 3m - 10m
-Rifle: 10m - 28m
-```
-
-The ranges intentionally overlap so enemies do not enter a silly chase loop where one survivor constantly tries to close distance while another constantly tries to back away.
+See `Docs/SurvivorWeaponPreferenceAI.md`.
 
 Preferred range scoring:
 
@@ -151,7 +146,7 @@ Combat movement emits only movement intent.
 - Movement comes from `SurvivorCombatMovementAI`.
 - Look/fire/buttons come from `SurvivorAIShooting`.
 - If both want look rotation, shooting aim wins while there is a direct line-of-fire target.
-- If no movement setting is enabled, combat AI stands ground and only uses shooting input.
+- If the combat behavior toggle is disabled, this component emits no movement. `SurvivorCombatAI` may still turn the survivor toward an enemy, and may retreat from a dangerously close zombie.
 
 ## Network Model
 

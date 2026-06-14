@@ -257,14 +257,18 @@ Initial non-combat toggles should map to current settings:
 CollectVisiblePickups
 InvestigateSuspiciousStimuli
 RecruitNeutralSurvivors
-AllowCombatAIActivation
+AllowCombatAIActivation (displayed as the single combat behavior toggle)
 ```
 
-Initial combat toggles should map to current combat settings:
+There is no separate combat movement toggle. The single combat behavior toggle enables/disables both shooting and survivor-vs-survivor tactical movement. When disabled, survivors still retreat from dangerously close zombies, and may turn to watch a visible enemy.
+
+The roster also needs one non-boolean combat mode control:
 
 ```text
-Combat movement / combat AI enabled
+Weapon preference: Automatic / Prefer Strong Weapons / Prefer Pistol
 ```
+
+This is a three-state segmented or cycling control on every survivor card and in the bulk settings row. It must use an enum-valued authoritative request rather than the existing boolean `ESurvivorAISetting` path. See `Docs/SurvivorWeaponPreferenceAI.md`.
 
 The old broad keyboard setting shortcuts (`I`, `O`, `K`, `L`) have been removed. AI behavior settings are controlled through the roster's individual and bulk toggles. The roster uses the finer-grained request path:
 
@@ -275,7 +279,6 @@ public enum ESurvivorAISetting
     InvestigateSuspiciousStimuli,
     RecruitNeutralSurvivors,
     AllowCombatAIActivation,
-    CombatMovement,
 }
 
 Gameplay.RequestMapAISetting(CharacterMask128 mask, ESurvivorAISetting setting, bool enabled)

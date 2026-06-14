@@ -235,8 +235,9 @@ Non-combat AI is active only while combat AI is not taking over.
 
 Handoff rules:
 
-- If `AllowCombatAIActivation` is enabled and `CharacterSensor` or `SurvivorAIShooting` reports a valid enemy target, combat AI takes over.
-- If `AllowCombatAIActivation` is disabled, player-given non-combat orders keep running even if the survivor notices enemies.
+- `AllowCombatAIActivation` is the roster's single combat behavior toggle.
+- If enabled and a valid direct enemy is reported, the survivor may shoot and use tactical combat movement.
+- If disabled, the survivor does not shoot or use survivor-vs-survivor tactical movement. It may still turn toward visible enemies and retreat from a dangerously close zombie.
 - Non-combat AI keeps its current assignment data while suspended.
 - If the enemy dies, combat AI releases control and non-combat AI resumes the previous assignment.
 - If an enemy survivor is alive but breaks line of fire, non-combat AI can investigate the last known enemy survivor position before returning to the previous assignment.

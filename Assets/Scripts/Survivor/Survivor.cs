@@ -44,6 +44,8 @@ namespace SimpleFPS
 		public PlayerRef OwnerRef { get; set; }
 		[Networked, HideInInspector]
 		public int CharacterIndex { get; set; }
+		[Networked, HideInInspector]
+		public ESurvivorWeaponPreference WeaponPreference { get; private set; }
 
 		[Networked]
 		private NetworkButtons _previousButtons { get; set; }
@@ -73,8 +75,18 @@ namespace SimpleFPS
 		public CharacterSeparation Separation { get; private set; }
 		public SurvivorNonCombatAI NonCombatAI { get; private set; }
 		public SurvivorCombatAI CombatAI { get; private set; }
+		public SurvivorWeaponPreferenceAI WeaponPreferenceAI { get; private set; }
 		public SurvivorNonCombatAISettings NonCombatAISettings => _nonCombatAISettings;
-		public SurvivorCombatAISettings CombatAISettings => _combatAISettings;
+		public SurvivorCombatAISettings CombatAISettings
+		{
+			get
+			{
+				SurvivorCombatAISettings settings = _combatAISettings;
+				if (Object != null && Object.IsValid)
+					settings.WeaponPreference = WeaponPreference;
+				return settings;
+			}
+		}
 		public bool IsNeutral => CharacterFactionUtility.IsNeutralSurvivor(this);
 
 		public void PlayFireEffect()
@@ -121,6 +133,8 @@ namespace SimpleFPS
 		public void SetCombatAISettings(SurvivorCombatAISettings settings)
 		{
 			_combatAISettings = settings;
+			if (HasStateAuthority && Object != null && Object.IsValid)
+				WeaponPreference = settings.WeaponPreference;
 			EnsureCombatAI();
 			CombatAI.SetSettings(settings);
 		}
@@ -190,6 +204,10 @@ namespace SimpleFPS
 			{
 				AIShooting = gameObject.AddComponent<SurvivorAIShooting>();
 			}
+
+			EnsureWeaponPreferenceAI();
+			if (HasStateAuthority)
+				WeaponPreference = _combatAISettings.WeaponPreference;
 
 			EnsureCombatAI();
 			CombatAI.Activate(this);
@@ -261,6 +279,17 @@ namespace SimpleFPS
 			{
 				CombatAI = gameObject.AddComponent<SurvivorCombatAI>();
 			}
+		}
+
+		private void EnsureWeaponPreferenceAI()
+		{
+			if (WeaponPreferenceAI != null)
+				return;
+
+			WeaponPreferenceAI = GetComponent<SurvivorWeaponPreferenceAI>();
+			if (WeaponPreferenceAI == null)
+				WeaponPreferenceAI = gameObject.AddComponent<SurvivorWeaponPreferenceAI>();
+			WeaponPreferenceAI.Activate(this);
 		}
 
 		public override void Despawned(NetworkRunner runner, bool hasState)

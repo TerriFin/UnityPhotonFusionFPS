@@ -28,7 +28,6 @@ Important fields:
 
 ```csharp
 public bool AutoShootEnabled = true;
-public EWeaponType[] WeaponPriority = { Rifle, Shotgun, Pistol };
 
 public float FirstShotDelayMin = 0.5f;
 public float FirstShotDelayMax = 1.4f;
@@ -63,7 +62,7 @@ public float TargetSwitchHysteresis = 1.5f;
 - Waits a random first-shot delay after acquiring a target.
 - Multiplies that first-shot delay by `MovingFirstShotDelayMultiplier` when movement AI asks for combat input while moving.
 - Requires current line of fire before pressing `Fire`, so memory from noise, bullet impacts, or enemies behind blockers can make the survivor look but not shoot.
-- Chooses the best collected usable weapon from `WeaponPriority` before firing. If a limited-ammo weapon is empty, the AI switches to the next usable weapon and eventually falls back to pistol.
+- Requests a desired weapon from `SurvivorWeaponPreferenceAI` before firing. Strong-weapon modes use each weapon's `AIWeaponStrength` and `AIEffectiveMaxRange` instead of a fixed weapon-type priority.
 - Holds `EInputButton.Fire` for `TriggerHoldDuration` when aligned enough and the delay has elapsed.
 - Waits a random follow-up delay before the next burst.
 
@@ -92,20 +91,19 @@ This matters when a pack surrounds the survivor. Several zombies sit at near-equ
 
 `SurvivorAIShooting` does not spend ammo directly. It emits the same weapon-switch and fire input buttons the player would use.
 
-Current weapon priority is:
-
-```text
-Rifle -> Shotgun -> Pistol
-```
-
 Rules:
 
 - Only collected weapons are considered.
 - A weapon is usable if it has ammo in the clip or reserve.
+- `SurvivorWeaponPreferenceAI` decides whether the current situation calls for pistol or range-aware strong-weapon selection.
+- Strong-weapon selection excludes weapons whose `AIEffectiveMaxRange` is shorter than the current target distance, then scores the remaining weapons by strength and range fit.
 - If the current weapon is not the best usable weapon, the AI presses the matching weapon switch button and keeps aiming.
+- Uncontrolled survivors pulse and retry a desired weapon switch, so a request temporarily blocked by reloading is not lost.
 - The AI does not press `Fire` while switching.
 - If all limited-ammo weapons are unavailable or empty, the pistol is selected as the fallback.
 - If the current limited-ammo weapon has reserve ammo, normal weapon auto-reload can keep it in use.
+
+See `Docs/SurvivorWeaponPreferenceAI.md` for the complete three-state behavior and scoring rules.
 
 ## Aim Error
 

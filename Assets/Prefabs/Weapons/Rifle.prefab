@@ -1044,6 +1044,8 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 65
   MaxHitDistance: 200
+  AIWeaponStrength: 20
+  AIEffectiveMaxRange: 60
   BulletSpeed: 225
   GravityScale: 0.9
   MaxClipAmmo: 30

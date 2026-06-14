@@ -271,6 +271,9 @@ namespace SimpleFPS
 			playerData.IsAlive = true;
 			PlayerData.Set(owner, playerData);
 
+			var recruitedCombatSettings = neutral.CombatAISettings;
+			recruitedCombatSettings.WeaponPreference = ESurvivorWeaponPreference.Automatic;
+			neutral.SetCombatAISettings(recruitedCombatSettings);
 			ApplyRecruitmentOrder(neutral, recruiter);
 			return true;
 		}
@@ -403,6 +406,25 @@ namespace SimpleFPS
 			}
 
 			RPC_RequestMapAISetting(selectedCharacterMask.Mask0, selectedCharacterMask.Mask1, selectedCharacterMask.Mask2, selectedCharacterMask.Mask3, (int)setting, enabled);
+		}
+
+		public void RequestMapWeaponPreference(CharacterMask128 selectedCharacterMask, ESurvivorWeaponPreference preference)
+		{
+			if (System.Enum.IsDefined(typeof(ESurvivorWeaponPreference), preference) == false)
+				return;
+
+			if (HasStateAuthority)
+			{
+				SurvivorAICommands.ApplySelectedTeamWeaponPreference(Runner.LocalPlayer, selectedCharacterMask, preference);
+				return;
+			}
+
+			RPC_RequestMapWeaponPreference(
+				selectedCharacterMask.Mask0,
+				selectedCharacterMask.Mask1,
+				selectedCharacterMask.Mask2,
+				selectedCharacterMask.Mask3,
+				(int)preference);
 		}
 
 		public void RequestSwitchActiveCharacter(int targetCharacterIndex)
@@ -1265,6 +1287,27 @@ namespace SimpleFPS
 
 			var selectedCharacterMask = new CharacterMask128(selectedMask0, selectedMask1, selectedMask2, selectedMask3);
 			SurvivorAICommands.ApplySelectedTeamAISetting(info.Source, selectedCharacterMask, (ESurvivorAISetting)settingId, enabled);
+		}
+
+		[Rpc(RpcSources.All, RpcTargets.StateAuthority, Channel = RpcChannel.Reliable)]
+		private void RPC_RequestMapWeaponPreference(
+			int selectedMask0,
+			int selectedMask1,
+			int selectedMask2,
+			int selectedMask3,
+			int preferenceId,
+			RpcInfo info = default)
+		{
+			if (IsValidMapOrderSource(info.Source) == false)
+				return;
+			if (System.Enum.IsDefined(typeof(ESurvivorWeaponPreference), preferenceId) == false)
+				return;
+
+			var selectedCharacterMask = new CharacterMask128(selectedMask0, selectedMask1, selectedMask2, selectedMask3);
+			SurvivorAICommands.ApplySelectedTeamWeaponPreference(
+				info.Source,
+				selectedCharacterMask,
+				(ESurvivorWeaponPreference)preferenceId);
 		}
 
 		[Rpc(RpcSources.All, RpcTargets.StateAuthority, Channel = RpcChannel.Reliable)]

@@ -40,11 +40,8 @@ namespace SimpleFPS
 
 		[Header("Weapon Ranges")]
 		public float PistolPreferredRangeMin = 6f;
-		public float PistolPreferredRangeMax = 18f;
 		public float ShotgunPreferredRangeMin = 3f;
-		public float ShotgunPreferredRangeMax = 10f;
 		public float RiflePreferredRangeMin = 10f;
-		public float RiflePreferredRangeMax = 28f;
 
 		private NavMeshPath _scratchPath;
 		private Vector3 _destination;
@@ -437,21 +434,21 @@ namespace SimpleFPS
 
 		private WeaponRange GetPreferredRange(Survivor survivor)
 		{
-			EWeaponType weaponType = survivor != null &&
-			                         survivor.Weapons != null &&
-			                         survivor.Weapons.CurrentWeapon != null
-				? survivor.Weapons.CurrentWeapon.Type
-				: EWeaponType.Pistol;
+			Weapon weapon = survivor != null && survivor.Weapons != null
+				? survivor.Weapons.CurrentWeapon
+				: null;
+			EWeaponType weaponType = weapon != null ? weapon.Type : EWeaponType.Pistol;
+			float maxRange = weapon != null ? Mathf.Max(0.1f, weapon.AIEffectiveMaxRange) : 20f;
 
 			switch (weaponType)
 			{
 				case EWeaponType.Shotgun:
-					return new WeaponRange(ShotgunPreferredRangeMin, ShotgunPreferredRangeMax);
+					return new WeaponRange(ShotgunPreferredRangeMin, maxRange);
 				case EWeaponType.Rifle:
-					return new WeaponRange(RiflePreferredRangeMin, RiflePreferredRangeMax);
+					return new WeaponRange(RiflePreferredRangeMin, maxRange);
 				case EWeaponType.Pistol:
 				default:
-					return new WeaponRange(PistolPreferredRangeMin, PistolPreferredRangeMax);
+					return new WeaponRange(PistolPreferredRangeMin, maxRange);
 			}
 		}
 

@@ -62,9 +62,8 @@ On the local client, the human input provider is the survivor currently assigned
 Hold position:
 
 - Returns zero movement.
-- Uses `SurvivorAIShooting` when there is a direct target with line of fire.
-- K disables combat movement for nearby uncontrolled teammates.
-- L enables combat movement for nearby uncontrolled teammates.
+- Uses `SurvivorAIShooting` when there is a direct target with line of fire and the roster combat toggle is enabled.
+- The roster has one combat behavior toggle; the old combat keyboard shortcuts and separate movement toggle are removed.
 - Uses `CharacterSensor` investigation look input only when its non-combat settings allow investigation.
 
 Follow assignment:
@@ -85,11 +84,11 @@ Move assignment:
 - Sets that destination on `CharacterNavigator`.
 - Steers toward the current path corner and keeps emitting movement until the destination is reached.
 - Can layer `SurvivorAIShooting` look/fire input over movement when a direct enemy has line of fire.
-- Combat movement settings are separate from non-combat orders. Disabling combat movement does not cancel follow, move, hold, or assigned-area orders; it only stops the AI from tactically repositioning while fighting.
+- The combat behavior toggle is separate from non-combat orders. Disabling it does not cancel follow, move, hold, or assigned-area orders; it stops shooting and survivor-vs-survivor tactical repositioning while retaining close-zombie retreat.
 - Returns hold/combat look input once the destination is reached.
 - Does not directly move transforms.
 
-`SurvivorNonCombatAI` can consume `SurvivorAIShooting` input when combat AI activation is enabled. Hold position can aim/fire while standing still. Movement assignments should continue their movement order while aiming/firing when possible, so survivors can return fire during long moves or while following. If shooting has no direct target, assignments fall back to sensor look input only when allowed by settings and when that does not break their movement responsibility. Shooting input can hold `Fire` for configurable bursts, so automatic weapons fire differently from semi-auto weapons without special AI weapon code.
+`SurvivorNonCombatAI` can consume `SurvivorAIShooting` input when the combat behavior toggle is enabled. Hold position can aim/fire while standing still. Movement assignments should continue their movement order while aiming/firing when possible, so survivors can return fire during long moves or while following. If shooting has no direct target, assignments fall back to sensor look input only when allowed by settings and when that does not break their movement responsibility. Shooting input can hold `Fire` for configurable bursts, so automatic weapons fire differently from semi-auto weapons without special AI weapon code.
 
 When movement and shooting both want look control, direct combat aim has priority over path-corner look while the target has line of fire. Movement still uses the same `MoveDirection` input, so the character keeps advancing instead of stopping just because it is firing.
 

@@ -5,16 +5,11 @@ namespace SimpleFPS
 {
 	public struct SurvivorCombatAISettings
 	{
-		public bool CombatMovementEnabled;
+		public ESurvivorWeaponPreference WeaponPreference;
 
 		public static SurvivorCombatAISettings Default => new SurvivorCombatAISettings
 		{
-			CombatMovementEnabled = true,
-		};
-
-		public static SurvivorCombatAISettings Passive => new SurvivorCombatAISettings
-		{
-			CombatMovementEnabled = false,
+			WeaponPreference = ESurvivorWeaponPreference.Automatic,
 		};
 	}
 
@@ -29,6 +24,7 @@ namespace SimpleFPS
 
 		private Survivor _survivor;
 		private SurvivorCombatMovementAI _movement;
+		private SurvivorWeaponPreferenceAI _weaponPreference;
 		private SurvivorCombatAISettings _settings;
 
 		public void Activate(Survivor survivor)
@@ -44,9 +40,6 @@ namespace SimpleFPS
 		{
 			_settings = settings;
 			EnsureBehaviorComponents();
-
-			if (_settings.CombatMovementEnabled == false)
-				ClearMovementTask();
 		}
 
 		public void ClearMovementTask()
@@ -75,7 +68,13 @@ namespace SimpleFPS
 			return TryGetDirectTarget(out _, out bool hasLineOfFire) && hasLineOfFire;
 		}
 
-		public bool TryGetInput(KnownEnemyInfo enemy, bool hasLineOfFire, out NetworkedInput input, bool isAlreadyMoving = false, bool allowMovement = true)
+		public bool TryGetInput(
+			KnownEnemyInfo enemy,
+			bool hasLineOfFire,
+			out NetworkedInput input,
+			bool isAlreadyMoving = false,
+			bool allowMovement = true,
+			bool combatEnabled = true)
 		{
 			input = default;
 			EnsureSurvivor();
@@ -85,16 +84,17 @@ namespace SimpleFPS
 				return false;
 
 			if (IsZombieTarget(enemy))
-				return TryGetZombieInput(enemy, hasLineOfFire, out input, isAlreadyMoving, allowMovement);
+				return TryGetZombieInput(enemy, hasLineOfFire, out input, isAlreadyMoving, allowMovement, combatEnabled);
 
 			Vector3 moveDirection = default;
-			bool hasMovement = allowMovement &&
-			                   _settings.CombatMovementEnabled &&
+			bool hasMovement = combatEnabled &&
+			                   allowMovement &&
 			                   _movement != null &&
 			                   _movement.TryGetMoveDirection(_survivor, enemy, out moveDirection);
 
 			NetworkedInput shootingInput = default;
-			bool hasShooting = hasLineOfFire &&
+			bool hasShooting = combatEnabled &&
+			                   hasLineOfFire &&
 			                   _survivor.AIShooting.TryGetInput(out shootingInput, isAlreadyMoving || hasMovement);
 
 			if (hasShooting)
@@ -105,6 +105,10 @@ namespace SimpleFPS
 			{
 				input.LookRotationDelta = GetMoveLookDelta(moveDirection);
 			}
+			else
+			{
+				input.LookRotationDelta = GetEnemyLookDelta(enemy);
+			}
 
 			if (hasMovement)
 			{
@@ -112,20 +116,26 @@ namespace SimpleFPS
 				input.MoveDirection = GetLocalMoveDirection(moveDirection, currentYaw + input.LookRotationDelta.y);
 			}
 
-			return hasShooting || hasMovement;
+			return hasShooting || hasMovement || combatEnabled == false || input.LookRotationDelta != Vector2.zero;
 		}
 
-		private bool TryGetZombieInput(KnownEnemyInfo enemy, bool hasLineOfFire, out NetworkedInput input, bool isAlreadyMoving, bool allowMovement)
+		private bool TryGetZombieInput(
+			KnownEnemyInfo enemy,
+			bool hasLineOfFire,
+			out NetworkedInput input,
+			bool isAlreadyMoving,
+			bool allowMovement,
+			bool combatEnabled)
 		{
 			input = default;
 
 			Vector3 moveDirection = default;
 			bool hasMovement = allowMovement &&
-			                   _settings.CombatMovementEnabled &&
 			                   TryGetZombieRetreatDirection(enemy, out moveDirection);
 
 			NetworkedInput shootingInput = default;
-			bool hasShooting = hasLineOfFire &&
+			bool hasShooting = combatEnabled &&
+			                   hasLineOfFire &&
 			                   _survivor.AIShooting.TryGetInput(out shootingInput, isAlreadyMoving || hasMovement);
 
 			if (hasShooting)
@@ -143,7 +153,7 @@ namespace SimpleFPS
 				input.MoveDirection = GetLocalMoveDirection(moveDirection, currentYaw + input.LookRotationDelta.y);
 			}
 
-			return hasShooting || hasMovement || input.LookRotationDelta != Vector2.zero;
+			return hasShooting || hasMovement || combatEnabled == false || input.LookRotationDelta != Vector2.zero;
 		}
 
 		private void Awake()
@@ -168,6 +178,14 @@ namespace SimpleFPS
 				_movement = GetComponent<SurvivorCombatMovementAI>();
 				if (_movement == null)
 					_movement = gameObject.AddComponent<SurvivorCombatMovementAI>();
+			}
+
+			if (_weaponPreference == null)
+			{
+				_weaponPreference = GetComponent<SurvivorWeaponPreferenceAI>();
+				if (_weaponPreference == null)
+					_weaponPreference = gameObject.AddComponent<SurvivorWeaponPreferenceAI>();
+				_weaponPreference.Activate(_survivor);
 			}
 		}
 

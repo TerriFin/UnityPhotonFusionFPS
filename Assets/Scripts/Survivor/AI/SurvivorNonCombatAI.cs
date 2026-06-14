@@ -277,9 +277,12 @@ namespace SimpleFPS
 
 		public void SetSettings(SurvivorNonCombatAISettings settings)
 		{
+			bool combatWasEnabled = _settings.AllowCombatAIActivation;
 			_settings = settings;
 
 			EnsureBehaviorComponents();
+			if (combatWasEnabled && _settings.AllowCombatAIActivation == false)
+				_combat?.ClearMovementTask();
 
 			if (_settings.CollectVisiblePickups == false && (_looting != null && (_looting.HasTask || _looting.IsReturning)))
 				_looting.ClearTask(true, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
@@ -1001,19 +1004,26 @@ namespace SimpleFPS
 		{
 			input = default;
 
-			if (_settings.AllowCombatAIActivation == false || _combat == null)
+			if (_combat == null)
 				return false;
 
 			if (_combat.TryGetDirectTarget(out var enemy, out bool hasLineOfFire))
 			{
 				TryAlertAlliesAboutDirectEnemy(enemy);
+				bool combatEnabled = _settings.AllowCombatAIActivation;
 				bool allowLostInvestigationForTarget = allowLostCombatInvestigation && IsLostCombatInvestigationTarget(enemy);
 
 				if (hasLineOfFire)
 				{
 					if (allowLostInvestigationForTarget)
 						RememberCombatEnemy(enemy);
-					if (_combat.TryGetInput(enemy, hasLineOfFire, out input, isMoving, allowCombatMovement))
+					if (_combat.TryGetInput(
+						    enemy,
+						    hasLineOfFire,
+						    out input,
+						    isMoving,
+						    allowCombatMovement,
+						    combatEnabled))
 						return true;
 				}
 
@@ -1035,8 +1045,7 @@ namespace SimpleFPS
 
 		private bool HasCombatTargetWithLineOfFire()
 		{
-			return _settings.AllowCombatAIActivation &&
-			       _combat != null &&
+			return _combat != null &&
 			       _combat.HasTargetWithLineOfFire();
 		}
 

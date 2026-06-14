@@ -1323,6 +1323,7 @@ GameObject:
   - component: {fileID: -4394101241498737787}
   - component: {fileID: 1772856214135365984}
   - component: {fileID: 4286926381959304160}
+  - component: {fileID: -778812341234567891}
   - component: {fileID: -3742765445225703615}
   - component: {fileID: 1558554886111920215}
   - component: {fileID: 3822332377934517607}
@@ -1448,6 +1449,7 @@ MonoBehaviour:
   AirAcceleration: 25
   AirDeceleration: 1.3
   _CharacterIndex: 0
+  _WeaponPreference: 0
 --- !u!114 &1684734813103408741
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1725,7 +1727,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   AutoShootEnabled: 1
-  WeaponPriority: 020000000300000001000000
   FirstShotDelayMin: 0.5
   FirstShotDelayMax: 0.8
   MovingFirstShotDelayMultiplier: 1.2
@@ -1741,6 +1742,7 @@ MonoBehaviour:
   FireAlignmentAngle: 6
   MaxYawDegreesPerTick: 6
   MaxPitchDegreesPerTick: 5
+  TargetSwitchHysteresis: 1.5
 --- !u!114 &1772856214135365984
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1790,11 +1792,23 @@ MonoBehaviour:
   MoveCostWeight: 0.25
   AllySpacingRadius: 2.5
   PistolPreferredRangeMin: 4
-  PistolPreferredRangeMax: 8
   ShotgunPreferredRangeMin: 1
-  ShotgunPreferredRangeMax: 5
   RiflePreferredRangeMin: 6
-  RiflePreferredRangeMax: 14
+--- !u!114 &-778812341234567891
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7812586951838351475}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1ac89ed231444650ac8e58f99b9bd931, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  CloseZombieDistance: 7
+  NearbyZombieCountThreshold: 4
+  NearbyZombieCountRadius: 12
 --- !u!114 &-3742765445225703615
 MonoBehaviour:
   m_ObjectHideFlags: 0

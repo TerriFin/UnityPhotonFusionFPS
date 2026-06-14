@@ -32,6 +32,12 @@ namespace SimpleFPS
 		public LayerMask   HitMask;
 		public float       MaxHitDistance = 100f;
 
+		[Header("AI Evaluation")]
+		[Min(0f)]
+		public float       AIWeaponStrength = 1f;
+		[Min(0.1f)]
+		public float       AIEffectiveMaxRange = 20f;
+
 		[Header("Projectile")]
 		public float       BulletSpeed = 300f;
 		public float       GravityScale = 0.2f;
