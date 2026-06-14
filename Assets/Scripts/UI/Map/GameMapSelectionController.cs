@@ -37,6 +37,7 @@ namespace SimpleFPS
 		// but cannot issue orders.
 		private bool _canSelectAnyTeam;
 		private bool _commandsAllowed = true;
+		private bool _ignoreNextSelectionModifierRelease;
 		private Image _assignedAreaFillImage;
 		private Image _assignedAreaBorderImage;
 		private Sprite _circleSprite;
@@ -54,12 +55,25 @@ namespace SimpleFPS
 
 		public void ToggleSelectionFromRoster(Survivor survivor, Gameplay gameplay, NetworkRunner runner)
 		{
-			if (survivor != null && _selected.Contains(survivor))
+			if (survivor == null)
+				return;
+
+			if (IsSelectionModifierHeld())
+				_ignoreNextSelectionModifierRelease = true;
+
+			if (_selected.Contains(survivor) == false && IsShiftHeld() && _selected.Count > 0)
+			{
+				if (SelectRangeFromRoster(survivor, gameplay, runner))
+					return;
+			}
+
+			if (_selected.Contains(survivor))
 			{
 				RemoveSelection(survivor);
 				return;
 			}
 
+			ClearSelection(notify: false);
 			if (AddSelection(survivor, gameplay, runner, requireMapVisibility: false, notify: false))
 				NotifySelectionChanged();
 		}
@@ -373,6 +387,47 @@ namespace SimpleFPS
 			return true;
 		}
 
+		private bool SelectRangeFromRoster(Survivor target, Gameplay gameplay, NetworkRunner runner)
+		{
+			if (target == null || IsSelectable(target, gameplay, runner, requireMapVisibility: false) == false)
+				return false;
+
+			Survivor closest = null;
+			int closestDistance = int.MaxValue;
+			foreach (var selected in _selected)
+			{
+				if (selected == null || selected.OwnerRef != target.OwnerRef)
+					continue;
+				if (IsSelectable(selected, gameplay, runner, requireMapVisibility: false) == false)
+					continue;
+
+				int distance = Mathf.Abs(selected.CharacterIndex - target.CharacterIndex);
+				if (distance < closestDistance)
+				{
+					closestDistance = distance;
+					closest = selected;
+				}
+			}
+
+			if (closest == null)
+				return false;
+
+			int minIndex = Mathf.Min(closest.CharacterIndex, target.CharacterIndex);
+			int maxIndex = Mathf.Max(closest.CharacterIndex, target.CharacterIndex);
+			bool changed = false;
+			for (int index = minIndex; index <= maxIndex; index++)
+			{
+				var survivor = gameplay.GetSurvivor(target.OwnerRef, index);
+				if (AddSelection(survivor, gameplay, runner, requireMapVisibility: false, notify: false))
+					changed = true;
+			}
+
+			if (changed)
+				NotifySelectionChanged();
+
+			return changed;
+		}
+
 		private bool RemoveSelection(Survivor survivor, bool notify = true)
 		{
 			if (survivor == null || _selected.Remove(survivor) == false)
@@ -387,16 +442,25 @@ namespace SimpleFPS
 
 		private void HandleKeyboardSelection(Gameplay gameplay, NetworkRunner runner)
 		{
-			if (_selected.Count > 1)
-				return;
-
 			var keyboard = Keyboard.current;
 			if (keyboard == null)
 				return;
 
-			bool nextPressed = keyboard.leftShiftKey.wasPressedThisFrame || keyboard.rightShiftKey.wasPressedThisFrame;
-			bool previousPressed = keyboard.leftCtrlKey.wasPressedThisFrame || keyboard.rightCtrlKey.wasPressedThisFrame;
-			if (nextPressed == previousPressed)
+			bool nextReleased = keyboard.leftShiftKey.wasReleasedThisFrame || keyboard.rightShiftKey.wasReleasedThisFrame;
+			bool previousReleased = keyboard.leftCtrlKey.wasReleasedThisFrame || keyboard.rightCtrlKey.wasReleasedThisFrame;
+			if (nextReleased || previousReleased)
+			{
+				if (_ignoreNextSelectionModifierRelease)
+				{
+					_ignoreNextSelectionModifierRelease = false;
+					return;
+				}
+			}
+
+			if (_selected.Count > 1)
+				return;
+
+			if (nextReleased == previousReleased)
 				return;
 
 			if (gameplay.PlayerData.TryGet(runner.LocalPlayer, out var data) == false)
@@ -413,11 +477,25 @@ namespace SimpleFPS
 				}
 			}
 
-			Survivor next = FindNextSelectableSurvivor(gameplay, runner, data, startIndex, nextPressed ? 1 : -1);
+			Survivor next = FindNextSelectableSurvivor(gameplay, runner, data, startIndex, nextReleased ? 1 : -1);
 			ClearSelection();
 
 			if (next != null)
 				AddSelection(next, gameplay, runner);
+		}
+
+		private static bool IsShiftHeld()
+		{
+			var keyboard = Keyboard.current;
+			return keyboard != null && (keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed);
+		}
+
+		private static bool IsSelectionModifierHeld()
+		{
+			var keyboard = Keyboard.current;
+			return keyboard != null &&
+			       (keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed ||
+			        keyboard.leftCtrlKey.isPressed || keyboard.rightCtrlKey.isPressed);
 		}
 
 		private bool HandleKeyboardPossess(GameMapView mapView, Gameplay gameplay, NetworkRunner runner)

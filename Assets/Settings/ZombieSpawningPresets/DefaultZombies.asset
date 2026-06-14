@@ -29,7 +29,7 @@ MonoBehaviour:
   EndDamage: 14
   StartMoveSpeed: 2.5
   EndMoveSpeed: 5.5
-  StartAlertRadius: 8
+  StartAlertRadius: 10
   EndAlertRadius: 24
   OvertimeSpawnRatePerMinute: 60
   OvertimeHealth: 265
@@ -38,3 +38,4 @@ MonoBehaviour:
   UnderpopulatedRegionBias: 0.6
   RegionGridSize: 6
   SeedOffset: 30000
+  MatchStartSeedOffset: 7919

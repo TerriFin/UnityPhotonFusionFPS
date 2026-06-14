@@ -212,8 +212,9 @@ SurvivorRosterController
 
 Rules:
 
-- left click an unselected roster card: add that survivor to the current selection,
+- left click an unselected roster card: replace the current selection with that survivor,
 - left click an already selected roster card: remove that survivor from the current selection,
+- shift-left click an unselected roster card while at least one survivor is already selected: add every selectable survivor between that card and the closest already selected card in roster/character-index order,
 - selected roster cards are highlighted,
 - map-selected survivors are highlighted in the roster,
 - dead/off-team/invalid survivors cannot be selected,
@@ -221,9 +222,9 @@ Rules:
 - right click outside the map does nothing,
 - while the map is open, left clicking empty non-interactive UI/map space clears the current selection.
 
-Roster card selection is additive by default so the player can build groups from the list without keyboard modifiers. Clicking an already selected card toggles it off.
+Roster card selection is single-select by default so the player can quickly focus one survivor from the list. Clicking an already selected card toggles it off. Shift-click range selection never clears the current selection; it only fills the gap between the clicked survivor and the closest selected survivor.
 
-When a survivor is selected from the map, keyboard cycling, drag select, or the roster itself, the roster scrolls that survivor's card into view. During multi-selection this happens for every newly selected survivor, so the final scroll position follows the latest survivor added to the selection. Shift/Ctrl keyboard cycling remains active while the pointer is over the roster; only map pointer actions are blocked by the roster panel.
+When a survivor is selected from the map, keyboard cycling, drag select, or the roster itself, the roster scrolls that survivor's card into view. During multi-selection this happens for every newly selected survivor, so the final scroll position follows the latest survivor added to the selection. Shift/Ctrl keyboard cycling remains active while the pointer is over the roster; only map pointer actions are blocked by the roster panel. Cycling fires on key release, not press, and only when zero or one survivor is selected. This leaves shift press available for roster range selection.
 
 ## Hover Link
 

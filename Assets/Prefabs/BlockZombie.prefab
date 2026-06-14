@@ -1223,7 +1223,7 @@ MonoBehaviour:
   IdleWanderRetryDelayMin: 1
   IdleWanderRetryDelayMax: 2
   IdleWanderRadius: 20
-  IdleWanderAvoidZombieRadius: 18
+  IdleWanderAvoidZombieRadius: 16
   IdleWanderCandidateCount: 3
   AttackRetargetInterval: 1
   HuntingRetargetInterval: 6
