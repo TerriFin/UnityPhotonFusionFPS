@@ -56,16 +56,6 @@ namespace SimpleFPS
 		public float ClimbCommitDuration = 0.75f;
 		public float ClimbMantleMaxSnapHeight = 2.0f;
 
-		[Header("Roof Avoidance")]
-		[Tooltip("When the chased goal has overhead cover (a roof/overhang above it), prefer pathfinding and do not " +
-		         "climb to reach it. Stops zombies scaling buildings to breach survivors hiding inside. A target on " +
-		         "an open rooftop (no overhead cover) is still reachable by climbing.")]
-		public bool AvoidClimbingToRoofedGoals = true;
-		[Tooltip("How far straight up to look for overhead cover above the goal. Must comfortably exceed a building's " +
-		         "interior floor-to-ceiling height, or a roof above a ground-floor survivor will be missed and the " +
-		         "zombie will fall back to climbing. The default storage buildings are ~8 units tall.")]
-		public float RoofCheckHeight = 12f;
-
 		[Header("Alerts")]
 		public int MaxAlertRecipients = 8;
 		public float AlertCooldown = 2f;
@@ -91,19 +81,22 @@ namespace SimpleFPS
 		private float _nextIdleWanderTime;
 		private float _nextRetargetTime;
 		private float _nextAlertTime;
-		private Vector3 _explicitRouteTarget;
+		// Resolved movement leg toward the current explicit goal. _approachGoal is a NavMesh-reachable point we
+		// path to (the closest point to the goal, or the base of a terrain ledge to climb). _climbGoal is what we
+		// climb up toward once the NavMesh can get no closer (the goal itself, or a terrain ledge top).
+		private Vector3 _approachGoal;
+		private Vector3 _climbGoal;
 		private float _nextExplicitGoalRouteRefreshTime;
 		private float _climbCommitUntil;
-		private bool _hasExplicitRouteTarget;
-		private bool _useDirectExplicitGoalMovement;
-		private bool _explicitRouteEndsBeforeGoal;
+		private bool _hasApproach;
+		// True when this leg is a terrain-ledge shortcut (climb is always permitted — it is a bounded, open-air
+		// cliff). False for a final approach to the goal, whose climb is gated like the old sheltered policy.
+		private bool _climbingLedge;
 		private int _lastStimulusTick;
 		private float _nextStuckCheckTime;
 		private bool _isStuckElevated;
 		private Vector3 _stuckWanderDirection;
 		private float _stuckWanderEndTime;
-		private bool _goalUnderRoof;
-		private float _nextRoofCheckTime;
 
 		private const float ClimbCheckProbeHeight = 0.25f;
 		private const float MantleForwardDistanceScale = 0.75f;
@@ -112,9 +105,10 @@ namespace SimpleFPS
 		private const float MantleMinRise = 0.08f;
 		private const float MantleMinSurfaceNormalY = 0.65f;
 		private const float ClimbObstacleBeyondGoalBuffer = 0.15f;
-		private const float RoofCheckStartHeight = 0.5f;
-		// Sheltered-goal sub-policy threshold (see BuildShelteredGoalMoveInput).
-		private const float ShelteredGoalClimbMinRise = 0.5f; // survivor must be this much higher before we climb
+		// The climb goal (ledge top, or a survivor on a perch) must be at least this much higher than the zombie
+		// before the climb impulse engages, and the climb stops once the zombie reaches that height. This caps every
+		// climb at its goal so a zombie rises onto a ledge/crate but never overshoots up onto a roof above it.
+		private const float ClimbStopRise = 0.5f;
 		private const int TraversalHitBufferSize = 16;
 
 		private readonly RaycastHit[] _traversalHits = new RaycastHit[TraversalHitBufferSize];
@@ -385,92 +379,135 @@ namespace SimpleFPS
 				AlertNearbyZombies(target, stimulusTick);
 		}
 
+		// Unified explicit-goal movement. The NavMesh is the spine for all horizontal travel (it crosses terrain
+		// levels via ramps, enters buildings via doors, and avoids obstacles). Climbing is a bounded overlay with
+		// exactly two triggers, each capped by the height map / goal height so a zombie never scales a structure it
+		// has a route around:
+		//   - terrain-ledge shortcut: when the goal is a higher terrain level and the ramp route is a big detour,
+		//     climb the nearest single-level cliff between us and the goal (see EnsureExplicitGoalRoute);
+		//   - final-approach climb: when the NavMesh can get no closer and the goal sits above us off the mesh
+		//     (a crate/perch), climb the last stretch up to it.
 		private NetworkedInput BuildExplicitGoalMoveInput(Vector3 goal, float stoppingDistance, bool directFinalApproach)
 		{
-			// A roofed goal (survivor sheltered inside a structure) is the one exception to the unified
-			// route-vs-direct policy: climbing toward it would just scale the building and strand the zombie on the
-			// roof above the survivor. Hand it to a dedicated sub-policy that navigates in and only climbs upward to
-			// a survivor on unreachable interior terrain — never above the survivor's own height.
-			RefreshGoalUnderRoof(goal);
-			if (_goalUnderRoof)
-				return BuildShelteredGoalMoveInput(goal, stoppingDistance);
-
 			EnsureExplicitGoalRoute(goal);
 
-			if (_useDirectExplicitGoalMovement)
-			{
-				if (CanUseDirectExplicitGoalMovement(goal))
-					return BuildDirectExplicitGoalMoveInput(goal, stoppingDistance);
-
-				_useDirectExplicitGoalMovement = false;
-				_nextExplicitGoalRouteRefreshTime = 0f;
-				EnsureExplicitGoalRoute(goal);
-			}
-
+			// Travel to the approach point on the NavMesh (the goal itself for the normal spine, or the foot of a
+			// terrain ledge we intend to climb). The navigator's path-following plus midpoint chaining gets us as
+			// close as the mesh allows even on long, winding interior routes. A non-zero move means still travelling.
 			var navigator = _zombie.Navigator;
-			if (_hasExplicitRouteTarget && navigator != null)
+			if (_hasApproach && navigator != null)
 			{
-				NetworkedInput routeInput = BuildMoveInput(_explicitRouteTarget, ExplicitGoalStoppingDistance, false);
-				if (routeInput.MoveDirection != Vector2.zero)
-					return routeInput;
+				NetworkedInput navInput = BuildMoveInput(_approachGoal, stoppingDistance, true);
+				if (navInput.MoveDirection != Vector2.zero)
+					return navInput;
 
 				navigator.Tick(transform.position);
-				if (navigator.IsDestinationReached)
-				{
-					if (_explicitRouteEndsBeforeGoal || directFinalApproach)
-					{
-						if (TryUseDirectExplicitGoalMovement(goal))
-							return BuildDirectExplicitGoalMoveInput(goal, stoppingDistance);
-
-						return BuildLookInput(goal);
-					}
-
-					return BuildLookInput(goal);
-				}
-
-				if (navigator.HasPath)
-					return routeInput;
+				// Zero move while a route still exists is just a transient corner stop — keep following the navigator
+				// until it has genuinely brought us as close as it can.
+				if (navigator.HasPath && navigator.IsDestinationReached == false)
+					return navInput;
 			}
 
-			if (TryUseDirectExplicitGoalMovement(goal))
-				return BuildDirectExplicitGoalMoveInput(goal, stoppingDistance);
+			// NavMesh has brought us as close as it can. Climb the last stretch toward the climb goal when allowed;
+			// ShouldClimbTowardGoal caps the climb at the goal's own height (a ledge top, or a survivor's perch).
+			if (CanClimbDirectGoals && ShouldDirectClimbToGoal(directFinalApproach) && CanUseDirectExplicitGoalMovement(_climbGoal))
+				return BuildDirectExplicitGoalMoveInput(_climbGoal, stoppingDistance);
 
-			return BuildLookInput(goal);
+			return BuildLookInput(_climbGoal);
+		}
+
+		// A terrain-ledge shortcut always climbs (that is why it was chosen). Otherwise climb only for an aggressive
+		// attack/hunt approach, or when the goal is perched above the closest point the NavMesh could reach (so an
+		// investigation still climbs onto an off-mesh perch to reach its point, but does not scale on-mesh structures).
+		private bool ShouldDirectClimbToGoal(bool directFinalApproach)
+		{
+			if (_climbingLedge || directFinalApproach)
+				return true;
+
+			return _climbGoal.y - transform.position.y > ClimbStopRise;
 		}
 
 		private void EnsureExplicitGoalRoute(Vector3 goal)
 		{
-			if ((_hasExplicitRouteTarget || _useDirectExplicitGoalMovement) &&
-			    Time.timeSinceLevelLoad < _nextExplicitGoalRouteRefreshTime)
+			if (_hasApproach && Time.timeSinceLevelLoad < _nextExplicitGoalRouteRefreshTime)
 				return;
 
 			_nextExplicitGoalRouteRefreshTime = Time.timeSinceLevelLoad + Mathf.Max(0.05f, ExplicitGoalRouteRefreshInterval);
-			_hasExplicitRouteTarget = false;
-			_useDirectExplicitGoalMovement = false;
-			_explicitRouteEndsBeforeGoal = false;
+			_hasApproach = false;
+			_climbingLedge = false;
 
 			var navigator = _zombie.Navigator;
-			if (navigator == null ||
-			    navigator.TryFindReachablePoint(transform.position, goal, ReachablePointSampleDistance,
-				    out Vector3 reachablePoint, out float routeLength) == false)
+			if (navigator == null)
 			{
-				if (TryUseDirectExplicitGoalMovement(goal) == false)
-					ClearNavigator();
-
+				// No navigator: climb directly toward the goal (bounded by the leash in the caller).
+				_approachGoal = goal;
+				_climbGoal = goal;
 				return;
 			}
 
-			_explicitRouteEndsBeforeGoal = IsSameNavigableGoal(reachablePoint, goal) == false;
+			// Terrain-ledge shortcut: the goal is a higher terrain level and the ramp route is a big detour, so climb
+			// the nearest cliff between us and the goal instead of walking all the way to a distant ramp.
+			if (TryPlanCliffShortcut(goal))
+				return;
+
+			// Normal spine: navigate toward the goal itself. The navigator gets us as close as the NavMesh allows —
+			// up ramps, through doors, to the foot of a perch — even on long routes, via its midpoint chaining. We do
+			// NOT gate this on TryFindReachablePoint (which needs a complete in-budget path): a long winding interior
+			// route can exceed that budget, and treating it as "unreachable" is exactly what used to send zombies
+			// climbing the outside of a building they could simply have walked up.
+			_approachGoal = goal;
+			_climbGoal = goal;
+			_hasApproach = true;
+			navigator.SetDestination(goal);
+		}
+
+		// Decide whether to climb a terrain ledge instead of taking the NavMesh ramp route. Returns true (and sets up
+		// the approach to the ledge base + the climb toward its top) only when the goal is a higher terrain level, the
+		// ramp route is a meaningful detour (or absent), and a reachable single-level ledge exists toward the goal.
+		private bool TryPlanCliffShortcut(Vector3 goal)
+		{
+			if (ZombieTerrain.HasSnapshot == false)
+				return false;
+			if (ZombieTerrain.TryGetLevel(transform.position, out int zombieLevel) == false)
+				return false;
+			if (ZombieTerrain.TryGetLevel(goal, out int goalLevel) == false)
+				return false;
+			if (goalLevel <= zombieLevel)
+				return false; // only climb to go UP; same/lower terrain uses the NavMesh plus a final climb/drop
+
+			var navigator = _zombie.Navigator;
+			if (navigator == null)
+				return false;
+
+			// Prefer the ramp route when there is a complete one that is reasonably direct. If TryFindReachablePoint
+			// finds no in-budget complete route to the upper goal, that is itself a strong signal the ramp is a big
+			// detour (or missing), so we proceed to look for a ledge.
 			float directDistance = Vector3.Distance(transform.position, goal);
-			float maxRouteLength = Mathf.Max(0.01f, directDistance) * Mathf.Max(1f, DirectRouteLengthMultiplier);
-			if (routeLength > maxRouteLength && TryUseDirectExplicitGoalMovement(goal))
+			if (navigator.TryFindReachablePoint(transform.position, goal, ReachablePointSampleDistance, out _, out float routeLength))
 			{
-				return;
+				float maxRouteLength = Mathf.Max(0.01f, directDistance) * Mathf.Max(1f, DirectRouteLengthMultiplier);
+				if (routeLength <= maxRouteLength)
+					return false;
 			}
 
-			_explicitRouteTarget = reachablePoint;
-			_hasExplicitRouteTarget = true;
-			navigator.SetDestination(reachablePoint);
+			// Climb the nearest terrain ledge toward the goal. Cap the search at the direct distance so a ledge farther
+			// away than the goal is never preferred over the ramp.
+			if (ZombieTerrain.TryFindClimbLedge(transform.position, goal, zombieLevel, directDistance,
+				    out Vector3 ledgeBase, out Vector3 ledgeTop) == false)
+				return false;
+
+			// Only commit to the shortcut if we can actually reach the ledge base on the lower plateau; otherwise fall
+			// back to the spine (ramp) so we never strand ourselves walking at an unreachable cliff foot.
+			if (navigator.TryFindReachablePoint(transform.position, ledgeBase, ReachablePointSampleDistance,
+				    out Vector3 reachableBase, out _) == false)
+				return false;
+
+			_approachGoal = reachableBase;
+			_climbGoal = ledgeTop;
+			_climbingLedge = true;
+			_hasApproach = true;
+			navigator.SetDestination(reachableBase);
+			return true;
 		}
 
 		private NetworkedInput BuildDirectExplicitGoalMoveInput(Vector3 goal, float stoppingDistance)
@@ -504,10 +541,10 @@ namespace SimpleFPS
 
 		private bool ShouldClimbTowardGoal(Vector3 direction, Vector3 goal)
 		{
-			// For a sheltered (roofed) goal, only ever climb to rise toward a survivor that is still above us — e.g.
-			// standing on a crate inside the building. Once we have reached their height, stop: anything higher is the
-			// roof, not the survivor. This caps the climb at the survivor's own level and wins over the climb commit.
-			if (_goalUnderRoof && goal.y - transform.position.y <= ShelteredGoalClimbMinRise)
+			// Cap every climb at the goal's own height: only climb while the goal is still above us, and stop once we
+			// reach it. This rises onto a terrain-ledge top or a survivor's crate but never overshoots up onto a roof
+			// above them. The cap wins over the climb commit timer.
+			if (goal.y - transform.position.y <= ClimbStopRise)
 				return false;
 
 			float now = Time.timeSinceLevelLoad;
@@ -526,64 +563,6 @@ namespace SimpleFPS
 
 			_climbCommitUntil = now + Mathf.Max(0.05f, ClimbCommitDuration);
 			return true;
-		}
-
-		private void RefreshGoalUnderRoof(Vector3 goal)
-		{
-			float now = Time.timeSinceLevelLoad;
-			if (now < _nextRoofCheckTime)
-				return;
-
-			_nextRoofCheckTime = now + Mathf.Max(0.05f, ExplicitGoalRouteRefreshInterval);
-			_goalUnderRoof = IsGoalUnderRoof(goal);
-		}
-
-		private bool IsGoalUnderRoof(Vector3 goal)
-		{
-			if (AvoidClimbingToRoofedGoals == false || RoofCheckHeight <= 0f)
-				return false;
-
-			// Straight-up ray from just above the goal. A non-character world hit means the target sits under a roof
-			// or overhang (hiding inside / beneath a building), so it should be reached by a ground route rather than
-			// by climbing the structure. Character colliders are ignored, so the survivor's own body never counts.
-			Vector3 origin = goal + Vector3.up * RoofCheckStartHeight;
-			return HasNonCharacterTraversalHit(GetPhysicsScene(), origin, Vector3.up, RoofCheckHeight, GetTraversalMask());
-		}
-
-		// Movement toward a sheltered (roofed) survivor — the one exception to the unified route-vs-direct policy.
-		// Reach them by a ground route through the structure; only climb upward to a survivor on unreachable interior
-		// terrain (a crate), never onto the roof; and shuffle off if we somehow end up above them.
-		private NetworkedInput BuildShelteredGoalMoveInput(Vector3 goal, float stoppingDistance)
-		{
-			Vector3 position = transform.position;
-
-			// Drive the navigator straight at the survivor. Its midpoint-chaining gets us as close as the interior
-			// NavMesh allows — through the entrance, across the floor, up to the foot of whatever they stand on. A
-			// non-zero move means we are still travelling.
-			var navigator = _zombie.Navigator;
-			if (navigator != null)
-			{
-				navigator.SetDestination(goal);
-				NetworkedInput navInput = BuildMoveInput(goal, stoppingDistance, true);
-				if (navInput.MoveDirection != Vector2.zero)
-					return navInput;
-
-				// Zero move while a route still exists is just a transient corner stop — stay on the navigator and
-				// do not switch to climbing until it has genuinely brought us as close as it can.
-				if (navigator.HasPath && navigator.IsDestinationReached == false)
-					return navInput;
-			}
-
-			// As close as the NavMesh gets us. If the survivor is meaningfully above us they are on interior terrain
-			// the NavMesh does not cover (a crate) — climb up to them. ShouldClimbTowardGoal caps the climb at the
-			// survivor's own height so it cannot overshoot onto the roof.
-			if (CanClimbDirectGoals && goal.y - position.y > ShelteredGoalClimbMinRise && CanUseDirectExplicitGoalMovement(goal))
-				return BuildDirectExplicitGoalMoveInput(goal, stoppingDistance);
-
-			// Level with the survivor (face them, melee takes over) — or, if a zombie ended up above a sheltered
-			// survivor (on the roof), no downward path and no upward climb apply, so it simply holds here facing them.
-			// We deliberately do not herd it off the roof for now, to avoid walking a roof-edge zombie off the map.
-			return BuildLookInput(goal);
 		}
 
 		private bool HasClimbObstacleAhead(Vector3 direction, float probeDistance)
@@ -678,24 +657,6 @@ namespace SimpleFPS
 			       Mathf.Abs(transform.position.y - goal.y) <= Mathf.Max(0.1f, ExplicitGoalHeightTolerance);
 		}
 
-		private bool IsSameNavigableGoal(Vector3 reachablePoint, Vector3 goal)
-		{
-			float stoppingDistance = Mathf.Max(0.1f, ExplicitGoalStoppingDistance);
-			return FlatDistanceSqr(reachablePoint, goal) <= stoppingDistance * stoppingDistance &&
-			       Mathf.Abs(reachablePoint.y - goal.y) <= Mathf.Max(0.1f, ExplicitGoalHeightTolerance);
-		}
-
-		private bool TryUseDirectExplicitGoalMovement(Vector3 goal)
-		{
-			if (CanUseDirectExplicitGoalMovement(goal) == false)
-				return false;
-
-			_hasExplicitRouteTarget = false;
-			_useDirectExplicitGoalMovement = true;
-			ClearNavigator();
-			return true;
-		}
-
 		private bool CanUseDirectExplicitGoalMovement(Vector3 goal)
 		{
 			float maxDistance = Mathf.Max(0f, MaxDirectTraversalDistance);
@@ -712,12 +673,11 @@ namespace SimpleFPS
 			// commit expires naturally after ClimbCommitDuration, and TryMantleForward resets it
 			// explicitly after a successful hoist (so a zombie that has already landed on the
 			// surface does not keep climbing the next tick).
-			_explicitRouteTarget = default;
+			_approachGoal = default;
+			_climbGoal = default;
 			_nextExplicitGoalRouteRefreshTime = 0f;
-			_nextRoofCheckTime = 0f;
-			_hasExplicitRouteTarget = false;
-			_useDirectExplicitGoalMovement = false;
-			_explicitRouteEndsBeforeGoal = false;
+			_hasApproach = false;
+			_climbingLedge = false;
 			ClearNavigator();
 		}
 

@@ -98,6 +98,14 @@ namespace SimpleFPS
 			_nextPulseTime = Time.timeSinceLevelLoad + GetPulseInterval();
 		}
 
+		private void OnDisable()
+		{
+			// Drop the shared terrain snapshot when the primary orchestrator goes away (match end, scene unload) so a
+			// stale height map cannot leak into a later session if domain reload is disabled. A fresh match republishes.
+			if (_isPrimary)
+				ZombieTerrain.Clear();
+		}
+
 		private void Update()
 		{
 			if (_isPrimary == false)
@@ -147,6 +155,10 @@ namespace SimpleFPS
 			}
 
 			_loggedNoSpawnPoints = false;
+
+			// Generation has produced spawn points, so the height snapshot is ready. Publish it for ZombieAI's
+			// terrain-aware climbing. Cheap (a struct read) and idempotent, so re-running it picks up regeneration.
+			PublishTerrainSnapshot();
 
 			// Match-start reroll, mirroring the neutral survivor orchestrator: once the match leaves skirmish, clear
 			// the skirmish horde and re-seed a fresh match-start layout. Until then, run the normal one-time initial
@@ -794,6 +806,20 @@ namespace SimpleFPS
 				HeightGenerator = FindObjectOfType<HeightMapGenerator>();
 
 			return HeightGenerator != null ? HeightGenerator.GeneratedRoot : null;
+		}
+
+		// Hand the generated height snapshot to the zombie terrain service so ZombieAI can make terrain-aware
+		// climbing decisions. HeightGenerator is already resolved by CollectSpawnPoints; re-publishing each tick is
+		// cheap (a struct read) and lets a mid-session regeneration replace the cached snapshot.
+		private void PublishTerrainSnapshot()
+		{
+			if (HeightGenerator == null)
+				GetGeneratedHeightRoot();
+			if (HeightGenerator == null)
+				return;
+
+			if (HeightGenerator.TryGetHeightSnapshot(out WorldHeightSnapshot snapshot) && snapshot.IsValid)
+				ZombieTerrain.SetSnapshot(snapshot);
 		}
 
 		private NetworkRunner GetRunner()

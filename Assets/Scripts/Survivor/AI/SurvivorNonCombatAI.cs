@@ -163,7 +163,8 @@ namespace SimpleFPS
 			return ai;
 		}
 
-		public static bool TryBuildAssignedAreaPatrolPoints(Survivor survivor, Vector3 center, float radius, out Vector3[] patrolPoints)
+		public static bool TryBuildAssignedAreaPatrolPoints(Survivor survivor, Vector3 center, float radius, out Vector3[] patrolPoints,
+			bool preferAuthoredWaypoints = false)
 		{
 			patrolPoints = null;
 			if (survivor == null)
@@ -173,7 +174,7 @@ namespace SimpleFPS
 			if (assignedArea == null)
 				assignedArea = survivor.gameObject.AddComponent<SurvivorAssignedAreaAI>();
 
-			return assignedArea.TryBuildReachablePointSet(survivor, center, radius, out patrolPoints);
+			return assignedArea.TryBuildReachablePointSet(survivor, center, radius, out patrolPoints, preferAuthoredWaypoints);
 		}
 
 		private void Awake()

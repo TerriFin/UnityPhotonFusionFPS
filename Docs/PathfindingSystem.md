@@ -62,6 +62,7 @@ Suggested inspector fields:
 public float RepathInterval = 0.25f;
 public float CornerReachDistance = 0.35f;
 public float DestinationReachDistance = 1.25f;
+public float VerticalReachDistance = 2f;     // vertical tolerance for "reached"; see Height-Aware Reach
 public float DestinationChangeRepathDistance = 0.5f;
 public float SampleMaxDistance = 2f;
 public float ReachablePointSampleMaxDistance = 6f;
@@ -110,6 +111,16 @@ The overload returning `pathLength` is used by zombie explicit-goal routing. It 
 `NavMeshPath` must be created in `Awake()` or another Unity lifecycle method, not in a field initializer or MonoBehaviour constructor. Unity's native NavMesh path initialization is not allowed during script construction.
 
 The component should not call `transform.position`, `NavMeshAgent.SetDestination`, or any movement API.
+
+### Height-Aware Reach
+
+`CharacterNavigator` distinguishes destinations that differ vertically, so AI can route up onto rooftops and upper building floors instead of stopping on the ground beneath them.
+
+- **Reached test:** `IsDestinationReached` requires the agent to be within `DestinationReachDistance` horizontally **and** within `VerticalReachDistance` vertically of the sampled destination. A purely flat test would report "reached" while the agent stands on the ground directly under a rooftop target, so it would never climb. Keep `VerticalReachDistance` below a building's floor height (default `2 m`) so stacked floors are distinguished, but above pivot/step variance so normal ground arrivals still register.
+- **Destination-change detection:** `SetDestination` ignores a new destination only when it is within `DestinationChangeRepathDistance` of the current one in **3D**. A flat compare would treat two patrol points stacked on different floors (same XZ) as the same destination and never repath to the new floor.
+- `CornerReachDistance` advancement stays horizontal. NavMesh path corners climb via ramps/stairs that progress in XZ, so flat corner advancement is sufficient and avoids stalling a climb.
+
+This is shared infrastructure: the same height-aware reach applies to every navigator consumer (survivor move/patrol/investigation **and** zombies). For elevated targets it removes the previous false "arrived" while flat-near-but-below a goal; the zombie sheltered-climb fallback is unaffected because it switches to climbing when the NavMesh route is exhausted (`HasPath` goes false), not when `IsDestinationReached` flips.
 
 ## Move Assignment
 

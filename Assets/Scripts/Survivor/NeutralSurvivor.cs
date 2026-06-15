@@ -242,7 +242,9 @@ namespace SimpleFPS
 			PatrolCenter = _roamCenter;
 			PatrolRadius = _roamRadius;
 
-			if (_roamRadius > 0f && SurvivorNonCombatAI.TryBuildAssignedAreaPatrolPoints(_survivor, _roamCenter, _roamRadius, out Vector3[] patrolPoints))
+			// Like the initial spawn, a roaming neutral that settles on a waypointed area garrisons its authored
+			// waypoints rather than diluting them with auto-sampled ground points.
+			if (_roamRadius > 0f && SurvivorNonCombatAI.TryBuildAssignedAreaPatrolPoints(_survivor, _roamCenter, _roamRadius, out Vector3[] patrolPoints, preferAuthoredWaypoints: true))
 			{
 				Vector3 entryPoint = patrolPoints != null && patrolPoints.Length > 0 ? patrolPoints[0] : _roamCenter;
 				_survivor.SetAI(SurvivorNonCombatAI.RoamArea(_survivor, _roamCenter, _roamRadius, entryPoint, patrolPoints, _survivor.NonCombatAISettings));

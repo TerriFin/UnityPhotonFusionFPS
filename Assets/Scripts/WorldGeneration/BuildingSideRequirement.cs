@@ -7,5 +7,9 @@ namespace SimpleFPS
 		RequiresNoRoad,
 		RequiresLedgeDown,
 		RequiresLedgeUp,
+		RequiresComplexBuilding,
+		RequiresNoComplexBuilding,
+		RequiresBlockingBuilding,
+		RequiresNoBlockingBuilding,
 	}
 }

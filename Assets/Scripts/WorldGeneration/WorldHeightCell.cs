@@ -75,5 +75,35 @@ namespace SimpleFPS
 			cell = _cells[position.x, position.y];
 			return true;
 		}
+
+		// Map a world position to its grid cell (XZ only; height is ignored). Mirrors the cell -> world mapping
+		// used by the generators (Origin + cell * TileSize).
+		public bool TryGetCell(Vector3 worldPosition, out WorldHeightCell cell)
+		{
+			cell = default;
+			if (_cells == null || TileSize <= 0f)
+				return false;
+
+			int x = Mathf.RoundToInt((worldPosition.x - Origin.x) / TileSize);
+			int y = Mathf.RoundToInt((worldPosition.z - Origin.z) / TileSize);
+			return TryGetCell(new Vector2Int(x, y), out cell);
+		}
+
+		// The terrain height level at a world position. This is the logical terrace level, independent of the
+		// caller's actual Y, so a character on a tall structure built on a level-0 cell still reads level 0.
+		public bool TryGetHeightLevel(Vector3 worldPosition, out int level)
+		{
+			level = 0;
+			if (TryGetCell(worldPosition, out var cell) == false)
+				return false;
+
+			level = cell.HeightLevel;
+			return true;
+		}
+
+		public Vector3 CellCenterWorld(Vector2Int position, int heightLevel)
+		{
+			return Origin + new Vector3(position.x * TileSize, heightLevel * HeightLevelWorldUnits, position.y * TileSize);
+		}
 	}
 }

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AI;
 
@@ -22,12 +23,21 @@ namespace SimpleFPS
 		[Header("Movement")]
 		public float AreaStoppingDistance = 1.25f;
 		public float PatrolPointStoppingDistance = 1f;
+		// Vertical tolerance for "reached a patrol point", separate from the horizontal PatrolPointStoppingDistance.
+		// Without it a survivor on the ground directly under a rooftop waypoint counts as having arrived and never
+		// climbs. Keep this below a building floor's height so stacked floors are distinguished, but above survivor
+		// pivot / step variance.
+		public float PatrolPointVerticalStoppingDistance = 2f;
 		public float DirectFallbackDistance = 1.5f;
 		public int PatrolPointSampleAttempts = 8;
 
 		[Header("Waiting")]
 		public float WaitDurationMin = 4f;
 		public float WaitDurationMax = 8f;
+
+		// Reusable scratch for building a patrol-point set (manual waypoints + auto-sampled fill) without
+		// per-order GC. Only ever used on state authority, synchronously, for one order at a time.
+		private readonly List<Vector3> _patrolPointBuffer = new();
 
 		private NavMeshPath _scratchPath;
 		private Vector3 _patrolTarget;
@@ -87,7 +97,7 @@ namespace SimpleFPS
 				return getHoldInput();
 			}
 
-			if (FlatDistanceSqr(survivor.transform.position, _patrolTarget) <= PatrolPointStoppingDistance * PatrolPointStoppingDistance)
+			if (HasReachedPoint(survivor.transform.position, _patrolTarget, PatrolPointStoppingDistance))
 			{
 				_hasPatrolTarget = false;
 				BeginWait();
@@ -97,19 +107,41 @@ namespace SimpleFPS
 			return MoveTo(survivor, _patrolTarget, PatrolPointStoppingDistance, createMoveInput, getHoldInput);
 		}
 
-		public bool TryBuildReachablePointSet(Survivor survivor, Vector3 center, float radius, out Vector3[] reachablePoints)
+		public bool TryBuildReachablePointSet(Survivor survivor, Vector3 center, float radius, out Vector3[] reachablePoints,
+			bool preferAuthoredWaypoints = false)
 		{
 			reachablePoints = Array.Empty<Vector3>();
 			if (survivor == null || radius <= 0f)
 				return false;
 
+			// Target number of patrol points for a circle this size (radius 3.14 -> ~4, 8.51 -> ~9).
+			int targetCount = Mathf.Max(1, Mathf.CeilToInt(radius));
+
+			// Prefab-authored waypoints whose XZ falls inside the circle are forced into the patrol set. The player
+			// is responsible for placing them on reachable ground, so they are taken as-is with NO reachability test
+			// (this is the whole point: they reach places the ground-level auto-sampler can't, like rooftops).
+			_patrolPointBuffer.Clear();
+			int manualCount = PatrolWaypoint.CollectInsideCircle(center, radius, _patrolPointBuffer);
+
+			// Use the manual waypoints alone (skip auto-sampling) when either:
+			//  - there are at least as many as we want for a circle this size (the normal "enough waypoints" rule), or
+			//  - the caller asked to prefer authored waypoints and there is at least one. A garrison (e.g. a neutral
+			//    survivor holding a building) wants to patrol its windows/rooftops, not be diluted by ground points
+			//    auto-sampled to pad out a wide PatrolRadius.
+			if (manualCount >= targetCount || (preferAuthoredWaypoints && manualCount > 0))
+				return FinishPointSet(out reachablePoints);
+
 			var navigator = survivor.Navigator;
 			if (navigator == null)
 			{
-				reachablePoints = new[] { center };
-				return true;
+				// No navigator to validate auto points: use the manual waypoints if any, otherwise the centre.
+				if (manualCount == 0)
+					_patrolPointBuffer.Add(center);
+				return FinishPointSet(out reachablePoints);
 			}
 
+			// Fewer manual waypoints than wanted: keep all of them and auto-sample reachable points to fill the rest.
+			//
 			// Evaluate reachability from the MIDDLE of the area, not the survivor's position. A patrol order can be
 			// issued from across the map where the survivor has no in-budget NavMesh path to the area yet (it chains
 			// there via the navigator, exactly like a move order). Patrol points only need to be mutually reachable
@@ -117,43 +149,50 @@ namespace SimpleFPS
 			// the centre out to the radius so a centre landing just off the NavMesh still resolves to walkable ground.
 			float centerSampleDistance = Mathf.Max(navigator.SampleMaxDistance, radius);
 			if (TryCreateReachabilityQuery(navigator, center, centerSampleDistance, out var query) == false)
-				return false;
-
-			int targetCount = Mathf.Max(1, Mathf.CeilToInt(radius));
-			int candidateCount = Mathf.Max(8, targetCount * 3);
-			var results = new Vector3[targetCount];
-			int count = 0;
-
-			if (TryFindReachablePoint(query, center, center, radius, out Vector3 reachablePoint))
 			{
-				AddReachablePoint(results, ref count, reachablePoint);
+				// No reachable NavMesh anchor for the auto-fill. With manual waypoints the order is still valid;
+				// with none, the circle genuinely contains no reachable ground and the order is rejected (unchanged).
+				return FinishPointSet(out reachablePoints);
 			}
-			else if (TryFindEdgeProbe(query, center, radius, out reachablePoint))
+
+			// Seed a guaranteed-reachable ground anchor (centre, else an edge probe) only when there are no manual
+			// waypoints. When manual waypoints exist they already define where to patrol, so the auto fill is pure
+			// extra coverage and the centre point is not forced in.
+			if (manualCount == 0)
 			{
-				AddReachablePoint(results, ref count, reachablePoint);
-			}
-			else
-			{
-				return false;
+				if (TryFindReachablePoint(query, center, center, radius, out Vector3 anchor))
+					AddPointIfFar(anchor);
+				else if (TryFindEdgeProbe(query, center, radius, out anchor))
+					AddPointIfFar(anchor);
+				else
+					return false; // No reachable ground and no manual waypoints: reject (unchanged behavior).
 			}
 
 			float goldenAngle = Mathf.PI * (3f - Mathf.Sqrt(5f));
-			for (int i = 0; i < candidateCount && count < targetCount; i++)
+			int candidateCount = Mathf.Max(8, targetCount * 3);
+			for (int i = 0; i < candidateCount && _patrolPointBuffer.Count < targetCount; i++)
 			{
 				Vector3 candidate = GetGoldenSpiralPoint(center, radius, candidateCount, i, goldenAngle);
-				if (TryFindReachablePoint(query, center, candidate, radius, out reachablePoint) == false)
-					continue;
-				if (ContainsNearby(results, count, reachablePoint, PatrolPointStoppingDistance))
+				if (TryFindReachablePoint(query, center, candidate, radius, out Vector3 reachablePoint) == false)
 					continue;
 
-				AddReachablePoint(results, ref count, reachablePoint);
+				AddPointIfFar(reachablePoint);
 			}
 
-			if (count != results.Length)
-				Array.Resize(ref results, count);
+			return FinishPointSet(out reachablePoints);
+		}
 
-			reachablePoints = results;
-			return count > 0;
+		private bool FinishPointSet(out Vector3[] reachablePoints)
+		{
+			reachablePoints = _patrolPointBuffer.Count > 0 ? _patrolPointBuffer.ToArray() : Array.Empty<Vector3>();
+			_patrolPointBuffer.Clear();
+			return reachablePoints.Length > 0;
+		}
+
+		private void AddPointIfFar(Vector3 point)
+		{
+			if (ContainsNearby(_patrolPointBuffer, point, PatrolPointStoppingDistance) == false)
+				_patrolPointBuffer.Add(point);
 		}
 
 		private NetworkedInput MoveTo(
@@ -172,10 +211,24 @@ namespace SimpleFPS
 					return createMoveInput(steeringTarget, false, stoppingDistance);
 			}
 
-			if (FlatDistanceSqr(survivor.transform.position, target) <= DirectFallbackDistance * DirectFallbackDistance)
+			// Only walk straight at the target when it is close in 3D. A target far overhead (a rooftop point with
+			// no path this tick) must not trigger the direct fallback, or the survivor would "walk" into the wall
+			// under it and stop; instead it holds and lets the navigator path up next tick.
+			if (HasReachedPoint(survivor.transform.position, target, DirectFallbackDistance))
 				return createMoveInput(target, true, stoppingDistance);
 
 			return getHoldInput();
+		}
+
+		// Horizontal proximity within stoppingDistance AND vertical proximity within PatrolPointVerticalStoppingDistance.
+		// Keeping the two axes separate lets a survivor stand close on a flat floor while still refusing to count a
+		// point directly above or below it (a different building level) as reached.
+		private bool HasReachedPoint(Vector3 position, Vector3 target, float stoppingDistance)
+		{
+			if (FlatDistanceSqr(position, target) > stoppingDistance * stoppingDistance)
+				return false;
+
+			return Mathf.Abs(position.y - target.y) <= Mathf.Max(0.01f, PatrolPointVerticalStoppingDistance);
 		}
 
 		private bool TryPickPatrolTarget(Survivor survivor, Vector3 center, float radius, Vector3[] patrolPoints)
@@ -288,18 +341,15 @@ namespace SimpleFPS
 			return center + new Vector3(Mathf.Cos(angle) * sampleRadius, 0f, Mathf.Sin(angle) * sampleRadius);
 		}
 
-		private static void AddReachablePoint(Vector3[] results, ref int count, Vector3 point)
-		{
-			if (count < results.Length)
-				results[count++] = point;
-		}
-
-		private static bool ContainsNearby(Vector3[] points, int count, Vector3 point, float minDistance)
+		// 3D distance on purpose: an auto-sampled ground point and a manual rooftop waypoint can share the same XZ
+		// but belong to different floors, so a flat check would wrongly merge them. Vertically separated points are
+		// kept; genuine duplicates on the same level are dropped.
+		private static bool ContainsNearby(List<Vector3> points, Vector3 point, float minDistance)
 		{
 			float minDistanceSqr = minDistance * minDistance;
-			for (int i = 0; i < count; i++)
+			for (int i = 0; i < points.Count; i++)
 			{
-				if (FlatDistanceSqr(points[i], point) <= minDistanceSqr)
+				if ((points[i] - point).sqrMagnitude <= minDistanceSqr)
 					return true;
 			}
 

@@ -10,6 +10,10 @@ namespace SimpleFPS
 		public float RepathInterval = 0.35f;
 		public float CornerReachDistance = 0.75f;
 		public float DestinationReachDistance = 1.35f;
+		// Vertical tolerance for "reached", separate from the horizontal DestinationReachDistance. Without it a
+		// survivor on the ground directly under a rooftop/upper-floor destination counts as arrived and never climbs.
+		// Keep below a building floor's height so stacked floors are distinguished, but above pivot/step variance.
+		public float VerticalReachDistance = 2f;
 		public float DestinationChangeRepathDistance = 0.5f;
 		public float SampleMaxDistance = 2f;
 		public float ReachablePointSampleMaxDistance = 8f;
@@ -79,7 +83,9 @@ namespace SimpleFPS
 
 		public void SetDestination(Vector3 destination)
 		{
-			if (_hasDestination && FlatDistanceSqr(_destination, destination) <= DestinationChangeRepathDistance * DestinationChangeRepathDistance)
+			// 3D compare: two patrol points stacked on different floors can share the same XZ, so a flat check would
+			// treat a switch between them as "same destination" and never repath up/down to the new one.
+			if (_hasDestination && (_destination - destination).sqrMagnitude <= DestinationChangeRepathDistance * DestinationChangeRepathDistance)
 				return;
 
 			_destination = destination;
@@ -390,7 +396,9 @@ namespace SimpleFPS
 		private void UpdateReached(Vector3 currentPosition)
 		{
 			Vector3 target = _sampledDestination;
-			_isDestinationReached = FlatDistanceSqr(currentPosition, target) <= DestinationReachDistance * DestinationReachDistance;
+			bool horizontalReached = FlatDistanceSqr(currentPosition, target) <= DestinationReachDistance * DestinationReachDistance;
+			bool verticalReached = Mathf.Abs(currentPosition.y - target.y) <= Mathf.Max(0.01f, VerticalReachDistance);
+			_isDestinationReached = horizontalReached && verticalReached;
 		}
 
 		private static float FlatDistanceSqr(Vector3 a, Vector3 b)

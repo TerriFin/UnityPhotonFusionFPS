@@ -162,7 +162,11 @@ public enum BuildingSideRequirement
     RequiresRoad,
     RequiresNoRoad,
     RequiresLedgeDown,
-    RequiresLedgeUp
+    RequiresLedgeUp,
+    RequiresComplexBuilding,
+    RequiresNoComplexBuilding,
+    RequiresBlockingBuilding,
+    RequiresNoBlockingBuilding
 }
 ```
 
@@ -171,6 +175,17 @@ public enum BuildingSideRequirement
 `RequiresLedgeUp` means this side must face an adjacent ledge where the building side is on the lower elevation and the ledge rises away from it. This supports buildings that are meant to sit at the base of a ledge.
 
 `RequiresNoRoad` is useful for backs of buildings that should not face roads. It does not forbid ledges unless a later explicit `RequiresNoLedge` rule is added.
+
+Building-neighbor requirements use the building category stored in the adjacent occupancy cell:
+
+- `RequiresComplexBuilding`: every cell along this side must touch an already placed `Complex` building.
+- `RequiresNoComplexBuilding`: no cell along this side may touch a `Complex` building.
+- `RequiresBlockingBuilding`: every cell along this side must touch an already placed `SimpleBlocking` building.
+- `RequiresNoBlockingBuilding`: no cell along this side may touch a `SimpleBlocking` building.
+
+Positive requirements fail at the map boundary or beside roads, ledges, and empty cells because no building of the requested category exists there. Negative requirements allow those cells because they only forbid the named building category.
+
+These checks use the live placement grid. They can only see buildings placed earlier in the pipeline. For example, a complex building can require an edge blocker or a previously placed complex building, but it cannot require a remaining-space filler blocker that has not been generated yet.
 
 ### BuildingDefinition
 
@@ -415,6 +430,8 @@ Both cells directly north of the footprint must be road cells.
 A side with `Any` does not care what is next to it.
 
 This lets future park/building entrances line up with roads while still allowing solid backs and corner-specific assets.
+
+Building-category requirements are also evaluated along the whole footprint side. A `2x2` building with `North = RequiresComplexBuilding` requires both cells directly north of its footprint to contain complex buildings.
 
 ### 4. Prefer Exact Empty Plots
 

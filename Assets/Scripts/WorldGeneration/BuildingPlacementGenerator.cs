@@ -974,9 +974,32 @@ namespace SimpleFPS
 
 				if (requirement == BuildingSideRequirement.RequiresLedgeUp && IsLedgeRequirementMet(grid, candidate, sideCells[i], false) == false)
 					return false;
+
+				bool complexBuilding = IsBuildingCategory(grid, sideCells[i], BuildingCategory.Complex);
+				if (requirement == BuildingSideRequirement.RequiresComplexBuilding && complexBuilding == false)
+					return false;
+
+				if (requirement == BuildingSideRequirement.RequiresNoComplexBuilding && complexBuilding)
+					return false;
+
+				bool blockingBuilding = IsBuildingCategory(grid, sideCells[i], BuildingCategory.SimpleBlocking);
+				if (requirement == BuildingSideRequirement.RequiresBlockingBuilding && blockingBuilding == false)
+					return false;
+
+				if (requirement == BuildingSideRequirement.RequiresNoBlockingBuilding && blockingBuilding)
+					return false;
 			}
 
 			return true;
+		}
+
+		private bool IsBuildingCategory(BuildingCell[,] grid, Vector2Int position, BuildingCategory category)
+		{
+			if (IsInBounds(grid, position) == false)
+				return false;
+
+			BuildingDefinition building = grid[position.x, position.y].Building;
+			return building != null && building.Category == category;
 		}
 
 		private bool IsLedgeRequirementMet(BuildingCell[,] grid, BuildingPlacementCandidate candidate, Vector2Int ledgePosition, bool requireDown)

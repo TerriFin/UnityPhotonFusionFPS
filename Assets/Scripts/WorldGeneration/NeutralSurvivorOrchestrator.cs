@@ -341,7 +341,10 @@ namespace SimpleFPS
 			// for recruitment below like any neutral, so players can recruit them mid-roam.
 			bool roams = isDynamic && _roamDestinations.Count > 0;
 
-			if (patrolRadius > 0f && SurvivorNonCombatAI.TryBuildAssignedAreaPatrolPoints(survivor, patrolCenter, patrolRadius, out Vector3[] patrolPoints))
+			// Neutral garrisons should hold a building's authored patrol waypoints (windows, rooftops) rather than
+			// have them diluted by ground points auto-sampled to fill out the PatrolRadius. preferAuthoredWaypoints
+			// makes the set the waypoints alone whenever the area has any; areas with none patrol normally.
+			if (patrolRadius > 0f && SurvivorNonCombatAI.TryBuildAssignedAreaPatrolPoints(survivor, patrolCenter, patrolRadius, out Vector3[] patrolPoints, preferAuthoredWaypoints: true))
 			{
 				Vector3 entryPoint = patrolPoints != null && patrolPoints.Length > 0 ? patrolPoints[0] : patrolCenter;
 				survivor.SetAI(roams
