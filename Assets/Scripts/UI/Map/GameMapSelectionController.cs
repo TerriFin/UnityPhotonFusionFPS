@@ -111,16 +111,13 @@ namespace SimpleFPS
 			if (HandleKeyboardPossess(mapView, gameplay, runner))
 				return;
 
-			if (IsPointerBlocked(mousePosition, eventCamera))
-			{
-				_dragging = false;
-				_areaDragging = false;
-				SetSelectionBoxVisible(false);
-				SetAssignedAreaCircleVisible(false);
+			bool pointerBlocked = IsPointerBlocked(mousePosition, eventCamera);
+			bool pointerOnMap = IsPointerOnMap(mapView, mousePosition, eventCamera);
+			HandleRightMouseOrder(mapView, gameplay, runner, mousePosition, eventCamera, pointerBlocked == false && pointerOnMap);
+			if (_areaDragging)
 				return;
-			}
 
-			if (mouse.leftButton.wasPressedThisFrame)
+			if (mouse.leftButton.wasPressedThisFrame && pointerBlocked == false && pointerOnMap)
 			{
 				_dragStart = mousePosition;
 				_dragging = true;
@@ -141,13 +138,19 @@ namespace SimpleFPS
 
 				if (distance >= DragThreshold)
 					SelectDragRect(gameplay, runner, mapView, _dragStart, mousePosition, eventCamera);
-				else
+				else if (pointerBlocked == false && pointerOnMap)
 					HandleClick(gameplay, runner, mousePosition, eventCamera);
 
 				_dragging = false;
 			}
 
-			HandleRightMouseOrder(mapView, gameplay, runner, mousePosition, eventCamera);
+			if (pointerBlocked || pointerOnMap == false)
+			{
+				_areaDragging = false;
+				SetAssignedAreaCircleVisible(false);
+				return;
+			}
+
 		}
 
 		private void HandleClick(Gameplay gameplay, NetworkRunner runner, Vector2 screenPosition, Camera eventCamera)
@@ -190,7 +193,7 @@ namespace SimpleFPS
 					continue;
 
 				Vector2 screenPosition = RectTransformUtility.WorldToScreenPoint(eventCamera, icon.RectTransform.position);
-				if (screenRect.Contains(screenPosition))
+				if (screenRect.Contains(screenPosition) && IsPointerBlocked(screenPosition, eventCamera) == false)
 					AddSelection(icon.Survivor, gameplay, runner);
 			}
 		}
@@ -206,7 +209,7 @@ namespace SimpleFPS
 			}
 		}
 
-		private void HandleRightMouseOrder(GameMapView mapView, Gameplay gameplay, NetworkRunner runner, Vector2 mousePosition, Camera eventCamera)
+		private void HandleRightMouseOrder(GameMapView mapView, Gameplay gameplay, NetworkRunner runner, Vector2 mousePosition, Camera eventCamera, bool canStartMapInput)
 		{
 			// Defeated spectators cannot issue orders (the server rejects them too); skip the whole interaction
 			// so no order preview shows and no RPC is sent.
@@ -221,7 +224,7 @@ namespace SimpleFPS
 			{
 				_currentAreaRadius = 0f;
 				_areaCircleVisible = false;
-				_areaDragging = mapView.TryMapUIToWorld(mousePosition, out _areaDragStartWorld);
+				_areaDragging = canStartMapInput && mapView.TryMapUIToWorld(mousePosition, out _areaDragStartWorld);
 				SetAssignedAreaCircleVisible(false);
 			}
 
@@ -585,6 +588,13 @@ namespace SimpleFPS
 			return InputBlocker != null &&
 			       InputBlocker.gameObject.activeInHierarchy &&
 			       RectTransformUtility.RectangleContainsScreenPoint(InputBlocker, screenPosition, eventCamera);
+		}
+
+		private static bool IsPointerOnMap(GameMapView mapView, Vector2 screenPosition, Camera eventCamera)
+		{
+			return mapView != null &&
+			       mapView.MapImage != null &&
+			       RectTransformUtility.RectangleContainsScreenPoint(mapView.MapImage.rectTransform, screenPosition, eventCamera);
 		}
 
 		private void EnsureSelectionBox(GameMapView mapView)

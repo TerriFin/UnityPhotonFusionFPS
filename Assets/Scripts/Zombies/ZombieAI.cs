@@ -26,6 +26,9 @@ namespace SimpleFPS
 		public float IdleWanderRadius = 10f;
 		public float IdleWanderAvoidZombieRadius = 8f;
 		public int IdleWanderCandidateCount = 5;
+		public float IdleWanderNavMeshSampleDistance = 8f;
+		public float IdleWanderStuckTimeout = 3f;
+		public float IdleWanderStuckMinProgress = 0.25f;
 
 		[Header("Targeting")]
 		public float AttackRetargetInterval = 2.5f;
@@ -92,6 +95,8 @@ namespace SimpleFPS
 		public float RoadDirectClimbLandingInset = 0.75f;
 		[FormerlySerializedAs("EmergencyClimbMinSurfaceNormalY")]
 		public float RoadDirectClimbMinSurfaceNormalY = 0.45f;
+		public float RoadDirectWalkableLandingSampleDistance = 1f;
+		public float RoadDirectWalkableLandingPathTolerance = 0.75f;
 		[FormerlySerializedAs("EmergencyIdlePerchIslandRadius")]
 		public float StuckSmallIslandRadius = 4f;
 
@@ -141,6 +146,10 @@ namespace SimpleFPS
 		private Vector3 _cachedClimbGoal;
 		private Vector3 _cachedClimbPosition;
 		private float _nextClimbCandidateRefreshTime;
+		private bool _hasIdleWanderProgressPosition;
+		private Vector3 _idleWanderProgressPosition;
+		private float _nextIdleWanderProgressCheckTime;
+		private float _idleWanderStuckSince = -1f;
 
 		// Smallest rise that still counts as a mantle (floors the snap height so Mathf.Max never returns 0).
 		private const float MantleMinRise = 0.08f;
@@ -232,11 +241,21 @@ namespace SimpleFPS
 				if (navigator.IsDestinationReached)
 				{
 					navigator.ClearDestination();
+					ResetIdleWanderProgress();
 					ScheduleNextIdleWander();
 					return default;
 				}
 
-				return BuildMoveInput(navigator.Destination, StoppingDistance, true);
+				NetworkedInput input = BuildMoveInput(navigator.Destination, StoppingDistance, true);
+				if (IsIdleWanderDestinationStuck(position))
+				{
+					navigator.ClearDestination();
+					ResetIdleWanderProgress();
+					ScheduleIdleWanderRetry();
+					return default;
+				}
+
+				return input;
 			}
 
 			if (Time.timeSinceLevelLoad >= _nextIdleWanderTime)
@@ -244,6 +263,7 @@ namespace SimpleFPS
 				if (TryChooseIdleWanderPoint(out Vector3 wanderPoint))
 				{
 					navigator?.SetDestination(wanderPoint);
+					BeginIdleWanderProgress(position);
 					return BuildMoveInput(wanderPoint, StoppingDistance, true);
 				}
 
@@ -275,9 +295,14 @@ namespace SimpleFPS
 			if (IsTargetAlive(_target) == false)
 			{
 				if (TryGetDirectEnemy(out var enemy))
+				{
 					StartAttack(enemy);
+				}
 				else
+				{
 					ReturnToIdle();
+					return UpdateIdle();
+				}
 			}
 
 			if (TryRefreshDirectAttackTarget() == false)
@@ -1139,7 +1164,52 @@ namespace SimpleFPS
 				return false;
 
 			landing = topHit.point;
+			if (HasEfficientWalkablePath(position, landing))
+				return false;
+
 			return true;
+		}
+
+		private bool HasEfficientWalkablePath(Vector3 start, Vector3 goal)
+		{
+			var navigator = _zombie != null ? _zombie.Navigator : null;
+			int areaMask = navigator != null ? navigator.AreaMask : NavMesh.AllAreas;
+			float startSampleDistance = navigator != null
+				? Mathf.Max(0.25f, navigator.SampleMaxDistance)
+				: Mathf.Max(0.25f, StuckSampleRadius);
+			float goalSampleDistance = Mathf.Max(0.25f, RoadDirectWalkableLandingSampleDistance);
+
+			if (NavMesh.SamplePosition(start, out var startHit, startSampleDistance, areaMask) == false)
+				return false;
+			if (NavMesh.SamplePosition(goal, out var goalHit, goalSampleDistance, areaMask) == false)
+				return false;
+
+			if (_scratchNavMeshPath == null)
+				_scratchNavMeshPath = new NavMeshPath();
+			if (NavMesh.CalculatePath(startHit.position, goalHit.position, areaMask, _scratchNavMeshPath) == false)
+				return false;
+			if (_scratchNavMeshPath.status != NavMeshPathStatus.PathComplete ||
+			    _scratchNavMeshPath.corners == null ||
+			    _scratchNavMeshPath.corners.Length == 0)
+			{
+				return false;
+			}
+
+			float pathLength = GetNavMeshPathLength(_scratchNavMeshPath);
+			float directDistance = Vector3.Distance(startHit.position, goalHit.position);
+			return pathLength <= directDistance + Mathf.Max(0f, RoadDirectWalkableLandingPathTolerance);
+		}
+
+		private static float GetNavMeshPathLength(NavMeshPath path)
+		{
+			if (path == null || path.corners == null || path.corners.Length < 2)
+				return 0f;
+
+			float length = 0f;
+			for (int i = 1; i < path.corners.Length; i++)
+				length += Vector3.Distance(path.corners[i - 1], path.corners[i]);
+
+			return length;
 		}
 
 		private bool TryRaycastWorld(Vector3 origin, Vector3 direction, float distance, out RaycastHit hit)
@@ -1434,10 +1504,7 @@ namespace SimpleFPS
 
 				float distance = Random.Range(IdleWanderRadius * 0.35f, Mathf.Max(0.5f, IdleWanderRadius));
 				Vector3 candidate = origin + direction * distance;
-				if (NavMesh.SamplePosition(candidate, out var hit, 1.5f, NavMesh.AllAreas) == false)
-					continue;
-				if (_zombie.Navigator == null ||
-				    _zombie.Navigator.TryFindReachablePoint(origin, hit.position, ReachablePointSampleDistance, out Vector3 reachable) == false)
+				if (TryResolveIdleWanderCandidate(origin, candidate, out Vector3 reachable) == false)
 					continue;
 
 				float score = ScoreWanderPoint(reachable) + Random.Range(0f, 0.25f);
@@ -1453,6 +1520,37 @@ namespace SimpleFPS
 				return false;
 
 			point = bestPoint;
+			return true;
+		}
+
+		private bool TryResolveIdleWanderCandidate(Vector3 origin, Vector3 candidate, out Vector3 reachable)
+		{
+			reachable = default;
+
+			var navigator = _zombie != null ? _zombie.Navigator : null;
+			int areaMask = navigator != null ? navigator.AreaMask : NavMesh.AllAreas;
+			float startSampleDistance = navigator != null
+				? Mathf.Max(0.25f, navigator.SampleMaxDistance)
+				: Mathf.Max(0.25f, StuckSampleRadius);
+			float candidateSampleDistance = Mathf.Max(0.25f, IdleWanderNavMeshSampleDistance, ReachablePointSampleDistance);
+
+			if (NavMesh.SamplePosition(origin, out var startHit, startSampleDistance, areaMask) == false)
+				return false;
+			if (NavMesh.SamplePosition(candidate, out var candidateHit, candidateSampleDistance, areaMask) == false)
+				return false;
+
+			if (_scratchNavMeshPath == null)
+				_scratchNavMeshPath = new NavMeshPath();
+			if (NavMesh.CalculatePath(startHit.position, candidateHit.position, areaMask, _scratchNavMeshPath) == false)
+				return false;
+			if (_scratchNavMeshPath.status != NavMeshPathStatus.PathComplete ||
+			    _scratchNavMeshPath.corners == null ||
+			    _scratchNavMeshPath.corners.Length == 0)
+			{
+				return false;
+			}
+
+			reachable = candidateHit.position;
 			return true;
 		}
 
@@ -1706,6 +1804,56 @@ namespace SimpleFPS
 		private void ClearNavigator()
 		{
 			_zombie?.Navigator?.ClearDestination();
+			ResetIdleWanderProgress();
+		}
+
+		private void BeginIdleWanderProgress(Vector3 position)
+		{
+			_hasIdleWanderProgressPosition = true;
+			_idleWanderProgressPosition = position;
+			_idleWanderStuckSince = -1f;
+			_nextIdleWanderProgressCheckTime = Time.timeSinceLevelLoad + Mathf.Max(0.1f, StuckCheckInterval);
+		}
+
+		private void ResetIdleWanderProgress()
+		{
+			_hasIdleWanderProgressPosition = false;
+			_idleWanderProgressPosition = default;
+			_idleWanderStuckSince = -1f;
+			_nextIdleWanderProgressCheckTime = 0f;
+		}
+
+		private bool IsIdleWanderDestinationStuck(Vector3 position)
+		{
+			float now = Time.timeSinceLevelLoad;
+			if (now < _nextIdleWanderProgressCheckTime)
+				return false;
+
+			_nextIdleWanderProgressCheckTime = now + Mathf.Max(0.1f, StuckCheckInterval);
+
+			if (_hasIdleWanderProgressPosition == false)
+			{
+				BeginIdleWanderProgress(position);
+				return false;
+			}
+
+			Vector3 progress = position - _idleWanderProgressPosition;
+			progress.y = 0f;
+			float minProgress = Mathf.Max(0.01f, IdleWanderStuckMinProgress);
+			if (progress.sqrMagnitude >= minProgress * minProgress)
+			{
+				_idleWanderProgressPosition = position;
+				_idleWanderStuckSince = -1f;
+				return false;
+			}
+
+			if (_idleWanderStuckSince < 0f)
+			{
+				_idleWanderStuckSince = now;
+				return false;
+			}
+
+			return now - _idleWanderStuckSince >= Mathf.Max(0.1f, IdleWanderStuckTimeout);
 		}
 
 		private void ScheduleNextIdleWander()

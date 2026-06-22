@@ -566,12 +566,6 @@ namespace SimpleFPS
 
 			if (recruiter.NonCombatAI != null)
 			{
-				if (recruiter.NonCombatAI.Assignment == ENonCombatAssignment.MoveToPoint)
-				{
-					neutral.SetAI(SurvivorNonCombatAI.Follow(neutral, recruiter, neutral.NonCombatAISettings));
-					return;
-				}
-
 				var matchingOrder = recruiter.NonCombatAI.CreateEquivalentAssignmentFor(neutral, neutral.NonCombatAISettings);
 				if (matchingOrder != null)
 				{

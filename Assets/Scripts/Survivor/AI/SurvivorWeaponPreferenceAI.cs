@@ -9,6 +9,7 @@ namespace SimpleFPS
 		Automatic = 0,
 		PreferStrongWeapons = 1,
 		PreferPistol = 2,
+		HoldFire = 3,
 	}
 
 	[DisallowMultipleComponent]
@@ -44,6 +45,9 @@ namespace SimpleFPS
 			float targetDistance = Vector3.Distance(GetFireOrigin(), enemy.Object.transform.position);
 			switch (preference)
 			{
+				case ESurvivorWeaponPreference.HoldFire:
+					return false;
+
 				case ESurvivorWeaponPreference.PreferPistol:
 					return TryGetPistolOrFallback(targetDistance, out weapon);
 

@@ -257,18 +257,18 @@ Initial non-combat toggles should map to current settings:
 CollectVisiblePickups
 InvestigateSuspiciousStimuli
 RecruitNeutralSurvivors
-AllowCombatAIActivation (displayed as the single combat behavior toggle)
+AllowCombatAIActivation (legacy field name; displayed as the combat movement toggle)
 ```
 
-There is no separate combat movement toggle. The single combat behavior toggle enables/disables both shooting and survivor-vs-survivor tactical movement. When disabled, survivors still retreat from dangerously close zombies, and may turn to watch a visible enemy.
+The combat movement toggle enables/disables AI combat movement against both enemy survivors and zombies. When disabled, survivors may still aim and shoot according to their weapon/fire mode, but they do not reposition for cover, range, or close-zombie retreat. Non-combat movement from player orders, investigation, pickup collection, recruiting, and assigned-area patrol remains separate.
 
 The roster also needs one non-boolean combat mode control:
 
 ```text
-Weapon preference: Automatic / Prefer Strong Weapons / Prefer Pistol
+Weapon/fire mode: Automatic / Prefer Strong Weapons / Prefer Pistol / Hold Fire
 ```
 
-This is a three-state segmented or cycling control on every survivor card and in the bulk settings row. It must use an enum-valued authoritative request rather than the existing boolean `ESurvivorAISetting` path. See `Docs/SurvivorWeaponPreferenceAI.md`.
+This is a four-state segmented or cycling control on every survivor card and in the bulk settings row. It must use an enum-valued authoritative request rather than the existing boolean `ESurvivorAISetting` path. See `Docs/SurvivorWeaponPreferenceAI.md`.
 
 The old broad keyboard setting shortcuts (`I`, `O`, `K`, `L`) have been removed. AI behavior settings are controlled through the roster's individual and bulk toggles. The roster uses the finer-grained request path:
 

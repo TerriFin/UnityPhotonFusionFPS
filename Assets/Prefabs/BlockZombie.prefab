@@ -1243,21 +1243,26 @@ MonoBehaviour:
   ClimbCommitDuration: 0.75
   ClimbMantleMaxSnapHeight: 1.75
   ClimbDirectApproachDistance: 18
+  ExplicitGoalClimbRefreshInterval: 0.2
   ClimbRouteSideTolerance: 1.6
   ClimbMinRise: 0.75
   RescueMinTargetHeight: 0.75
   RescueLandingHeightTolerance: 2.5
+  RescueLandingFlatTolerance: 2.5
+  ClimbMantleMaxHorizontalSnapDistance: 1.5
   ClimbStuckTimeout: 1.5
   ClimbMaxDuration: 15
   ClimbCooldown: 2
-  UseEmergencyObstacleClimbs: 1
-  EmergencyClimbStuckTime: 1.25
-  EmergencyClimbMinProgress: 0.35
-  EmergencyClimbMinRise: 0.2
-  EmergencyClimbProbeDistance: 1.25
-  EmergencyClimbMaxHeight: 2.25
-  EmergencyClimbLandingInset: 0.75
-  EmergencyClimbMinSurfaceNormalY: 0.45
+  UseRoadDirectMovement: 1
+  RoadDirectMaxDistance: 18
+  RoadDirectMaxObstacleHeight: 5
+  RoadDirectClimbMaxZombieHeightAboveTarget: 0.75
+  RoadDirectClimbMinRise: 0.2
+  RoadDirectClimbProbeDistance: 1.25
+  RoadDirectClimbMaxHeight: 2.25
+  RoadDirectClimbLandingInset: 0.75
+  RoadDirectClimbMinSurfaceNormalY: 0.45
+  StuckSmallIslandRadius: 4
   MaxAlertRecipients: 16
   AlertCooldown: 2
   StuckSampleRadius: 0.6
@@ -1304,7 +1309,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   RepathInterval: 0.4
-  CornerReachDistance: 0.5
+  CornerReachDistance: 0.66
   DestinationReachDistance: 0.66
   VerticalReachDistance: 2
   DestinationChangeRepathDistance: 0.33
@@ -1338,6 +1343,7 @@ MonoBehaviour:
   DesiredDistance: 0.65
   PushSpeed: 1.5
   MaxNeighbors: 8
+  RefreshInterval: 0.1
 --- !u!114 &3227757908707635043
 MonoBehaviour:
   m_ObjectHideFlags: 0

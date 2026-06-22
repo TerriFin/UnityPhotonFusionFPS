@@ -64,7 +64,7 @@ namespace SimpleFPS
 			ClampCameraToBounds();
 		}
 
-		public void Tick(float deltaTime, Vector2 panInput, float zoomInput)
+		public void Tick(float deltaTime, Vector2 panInput, float zoomInput, Vector2? zoomViewportPivot = null)
 		{
 			EnsureCamera();
 
@@ -73,8 +73,21 @@ namespace SimpleFPS
 
 			if (Mathf.Abs(zoomInput) > 0.001f)
 			{
+				Vector3 pivotBefore = default;
+				bool hasPivot = zoomViewportPivot.HasValue && TryMapViewportToWorld(zoomViewportPivot.Value, out pivotBefore);
+				float previousSize = MapCamera.orthographicSize;
 				float size = MapCamera.orthographicSize - zoomInput * ZoomSpeed;
 				MapCamera.orthographicSize = Mathf.Clamp(size, MinOrthographicSize, MaxOrthographicSize);
+
+				if (hasPivot && Mathf.Approximately(previousSize, MapCamera.orthographicSize) == false &&
+				    TryMapViewportToWorld(zoomViewportPivot.Value, out Vector3 pivotAfter))
+				{
+					Vector3 center = GetCameraCenter();
+					center.x += pivotBefore.x - pivotAfter.x;
+					center.z += pivotBefore.z - pivotAfter.z;
+					SetCameraCenter(center);
+				}
+
 				ClampCameraToBounds();
 			}
 

@@ -39,6 +39,9 @@ namespace SimpleFPS
 		         "first-shot timer from resetting every sensor tick when a pack surrounds the survivor and the closest " +
 		         "enemy flickers between several near-equal candidates — which otherwise leaves it never firing.")]
 		public float TargetSwitchHysteresis = 1.5f;
+		[Range(0f, 1f)]
+		[Tooltip("Ignore target stickiness when another direct enemy is this fraction of the current target distance or closer.")]
+		public float UrgentTargetSwitchDistanceRatio = 0.5f;
 
 		private Survivor _survivor;
 		private NetworkObject _currentTarget;
@@ -105,6 +108,12 @@ namespace SimpleFPS
 				Mathf.Clamp(pitchDelta, -MaxPitchDegreesPerTick, MaxPitchDegreesPerTick),
 				Mathf.Clamp(yawDelta, -MaxYawDegreesPerTick, MaxYawDegreesPerTick));
 
+			if (IsHoldFireMode())
+			{
+				ClearFireCommandState();
+				return true;
+			}
+
 			EWeaponSwitchInputState weaponSwitchInput = GetWeaponSwitchInput(enemy, out var weaponButton);
 			if (weaponSwitchInput == EWeaponSwitchInputState.Press)
 			{
@@ -125,6 +134,12 @@ namespace SimpleFPS
 			}
 
 			return true;
+		}
+
+		private bool IsHoldFireMode()
+		{
+			return _survivor != null &&
+			       _survivor.CombatAISettings.WeaponPreference == ESurvivorWeaponPreference.HoldFire;
 		}
 
 		private EWeaponSwitchInputState GetWeaponSwitchInput(KnownEnemyInfo enemy, out EInputButton button)
@@ -241,7 +256,9 @@ namespace SimpleFPS
 			{
 				float closestDistance = Mathf.Sqrt(closestDistanceSqr);
 				float currentDistance = Mathf.Sqrt(currentDistanceSqr);
-				if (currentDistance - closestDistance <= Mathf.Max(0f, TargetSwitchHysteresis))
+				float urgentRatio = Mathf.Clamp01(UrgentTargetSwitchDistanceRatio);
+				bool urgentSwitch = urgentRatio > 0f && closestDistance <= currentDistance * urgentRatio;
+				if (urgentSwitch == false && currentDistance - closestDistance <= Mathf.Max(0f, TargetSwitchHysteresis))
 					enemy = current;
 			}
 
@@ -392,6 +409,11 @@ namespace SimpleFPS
 			_aimPitchError = 0f;
 			_nextShotTime = 0f;
 			_nextAimErrorRefreshTime = 0f;
+			ClearFireCommandState();
+		}
+
+		private void ClearFireCommandState()
+		{
 			_triggerReleaseTime = 0f;
 			_weaponSwitchButtonHeld = false;
 		}

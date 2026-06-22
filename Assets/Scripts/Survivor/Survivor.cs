@@ -139,14 +139,14 @@ namespace SimpleFPS
 			CombatAI.SetSettings(settings);
 		}
 
-		public void ReceiveInvestigationAlert(Vector3 target, int stimulusTick)
+		public void ReceiveInvestigationAlert(Vector3 target, int stimulusTick, bool lookOnly = false)
 		{
 			if (IsActiveCharacter())
 				return;
 
 			if (_aiController is SurvivorNonCombatAI nonCombatAI)
 			{
-				nonCombatAI.ReceiveInvestigationAlert(target, stimulusTick);
+				nonCombatAI.ReceiveInvestigationAlert(target, stimulusTick, null, lookOnly);
 			}
 		}
 

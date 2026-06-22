@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using Fusion;
 using TMPro;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 namespace SimpleFPS
@@ -334,6 +335,7 @@ namespace SimpleFPS
 			int automatic = 0;
 			int strong = 0;
 			int pistol = 0;
+			int holdFire = 0;
 			for (int i = 0; i < survivors.Count; i++)
 			{
 				switch (survivors[i].CombatAISettings.WeaponPreference)
@@ -344,15 +346,20 @@ namespace SimpleFPS
 					case ESurvivorWeaponPreference.PreferPistol:
 						pistol++;
 						break;
+					case ESurvivorWeaponPreference.HoldFire:
+						holdFire++;
+						break;
 					default:
 						automatic++;
 						break;
 				}
 			}
 
-			if (strong > automatic && strong > pistol)
+			if (holdFire > automatic && holdFire > strong && holdFire > pistol)
+				return ESurvivorWeaponPreference.HoldFire;
+			if (strong > automatic && strong > pistol && strong > holdFire)
 				return ESurvivorWeaponPreference.PreferStrongWeapons;
-			if (pistol > automatic && pistol > strong)
+			if (pistol > automatic && pistol > strong && pistol > holdFire)
 				return ESurvivorWeaponPreference.PreferPistol;
 			return ESurvivorWeaponPreference.Automatic;
 		}
@@ -557,18 +564,19 @@ namespace SimpleFPS
 
 		private void UpdateHoverLine()
 		{
-			if (_hoveredSurvivor == null || HoverLine == null || IconController == null || MapView == null)
+			Survivor hoverSurvivor = GetHoverLineSurvivor();
+			if (hoverSurvivor == null || HoverLine == null || IconController == null || MapView == null)
 			{
 				if (HoverLine != null)
 					HoverLine.gameObject.SetActive(false);
 				return;
 			}
-			if (_entries.TryGetValue(_hoveredSurvivor, out var entry) == false || entry == null)
+			if (_entries.TryGetValue(hoverSurvivor, out var entry) == false || entry == null)
 			{
 				HoverLine.gameObject.SetActive(false);
 				return;
 			}
-			if (IconController.TryGetVisibleSurvivorIconRect(_hoveredSurvivor, out var iconRect) == false)
+			if (IconController.TryGetVisibleSurvivorIconRect(hoverSurvivor, out var iconRect) == false)
 			{
 				HoverLine.gameObject.SetActive(false);
 				return;
@@ -603,6 +611,27 @@ namespace SimpleFPS
 			HoverLine.localRotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(delta.y, delta.x) * Mathf.Rad2Deg);
 			if (HoverLineImage != null)
 				HoverLineImage.color = HoverLineColor;
+		}
+
+		private Survivor GetHoverLineSurvivor()
+		{
+			if (_hoveredSurvivor != null)
+				return _hoveredSurvivor;
+			if (IconController == null || MapView == null)
+				return null;
+
+			var mouse = Mouse.current;
+			if (mouse == null)
+				return null;
+
+			Vector2 mousePosition = mouse.position.ReadValue();
+			Camera eventCamera = MapView.GetEventCamera();
+			if (SelectionController != null && SelectionController.IsPointerBlocked(mousePosition, eventCamera))
+				return null;
+
+			GameMapIcon icon = IconController.FindOwnIconAt(mousePosition, eventCamera);
+			Survivor survivor = icon != null ? icon.Survivor : null;
+			return survivor != null && _entries.ContainsKey(survivor) ? survivor : null;
 		}
 
 		private void EnsureRuntimeUI()

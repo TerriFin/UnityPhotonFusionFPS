@@ -224,6 +224,10 @@ Icons are hidden when their world position is outside the current map camera vie
 
 The active possessed survivor is shown with a special icon/treatment for orientation, but it is not selectable. It should not enter click selection, drag-box selection, double-click select-all, keyboard cycling, or map order masks. The player controls the possessed survivor directly.
 
+Roster UI blocks new map clicks and drag starts, but a selection box that started on the map may pass over the roster without being canceled. Survivor icons whose screen position is under the roster blocker are ignored by drag selection.
+
+Hovering a survivor roster card or its own-team map arrow icon draws the same hover link between that card and icon. The icons stay non-raycast-blocking, so hover lookup is done by the map UI controller rather than by Unity pointer events on the icon object.
+
 If the active survivor dies while the map is open, the map remains open. Normal gameplay ownership transfer chooses the next active survivor, and the map selection layer removes that new active survivor from selection if needed.
 
 While the map is open, `Shift` and `Ctrl` are local selection shortcuts:
@@ -315,6 +319,7 @@ Rules:
 - `Gameplay.AICommandSettings.AssignedAreaMinRadius` controls the smallest valid area.
 - `Gameplay.AICommandSettings.AssignedAreaMaxRadius` controls the largest valid area.
 - Dragging past the maximum clamps the radius.
+- The drag must start on valid map space, but once active it may continue outside the map image or over UI blockers such as the roster. This lets a fast large mouse motion clamp to the maximum radius instead of canceling the order.
 - If the released circle is smaller than the minimum, the circle is hidden and the action falls back to the normal point/follow order under the cursor.
 - State authority validates the radius again before assigning the order.
 - The dragged center does not need to be on NavMesh. State authority resolves one shared reachable patrol-point set inside the circle for the selected group. If center/cardinal/diagonal probes find no reachable terrain, the selected survivors keep their previous assignments. If reachable terrain exists, each survivor receives the same point set and picks its own entry/patrol target.

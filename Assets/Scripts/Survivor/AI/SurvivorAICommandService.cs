@@ -42,11 +42,15 @@ namespace SimpleFPS
 		// Reject offset steering targets when the straight NavMesh segment from the survivor to the
 		// offset target crosses a blocked edge. This keeps indoor lane spread from cutting through props.
 		public bool ValidateLaneOffsetPath = true;
+		// Move orders relax their arrival radius for larger groups so everyone doesn't keep trying to stand
+		// on exactly the same point. Applied per extra survivor beyond the first selected/ordered survivor.
+		public float MoveStoppingDistanceIncreasePerExtraSurvivor = 0.2f;
+		public float MoveStoppingDistanceMax = 3f;
 	}
 
 	public readonly struct SurvivorAICommand
 	{
-		private readonly Func<Survivor, Survivor.ICharacterInputSource> _createInputSource;
+		private readonly Func<Survivor, int, SurvivorAICommandSettings, Survivor.ICharacterInputSource> _createInputSource;
 
 		// Commands toward a static destination (MoveTo / AssignedArea) spread the group across lanes so
 		// the squad fills the corridor instead of stacking on the optimal path. Follow / Idle commands
@@ -54,45 +58,60 @@ namespace SimpleFPS
 		// opt out.
 		public readonly bool AllowsLaneSpread;
 
-		public SurvivorAICommand(Func<Survivor, Survivor.ICharacterInputSource> createInputSource, bool allowsLaneSpread = false)
+		public SurvivorAICommand(
+			Func<Survivor, int, SurvivorAICommandSettings, Survivor.ICharacterInputSource> createInputSource,
+			bool allowsLaneSpread = false)
 		{
 			_createInputSource = createInputSource;
 			AllowsLaneSpread = allowsLaneSpread;
 		}
 
-		public Survivor.ICharacterInputSource CreateInputSource(Survivor survivor)
+		public Survivor.ICharacterInputSource CreateInputSource(
+			Survivor survivor,
+			int groupSize = 1,
+			SurvivorAICommandSettings settings = null)
 		{
-			return _createInputSource != null ? _createInputSource(survivor) : SurvivorNonCombatAI.HoldPosition(survivor, survivor.NonCombatAISettings);
+			return _createInputSource != null
+				? _createInputSource(survivor, Mathf.Max(1, groupSize), settings)
+				: SurvivorNonCombatAI.HoldPosition(survivor, survivor.NonCombatAISettings);
 		}
 
 		public static SurvivorAICommand Idle()
 		{
-			return new SurvivorAICommand(survivor => SurvivorNonCombatAI.HoldPosition(survivor, survivor.NonCombatAISettings));
+			return new SurvivorAICommand((survivor, _, _) => SurvivorNonCombatAI.HoldPosition(survivor, survivor.NonCombatAISettings));
 		}
 
 		public static SurvivorAICommand Follow(Survivor target)
 		{
-			return new SurvivorAICommand(survivor => SurvivorNonCombatAI.Follow(survivor, target, survivor.NonCombatAISettings));
+			return new SurvivorAICommand((survivor, _, _) => SurvivorNonCombatAI.Follow(survivor, target, survivor.NonCombatAISettings));
 		}
 
 		public static SurvivorAICommand MoveTo(Vector3 destination)
 		{
-			return new SurvivorAICommand(survivor => SurvivorNonCombatAI.MoveTo(survivor, destination, survivor.NonCombatAISettings), allowsLaneSpread: true);
+			return new SurvivorAICommand(
+				(survivor, groupSize, settings) => SurvivorNonCombatAI.MoveTo(
+					survivor,
+					destination,
+					survivor.NonCombatAISettings,
+					groupSize,
+					settings != null ? settings.MoveStoppingDistanceIncreasePerExtraSurvivor : 0f,
+					settings != null ? settings.MoveStoppingDistanceMax : 0f),
+				allowsLaneSpread: true);
 		}
 
 		public static SurvivorAICommand AssignedArea(Vector3 center, float radius)
 		{
-			return new SurvivorAICommand(survivor => SurvivorNonCombatAI.AssignedArea(survivor, center, radius, survivor.NonCombatAISettings), allowsLaneSpread: true);
+			return new SurvivorAICommand((survivor, _, _) => SurvivorNonCombatAI.AssignedArea(survivor, center, radius, survivor.NonCombatAISettings), allowsLaneSpread: true);
 		}
 
 		public static SurvivorAICommand AssignedArea(Vector3 center, float radius, Vector3 entryPoint)
 		{
-			return new SurvivorAICommand(survivor => SurvivorNonCombatAI.AssignedArea(survivor, center, radius, entryPoint, survivor.NonCombatAISettings), allowsLaneSpread: true);
+			return new SurvivorAICommand((survivor, _, _) => SurvivorNonCombatAI.AssignedArea(survivor, center, radius, entryPoint, survivor.NonCombatAISettings), allowsLaneSpread: true);
 		}
 
 		public static SurvivorAICommand AssignedArea(Vector3 center, float radius, Vector3 entryPoint, Vector3[] patrolPoints)
 		{
-			return new SurvivorAICommand(survivor => SurvivorNonCombatAI.AssignedArea(survivor, center, radius, entryPoint, patrolPoints, survivor.NonCombatAISettings), allowsLaneSpread: true);
+			return new SurvivorAICommand((survivor, _, _) => SurvivorNonCombatAI.AssignedArea(survivor, center, radius, entryPoint, patrolPoints, survivor.NonCombatAISettings), allowsLaneSpread: true);
 		}
 	}
 
@@ -197,7 +216,7 @@ namespace SimpleFPS
 			for (int i = 0; i < _laneTargetBuffer.Count; i++)
 			{
 				var survivor = _laneTargetBuffer[i].Value;
-				var inputSource = command.CreateInputSource(survivor);
+				var inputSource = command.CreateInputSource(survivor, _laneTargetBuffer.Count, _settings);
 				if (inputSource != null)
 					survivor.SetAI(inputSource);
 
@@ -229,7 +248,7 @@ namespace SimpleFPS
 			for (int i = 0; i < _laneTargetBuffer.Count; i++)
 			{
 				var survivor = _laneTargetBuffer[i].Value;
-				var inputSource = command.CreateInputSource(survivor);
+				var inputSource = command.CreateInputSource(survivor, _laneTargetBuffer.Count, _settings);
 				if (inputSource != null)
 					survivor.SetAI(inputSource);
 
@@ -375,7 +394,7 @@ namespace SimpleFPS
 			for (int i = 0; i < _laneTargetBuffer.Count; i++)
 			{
 				var survivor = _laneTargetBuffer[i].Value;
-				var inputSource = command.CreateInputSource(survivor);
+				var inputSource = command.CreateInputSource(survivor, _laneTargetBuffer.Count, _settings);
 				if (inputSource != null)
 					survivor.SetAI(inputSource);
 

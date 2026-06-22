@@ -256,6 +256,7 @@ HeightGenerationSettings
     int MaxGenerationAttempts;
     int DefaultLedgeRepeatCooldownDistance;
     int MinRoadReplaceableLedgesPerHeightRegion;
+    int MinCellsBetweenHeightTraversalTiles;
 
     HeightTileSet LedgeTiles;
 }
@@ -274,6 +275,7 @@ LedgePathRandomness: 0.65
 MaxGenerationAttempts: 100
 DefaultLedgeRepeatCooldownDistance: 2
 MinRoadReplaceableLedgesPerHeightRegion: 5
+MinCellsBetweenHeightTraversalTiles: 3
 ```
 
 Meaning:
@@ -288,6 +290,7 @@ Meaning:
 - `MaxGenerationAttempts`: total retry budget for placing ledges. If the budget runs out, already placed ledges are kept.
 - `DefaultLedgeRepeatCooldownDistance`: deprecated. Tiles use their own `RepeatCooldownDistance` directly, where `0` means no cooldown.
 - `MinRoadReplaceableLedgesPerHeightRegion`: minimum number of meaningful `1x1` straight ledge cells that can be replaced by height-change roads for each non-base height region.
+- `MinCellsBetweenHeightTraversalTiles`: minimum grid distance between height-transition tiles that allow traversal between height levels. The height pass uses it to avoid clustering authored ledge/scaffold traversal tiles, and the road pass uses it after ramp placement to demote nearby non-road traversal ledges.
 
 For `HeightLayerCount = 2`, every accepted ledge can only create height `0` and height `1` regions. Setting `PreferredLedgeCount` higher than `1` can create several separate hills/valleys that reuse those two height levels.
 
@@ -321,7 +324,7 @@ enum HeightTileShape
 }
 ```
 
-`AllowsTraversalWithoutRoad` is for future special ledges such as stairs or ramps. It can exist in the first data model but does not need gameplay behavior yet.
+`AllowsTraversalWithoutRoad` marks a ledge tile such as stairs, scaffolding, or a non-road ramp that already has ordinary traversal between height levels. The chosen flag is written back into the generated height snapshot so later systems can treat that ledge as walkable without needing a road ramp. These tiles also participate in `MinCellsBetweenHeightTraversalTiles` spacing so walkable height transitions do not cluster.
 
 `CanBeReplacedByHeightChangeRoad` should only be enabled for `1x1` straight ledge tiles. It tells the road generator that this ledge cell may be suppressed and replaced by the special road ramp tile.
 
@@ -503,7 +506,8 @@ For each ledge cell:
 3. Expand all four rotations.
 4. Filter boundary/non-boundary tile sets.
 5. Apply weight and the selected tile's repeat cooldown. `RepeatCooldownDistance = 0` means the tile is always available; a positive value strictly excludes the tile from the pool for that many ledge-cell placements after its last placement.
-6. Instantiate the selected prefab at:
+6. Prefer candidates that keep `AllowsTraversalWithoutRoad` ledges at least `MinCellsBetweenHeightTraversalTiles` cells apart. If no spacing-respecting candidate exists for that ledge shape/boundary type, fall back to the normal candidate pool so generation still completes.
+7. Instantiate the selected prefab at:
 
 ```csharp
 xz = cell center
@@ -538,6 +542,8 @@ Rules:
 ```csharp
 (LowHeightLevel + HighHeightLevel) * 0.5 * HeightLevelWorldUnits
 ```
+
+Road ramps are allowed to place without checking `MinCellsBetweenHeightTraversalTiles`, because the road graph needs to remain connected. After the final road ramps are known, the road generator asks the height generator to replace any nearby non-road `AllowsTraversalWithoutRoad` ledge tile with a matching non-traversal ledge variant. This keeps road ramps and scaffold/stair ledges from appearing in clusters while preserving the road network.
 
 The road ramp cell must connect both ends:
 

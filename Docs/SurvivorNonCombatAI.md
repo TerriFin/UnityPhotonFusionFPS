@@ -132,15 +132,15 @@ Rules:
 - Move order sets `MoveToPoint` at the clicked/aimed position.
 - Follow order sets `FollowSurvivor` with the target survivor.
 - Map drag-circle orders set `AssignedArea` with an anchor and radius.
-- When a `MoveToPoint` order reaches its destination, it becomes `HoldPosition` at that destination. At that point optional hold behaviors such as pickup collection and investigation can run again.
+- When a `MoveToPoint` order reaches its destination, it remains a `MoveToPoint` guard anchor. At that point optional hold behaviors such as pickup collection and investigation can run, but after combat or another temporary detour the survivor returns to the same anchor.
 - If a follow target dies, the survivor falls back to `HoldPosition` at its current position.
 - If combat interrupts an assignment, the assignment remains stored.
 - After combat, the survivor resumes the stored assignment unless it became invalid.
 - If looting, investigation, or combat movement starts after a survivor has entered an assigned area once, assigned-area patrol pauses until that temporary behavior finishes and returns control.
-- Player orders have a one-time completion gate before AI movement behaviors may override them. A move order is completed when the survivor reaches the destination. An assigned-area order is completed when the survivor enters the circle at least once. Follow remains continuous player intent and does not unlock looting, investigation, or combat movement.
+- Player orders have a one-time completion gate before AI movement behaviors may override them. A move order is completed when the survivor reaches the destination but remains stored as a guard point. An assigned-area order is completed when the survivor enters the circle at least once. Follow remains continuous player intent and does not unlock looting, investigation, or combat movement.
 - While a player order still requires travel, the survivor keeps moving toward that player-given target. Combat aim and fire may still merge into that movement so the survivor can strafe and shoot, but combat movement, looting, investigation, and lost-enemy pursuit cannot replace the ordered movement.
 - While a player movement order still requires travel, combat aim/fire must not record a delayed lost-enemy investigation target. If the survivor sees or shoots at an enemy during that journey and then reaches the ordered destination after the enemy is gone, it should not walk back across the map to investigate the old last-known position.
-- After a move order completes, it becomes `HoldPosition`. After an assigned-area order completes once, temporary AI behaviors may pull the survivor outside the circle. The assigned area remains stored as the fallback order, but the survivor does not need to return to the circle between every AI detour.
+- After a move order completes, temporary AI behaviors may pull the survivor away, but the move point remains stored as the fallback guard point. After an assigned-area order completes once, temporary AI behaviors may pull the survivor outside the circle. The assigned area remains stored as the fallback order, but the survivor does not need to return to the circle between every AI detour.
 
 Temporary behavior settings are separate from these player-given assignments. Toggling all non-combat settings off or on should not convert a follower into a holder or cancel a move order. It should only stop currently running optional behaviors such as pickup collection or future investigation movement.
 
@@ -150,7 +150,7 @@ Completing a move order also must not change settings. For example, if pickup co
 
 Investigation is implemented by `SurvivorInvestigationAI`.
 
-`SurvivorNonCombatAI` is responsible for deciding whether investigation can start:
+`SurvivorNonCombatAI` is responsible for deciding whether movement investigation can start:
 
 - `InvestigateSuspiciousStimuli` must be enabled.
 - The survivor must be unpossessed.
@@ -159,6 +159,10 @@ Investigation is implemented by `SurvivorInvestigationAI`.
 - For assigned-area orders, investigation may start after the survivor has entered the assigned circle once, even if a previous AI behavior has since pulled it outside the circle.
 
 Once allowed, `SurvivorInvestigationAI` owns the investigation target, reachable NavMesh resolution, ally alerts, look-around phase, and return state.
+
+The same setting does not suppress the immediate "look toward the source" reaction. When a gunshot, bullet impact, or ally alert reaches an unpossessed survivor, `SurvivorNonCombatAI` stores a short-lived reactive look target and turns toward it for `StimulusLookDuration`. If the survivor is already actively aiming/fighting a direct line-of-fire target, the reactive look is accepted only when the stimulus source is closer than `CombatReactiveLookDistanceRatio` times the current target distance. If investigation is disabled, the survivor only looks, does not walk to check the source, and broadcasts the same stimulus as a look-only alert to nearby same-team survivors.
+
+Look-only alerts are same-tick suppressors. If one survivor with investigation disabled and another with investigation enabled both react to the same shot/noise, the look-only alert prevents the enabled survivor from starting or continuing the same-tick movement investigation.
 
 Fresh investigation stimuli may redirect an already-running optional detour. For example, if a survivor is already investigating an older sound or returning from pickup collection, a newer gunshot can replace that temporary target even if the survivor has moved outside its assigned area. This does not let investigation break an unreached player move order or active follow order.
 
@@ -235,9 +239,9 @@ Non-combat AI is active only while combat AI is not taking over.
 
 Handoff rules:
 
-- `AllowCombatAIActivation` is the roster's single combat behavior toggle.
-- If enabled and a valid direct enemy is reported, the survivor may shoot and use tactical combat movement.
-- If disabled, the survivor does not shoot or use survivor-vs-survivor tactical movement. It may still turn toward visible enemies and retreat from a dangerously close zombie.
+- `AllowCombatAIActivation` is the legacy field name for the roster's combat movement toggle.
+- If enabled and a valid direct enemy is reported, the survivor may use tactical combat movement.
+- If disabled, the survivor does not use tactical combat movement against enemy survivors or zombies. It may still turn toward visible enemies and shoot according to its weapon/fire mode.
 - Non-combat AI keeps its current assignment data while suspended.
 - If the enemy dies, combat AI releases control and non-combat AI resumes the previous assignment.
 - If an enemy survivor is alive but breaks line of fire, non-combat AI can investigate the last known enemy survivor position before returning to the previous assignment.

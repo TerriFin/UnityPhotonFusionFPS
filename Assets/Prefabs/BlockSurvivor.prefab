@@ -1710,6 +1710,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   AreaStoppingDistance: 0.66
   PatrolPointStoppingDistance: 0.66
+  PatrolPointVerticalStoppingDistance: 2
   DirectFallbackDistance: 0.75
   PatrolPointSampleAttempts: 8
   WaitDurationMin: 7
@@ -1824,6 +1825,7 @@ MonoBehaviour:
   RepathInterval: 0.5
   CornerReachDistance: 0.66
   DestinationReachDistance: 0.66
+  VerticalReachDistance: 2
   DestinationChangeRepathDistance: 0.5
   SampleMaxDistance: 2
   ReachablePointSampleMaxDistance: 8
@@ -1873,6 +1875,7 @@ MonoBehaviour:
   DesiredDistance: 0.65
   PushSpeed: 1.5
   MaxNeighbors: 8
+  RefreshInterval: 0.1
 --- !u!1 &8169286849145927954
 GameObject:
   m_ObjectHideFlags: 0

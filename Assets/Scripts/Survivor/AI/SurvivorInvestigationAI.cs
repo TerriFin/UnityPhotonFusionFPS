@@ -37,6 +37,7 @@ namespace SimpleFPS
 
 		public bool HasTask => _hasInvestigationTarget;
 		public bool IsReturning => _returningFromInvestigation;
+		public int LastHandledInvestigationTick => _lastHandledInvestigationTick;
 
 		// True when the current investigation was started as a recruitment hand-off (recruit killed or lost), not by
 		// a suspicious stimulus. Such investigations are governed by the recruiting setting, not the investigate one.
@@ -140,9 +141,9 @@ namespace SimpleFPS
 			_returningFromInvestigation = false;
 		}
 
-		public void AlertNearbyAllies(Survivor survivor, Vector3 target, int stimulusTick, bool investigateEnabled, NetworkObject observedTarget = null)
+		public void AlertNearbyAllies(Survivor survivor, Vector3 target, int stimulusTick, bool allowInvestigation, NetworkObject observedTarget = null)
 		{
-			if (survivor == null || investigateEnabled == false || AllyAlertRadius <= 0f)
+			if (survivor == null || AllyAlertRadius <= 0f)
 				return;
 			if (observedTarget != null && IsObservedTargetAlive(observedTarget) == false)
 				return;
@@ -168,8 +169,6 @@ namespace SimpleFPS
 					continue;
 				if (ally.IsActiveCharacter())
 					continue;
-				if (HasOwnCombatLineOfFire(ally))
-					continue;
 				if (FlatDistanceSqr(ally.transform.position, survivor.transform.position) > radiusSqr)
 					continue;
 
@@ -179,7 +178,7 @@ namespace SimpleFPS
 			for (int i = 0; i < _alertedAllies.Count; i++)
 			{
 				var nonCombatAI = _alertedAllies[i].GetComponent<SurvivorNonCombatAI>();
-				nonCombatAI?.ReceiveInvestigationAlert(target, stimulusTick, observedTarget);
+				nonCombatAI?.ReceiveInvestigationAlert(target, stimulusTick, observedTarget, allowInvestigation == false);
 			}
 
 			_alertedAllies.Clear();
@@ -249,14 +248,6 @@ namespace SimpleFPS
 				return true;
 
 			return navigator.TryFindReachablePoint(survivor.transform.position, target, out investigationDestination);
-		}
-
-		private static bool HasOwnCombatLineOfFire(Survivor survivor)
-		{
-			return survivor != null &&
-			       survivor.AIShooting != null &&
-			       survivor.AIShooting.TryGetDirectTarget(out _, out bool hasLineOfFire) &&
-			       hasLineOfFire;
 		}
 
 		private static bool IsObservedTargetAlive(NetworkObject target)

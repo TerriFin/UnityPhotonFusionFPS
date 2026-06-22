@@ -124,7 +124,7 @@ Debug.Log($"Bullet impact heard near {name}. Approx shooter position: {approxima
 
 The bullet impact should record the approximate shooter position even if the shooter is outside normal proximity, noise, or vision range. This gives later survivor AI enough information to turn, take cover, suppress, or call out danger.
 
-Bullet-impact events are also immediate investigation prompts. The survivor should check the approximate shooter position only if it can start investigating immediately, is not already aiming at a direct visible/proximity enemy, and its non-combat investigation setting is enabled.
+Bullet-impact events are also immediate investigation prompts. The survivor should check the approximate shooter position only if it can start investigating immediately, is not already blocked by a player movement order or direct combat, and its non-combat investigation setting is enabled. If investigation is disabled, the survivor still briefly looks toward the approximate shooter position and broadcasts a look-only alert to nearby same-team survivors.
 
 ### Forward Vision
 
@@ -184,8 +184,8 @@ Implemented approach:
 
 This means:
 
-- `SurvivorNonCombatAI` hold assignments idle in place while turning to face the closest detected direct enemy unless `SurvivorAIShooting` has a direct target to aim/fire at. Noise and bullet-impact prompts can start an immediate investigation detour if the survivor is free to react.
-- `SurvivorNonCombatAI` follow and move assignments keep their movement orders while moving. If `SurvivorAIShooting` has a direct target with line of fire, they may aim/fire while moving. Noise and bullet-impact events are immediate investigation prompts and are ignored if the survivor cannot investigate without breaking the current assignment.
+- `SurvivorNonCombatAI` hold assignments idle in place while turning to face the closest detected direct enemy unless `SurvivorAIShooting` has a direct target to aim/fire at. Noise and bullet-impact prompts can start an immediate investigation detour if the survivor is free to react; even when investigation movement is disabled, they can still create a short reactive look toward the source and send look-only ally alerts. During combat, a reactive look can override the current aim only when the stimulus source is much closer than the current target.
+- `SurvivorNonCombatAI` follow and move assignments keep their movement orders while moving. If `SurvivorAIShooting` has a direct target with line of fire, they may aim/fire while moving. Noise and bullet-impact events are immediate investigation prompts; if movement investigation is not allowed, the survivor may still turn toward the source briefly while preserving its movement order.
 - Future attack/defend/flee behaviors can make stronger use of the same sensor data.
 
 Do not put this look logic directly in `Gameplay.cs`.

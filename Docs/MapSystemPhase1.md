@@ -176,7 +176,7 @@ Cursor is unlocked and visible.
 Map camera is enabled.
 Map UI is visible.
 WASD pans the map.
-Mouse wheel zooms the map.
+Mouse wheel zooms the map toward the cursor position.
 Alt closes the map.
 ```
 
@@ -247,7 +247,7 @@ Scene setup is intentionally left in the editor:
 - The map camera shows the generated static city from above.
 - Survivors and pickups are not visible in the map camera.
 - The view starts centered on the active possessed survivor.
-- Mouse wheel zoom works and is clamped.
+- Mouse wheel zoom works, is clamped, and keeps the map point under the cursor anchored while zooming when possible.
 - WASD pans while the map is open and is clamped to the map bounds.
 
 ## Next Phase

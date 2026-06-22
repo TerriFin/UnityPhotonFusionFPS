@@ -25,6 +25,8 @@ namespace SimpleFPS
 		public int DefaultLedgeRepeatCooldownDistance = 2;
 		[Min(0)]
 		public int MinRoadReplaceableLedgesPerHeightRegion = 5;
+		[Min(0)]
+		public int MinCellsBetweenHeightTraversalTiles = 3;
 
 		public HeightTileSet LedgeTiles;
 	}

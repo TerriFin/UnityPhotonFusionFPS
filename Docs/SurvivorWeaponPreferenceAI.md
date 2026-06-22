@@ -9,13 +9,13 @@ Implemented.
 - The preference is stored as a replicated enum on `Survivor`.
 - Normal survivors start in `Automatic`.
 - Neutral survivors start in `PreferStrongWeapons` and switch to `Automatic` when recruited.
-- Individual and bulk roster controls cycle through `AUTO`, `STRONG`, and `PISTOL`.
+- Individual and bulk roster controls cycle through `AUTO`, `STRONG`, `PISTOL`, and `HOLD`.
 
 ## Goal
 
 `SurvivorWeaponPreferenceAI` is a focused combat behavior component that chooses which weapon an unpossessed player-owned survivor should use.
 
-It provides one player-configurable three-state mode:
+It provides one player-configurable four-state weapon/fire mode:
 
 ```csharp
 public enum ESurvivorWeaponPreference
@@ -23,6 +23,7 @@ public enum ESurvivorWeaponPreference
 	Automatic = 0,
 	PreferStrongWeapons = 1,
 	PreferPistol = 2,
+	HoldFire = 3,
 }
 ```
 
@@ -110,6 +111,15 @@ This is an explicit ammunition-saving order:
 - fall back to another usable weapon only if the pistol is genuinely unavailable or cannot fire.
 
 The current game gives every survivor an infinite-ammo pistol, so the fallback is primarily defensive against future weapon-system changes.
+
+### Hold Fire
+
+This is an explicit "do not shoot under any circumstance" order:
+
+- keep detecting and tracking direct enemies so combat movement, ally alerts, and look behavior can still react,
+- do not switch weapons for AI combat,
+- never press `Fire`,
+- applies against zombies and enemy survivors.
 
 ## Weapon AI Stats
 
@@ -220,7 +230,7 @@ Rules:
 - zero or negative `CloseZombieDistance` disables the close-zombie escalation rule.
 - zero or negative `NearbyZombieCountThreshold` disables the zombie-count escalation rule.
 
-These are component tuning values, not per-survivor player settings. The player changes only the three-state preference mode during a match.
+These are component tuning values, not per-survivor player settings. The player changes only the four-state weapon/fire mode during a match.
 
 Weapon strength and effective range are configured on each `Weapon`, not duplicated on the behavior component.
 
@@ -234,7 +244,7 @@ Gameplay.ZombieOrchestrator.IsOvertime
 
 Do not infer overtime from remaining match time inside every survivor. The orchestrator already owns the transition and exposes `IsOvertime`.
 
-Overtime overrides Automatic's normal zombie rules and selects the strongest usable weapon immediately. It does not override the explicit `PreferPistol` player choice.
+Overtime overrides Automatic's normal zombie rules and selects the strongest usable weapon immediately. It does not override explicit player choices such as `PreferPistol` or `HoldFire`.
 
 ## Combat Settings
 
@@ -256,7 +266,7 @@ public static SurvivorCombatAISettings Default => new SurvivorCombatAISettings
 };
 ```
 
-Changing the unified combat behavior toggle must not reset weapon preference. Changing weapon preference must not reset the combat toggle or any non-combat setting.
+Changing the combat movement toggle must not reset weapon preference. Changing weapon preference must not reset the combat movement toggle or any non-combat setting.
 
 Recruitment and ordinary player orders should preserve the survivor's current preference. Newly spawned normal survivors start in `Automatic`.
 
@@ -282,7 +292,7 @@ The decision should not interrupt an active switch. If `Weapons.IsSwitching` is 
 
 ## Roster UI
 
-Weapon preference is a mode, not a boolean toggle. It needs a three-state control on:
+Weapon preference is a mode, not a boolean toggle. It needs a four-state control on:
 
 - every `SurvivorRosterEntry`,
 - the roster's `BulkToggleBar` or equivalent bulk settings row.
@@ -293,9 +303,10 @@ Recommended compact labels:
 AUTO
 STRONG
 PISTOL
+HOLD
 ```
 
-A compact segmented control is clearest. If the existing card cannot fit three buttons, one button may cycle through the three states and update its icon/text. It must still clearly display the current state.
+A compact segmented control is clearest. If the existing card cannot fit four buttons, one button may cycle through the four states and update its icon/text. It must still clearly display the current state.
 
 Individual control:
 

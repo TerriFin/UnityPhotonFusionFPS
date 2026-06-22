@@ -16,11 +16,13 @@ namespace SimpleFPS
 		public string AutomaticLabel = "AUTO";
 		public string StrongLabel = "STRONG";
 		public string PistolLabel = "PISTOL";
+		public string HoldFireLabel = "HOLD";
 
 		[Header("Colors")]
 		public Color AutomaticColor = new Color(0.18f, 0.55f, 0.72f, 0.95f);
 		public Color StrongColor = new Color(0.78f, 0.28f, 0.12f, 0.95f);
 		public Color PistolColor = new Color(0.42f, 0.46f, 0.5f, 0.95f);
+		public Color HoldFireColor = new Color(0.28f, 0.24f, 0.32f, 0.95f);
 
 		public ESurvivorWeaponPreference Value { get; private set; }
 		public event Action<ESurvivorWeaponPreference> ValueChanged;
@@ -46,6 +48,7 @@ namespace SimpleFPS
 			{
 				ESurvivorWeaponPreference.Automatic => ESurvivorWeaponPreference.PreferStrongWeapons,
 				ESurvivorWeaponPreference.PreferStrongWeapons => ESurvivorWeaponPreference.PreferPistol,
+				ESurvivorWeaponPreference.PreferPistol => ESurvivorWeaponPreference.HoldFire,
 				_ => ESurvivorWeaponPreference.Automatic,
 			};
 
@@ -111,6 +114,7 @@ namespace SimpleFPS
 				{
 					ESurvivorWeaponPreference.PreferStrongWeapons => StrongLabel,
 					ESurvivorWeaponPreference.PreferPistol => PistolLabel,
+					ESurvivorWeaponPreference.HoldFire => HoldFireLabel,
 					_ => AutomaticLabel,
 				};
 			}
@@ -121,6 +125,7 @@ namespace SimpleFPS
 				{
 					ESurvivorWeaponPreference.PreferStrongWeapons => StrongColor,
 					ESurvivorWeaponPreference.PreferPistol => PistolColor,
+					ESurvivorWeaponPreference.HoldFire => HoldFireColor,
 					_ => AutomaticColor,
 				};
 			}
@@ -130,7 +135,8 @@ namespace SimpleFPS
 		{
 			return value == ESurvivorWeaponPreference.Automatic ||
 			       value == ESurvivorWeaponPreference.PreferStrongWeapons ||
-			       value == ESurvivorWeaponPreference.PreferPistol;
+			       value == ESurvivorWeaponPreference.PreferPistol ||
+			       value == ESurvivorWeaponPreference.HoldFire;
 		}
 	}
 }

@@ -259,10 +259,19 @@ namespace SimpleFPS
 			}
 
 			float zoomInput = 0f;
-			if (mouse != null && CanZoomMapAtPointer(mouse.position.ReadValue()))
-				zoomInput = mouse.scroll.ReadValue().y * 0.01f;
+			Vector2? zoomViewportPivot = null;
+			if (mouse != null)
+			{
+				Vector2 mousePosition = mouse.position.ReadValue();
+				if (CanZoomMapAtPointer(mousePosition))
+				{
+					zoomInput = mouse.scroll.ReadValue().y * 0.01f;
+					if (Mathf.Abs(zoomInput) > 0.001f && TryScreenPointToMapViewport(mousePosition, out Vector2 viewport))
+						zoomViewportPivot = viewport;
+				}
+			}
 
-			CameraController.Tick(Time.unscaledDeltaTime, panInput.normalized, zoomInput);
+			CameraController.Tick(Time.unscaledDeltaTime, panInput.normalized, zoomInput, zoomViewportPivot);
 
 			if (IconController != null)
 				IconController.Tick(this, gameplay, _runner, ShouldRevealEverything());
@@ -296,6 +305,22 @@ namespace SimpleFPS
 				return false;
 
 			return RectTransformUtility.RectangleContainsScreenPoint(MapImage.rectTransform, screenPosition, eventCamera);
+		}
+
+		private bool TryScreenPointToMapViewport(Vector2 screenPosition, out Vector2 viewport)
+		{
+			viewport = default;
+			if (MapImage == null)
+				return false;
+
+			if (RectTransformUtility.ScreenPointToLocalPointInRectangle(MapImage.rectTransform, screenPosition, GetEventCamera(), out Vector2 localPoint) == false)
+				return false;
+
+			Rect rect = MapImage.rectTransform.rect;
+			viewport = new Vector2(
+				Mathf.InverseLerp(rect.xMin, rect.xMax, localPoint.x),
+				Mathf.InverseLerp(rect.yMin, rect.yMax, localPoint.y));
+			return true;
 		}
 
 		private Vector3 GetInitialCenterPosition()

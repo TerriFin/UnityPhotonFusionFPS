@@ -179,6 +179,32 @@ namespace SimpleFPS
 			_ledgeInstances.Remove(position);
 		}
 
+		public bool TryReplaceTraversalLedgeWithNonTraversalTile(Vector2Int position)
+		{
+			if (_lastCells == null ||
+			    position.x < 0 ||
+			    position.y < 0 ||
+			    position.x >= _lastCells.GetLength(0) ||
+			    position.y >= _lastCells.GetLength(1))
+			{
+				return false;
+			}
+
+			WorldHeightCell cell = _lastCells[position.x, position.y];
+			if (cell.IsLedge == false || cell.AllowsTraversalWithoutRoad == false)
+				return false;
+
+			HeightTileCandidate replacement = ChooseNonTraversalTile(cell, GetCellRandom(position));
+			if (replacement.IsValid == false)
+				return false;
+
+			SuppressLedgeAt(position);
+			cell = cell.WithAllowsTraversalWithoutRoad(false);
+			_lastCells[position.x, position.y] = cell;
+			CreateLedgeInstance(cell, replacement, _generatedRoot);
+			return true;
+		}
+
 		private void GenerateCells(out WorldHeightCell[,] cells)
 		{
 			int width = EffectiveWidth;
@@ -1653,6 +1679,7 @@ namespace SimpleFPS
 			_generatedRoot = root.transform;
 
 			var recentPlacements = new Dictionary<HeightTileDefinition, int>();
+			var traversalPlacements = new List<Vector2Int>();
 			int placementIndex = 0;
 
 			for (int x = 0; x < cells.GetLength(0); x++)
@@ -1663,7 +1690,7 @@ namespace SimpleFPS
 					if (cell.IsLedge == false)
 						continue;
 
-					HeightTileCandidate tile = ChooseTile(cell, recentPlacements, placementIndex, random);
+					HeightTileCandidate tile = ChooseTile(cell, recentPlacements, traversalPlacements, placementIndex, random);
 
 					// Record whether the chosen tile is walkable without a road ramp so the runtime height snapshot
 					// knows this ledge has ordinary NavMesh. `cells` is the same array exposed by the snapshot, so
@@ -1673,26 +1700,10 @@ namespace SimpleFPS
 					{
 						cell = cell.WithAllowsTraversalWithoutRoad(true);
 						cells[x, y] = cell;
+						traversalPlacements.Add(cell.Position);
 					}
 
-					Vector3 position = CellToWorld(cell.Position, (cell.LowHeightLevel + cell.HighHeightLevel) * 0.5f);
-					Quaternion rotation = tile.IsValid ? Quaternion.Euler(0f, tile.YRotationDegrees, 0f) : Quaternion.identity;
-
-					GameObject instance;
-					if (tile.IsValid && tile.Definition.gameObject != null)
-					{
-						instance = Instantiate(tile.Definition.gameObject, position, rotation, root.transform);
-					}
-					else
-					{
-						instance = new GameObject($"Missing Height Tile {cell.Position.x},{cell.Position.y}");
-						instance.transform.SetParent(root.transform, false);
-						instance.transform.position = position;
-						instance.transform.rotation = rotation;
-					}
-
-					instance.name = tile.IsValid ? $"{tile.Definition.name} ({cell.Position.x},{cell.Position.y})" : instance.name;
-					_ledgeInstances[cell.Position] = instance;
+					CreateLedgeInstance(cell, tile, root.transform);
 
 					if (tile.IsValid)
 						recentPlacements[tile.Definition] = placementIndex;
@@ -1702,7 +1713,12 @@ namespace SimpleFPS
 			}
 		}
 
-		private HeightTileCandidate ChooseTile(WorldHeightCell cell, Dictionary<HeightTileDefinition, int> recentPlacements, int placementIndex, System.Random random)
+		private HeightTileCandidate ChooseTile(
+			WorldHeightCell cell,
+			Dictionary<HeightTileDefinition, int> recentPlacements,
+			List<Vector2Int> traversalPlacements,
+			int placementIndex,
+			System.Random random)
 		{
 			HeightTileSet tileSet = Settings.LedgeTiles;
 			if (tileSet == null || tileSet.Tiles == null || tileSet.Tiles.Length == 0)
@@ -1710,6 +1726,8 @@ namespace SimpleFPS
 
 			var candidates = new List<HeightTileCandidate>();
 			var cooldownCandidates = new List<HeightTileCandidate>();
+			var traversalSpacedCandidates = new List<HeightTileCandidate>();
+			var traversalSpacedCooldownCandidates = new List<HeightTileCandidate>();
 
 			for (int i = 0; i < tileSet.Tiles.Length; i++)
 			{
@@ -1721,6 +1739,9 @@ namespace SimpleFPS
 				{
 					var candidate = new HeightTileCandidate(tile, rotationSteps);
 					candidates.Add(candidate);
+					bool traversalAllowed = IsHeightTraversalTileAllowedAt(tile, cell.Position, traversalPlacements);
+					if (traversalAllowed)
+						traversalSpacedCandidates.Add(candidate);
 
 					// RepeatCooldownDistance is the literal value: 0 means "no cooldown, always available".
 					// Previously this fell back to Settings.DefaultLedgeRepeatCooldownDistance when the tile
@@ -1733,15 +1754,90 @@ namespace SimpleFPS
 						|| placementIndex - lastPlacement > cooldown)
 					{
 						cooldownCandidates.Add(candidate);
+						if (traversalAllowed)
+							traversalSpacedCooldownCandidates.Add(candidate);
 					}
 				}
 			}
 
-			List<HeightTileCandidate> pool = cooldownCandidates.Count > 0 ? cooldownCandidates : candidates;
+			List<HeightTileCandidate> pool = traversalSpacedCooldownCandidates.Count > 0
+				? traversalSpacedCooldownCandidates
+				: traversalSpacedCandidates.Count > 0
+					? traversalSpacedCandidates
+					: cooldownCandidates.Count > 0
+						? cooldownCandidates
+						: candidates;
 			if (pool.Count == 0)
 				return default;
 
 			return ChooseWeighted(pool, random);
+		}
+
+		private HeightTileCandidate ChooseNonTraversalTile(WorldHeightCell cell, System.Random random)
+		{
+			HeightTileSet tileSet = Settings.LedgeTiles;
+			if (tileSet == null || tileSet.Tiles == null || tileSet.Tiles.Length == 0)
+				return default;
+
+			var candidates = new List<HeightTileCandidate>();
+			for (int i = 0; i < tileSet.Tiles.Length; i++)
+			{
+				HeightTileDefinition tile = tileSet.Tiles[i];
+				if (tile == null ||
+				    tile.AllowsTraversalWithoutRoad ||
+				    tile.Shape != cell.LedgeShape ||
+				    tile.IsBoundaryTile != cell.IsBoundaryLedge)
+				{
+					continue;
+				}
+
+				foreach (int rotationSteps in GetAllowedRotationSteps(cell))
+					candidates.Add(new HeightTileCandidate(tile, rotationSteps));
+			}
+
+			return candidates.Count > 0 ? ChooseWeighted(candidates, random) : default;
+		}
+
+		private bool IsHeightTraversalTileAllowedAt(HeightTileDefinition tile, Vector2Int position, List<Vector2Int> traversalPlacements)
+		{
+			if (tile == null || tile.AllowsTraversalWithoutRoad == false)
+				return true;
+
+			int minimumSpacing = Settings != null ? Mathf.Max(0, Settings.MinCellsBetweenHeightTraversalTiles) : 0;
+			if (minimumSpacing <= 0 || traversalPlacements == null)
+				return true;
+
+			for (int i = 0; i < traversalPlacements.Count; i++)
+			{
+				Vector2Int other = traversalPlacements[i];
+				if (ChebyshevDistance(position, other) <= minimumSpacing)
+					return false;
+			}
+
+			return true;
+		}
+
+		private GameObject CreateLedgeInstance(WorldHeightCell cell, HeightTileCandidate tile, Transform root)
+		{
+			Vector3 position = CellToWorld(cell.Position, (cell.LowHeightLevel + cell.HighHeightLevel) * 0.5f);
+			Quaternion rotation = tile.IsValid ? Quaternion.Euler(0f, tile.YRotationDegrees, 0f) : Quaternion.identity;
+
+			GameObject instance;
+			if (tile.IsValid && tile.Definition.gameObject != null)
+			{
+				instance = Instantiate(tile.Definition.gameObject, position, rotation, root);
+			}
+			else
+			{
+				instance = new GameObject($"Missing Height Tile {cell.Position.x},{cell.Position.y}");
+				instance.transform.SetParent(root, false);
+				instance.transform.position = position;
+				instance.transform.rotation = rotation;
+			}
+
+			instance.name = tile.IsValid ? $"{tile.Definition.name} ({cell.Position.x},{cell.Position.y})" : instance.name;
+			_ledgeInstances[cell.Position] = instance;
+			return instance;
 		}
 
 		private static IEnumerable<int> GetAllowedRotationSteps(WorldHeightCell cell)
@@ -1774,6 +1870,18 @@ namespace SimpleFPS
 		private Vector3 CellToWorld(Vector2Int cell, float heightLevel)
 		{
 			return transform.position + new Vector3(cell.x * EffectiveTileSize, heightLevel * EffectiveHeightLevelWorldUnits, cell.y * EffectiveTileSize);
+		}
+
+		private System.Random GetCellRandom(Vector2Int cell)
+		{
+			unchecked
+			{
+				int hash = Seed;
+				hash = (hash * 397) ^ cell.x;
+				hash = (hash * 397) ^ cell.y;
+				hash = (hash * 397) ^ 0x5F356495;
+				return new System.Random(hash);
+			}
 		}
 
 		private bool IsInBounds(int[,] grid, Vector2Int position)

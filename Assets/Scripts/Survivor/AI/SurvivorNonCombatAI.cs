@@ -49,6 +49,9 @@ namespace SimpleFPS
 		public float IdleLookRotationIntervalMin = 4f;
 		public float IdleLookRotationIntervalMax = 8f;
 		public float IdleLookMaxYawDegreesPerTick = 2f;
+		public float StimulusLookDuration = 2.5f;
+		[Range(0f, 1f)]
+		public float CombatReactiveLookDistanceRatio = 0.5f;
 
 		private Survivor _survivor;
 		private SurvivorLootingAI _looting;
@@ -76,8 +79,14 @@ namespace SimpleFPS
 		private int _lastCombatEnemyTick;
 		private bool _hasLastCombatEnemy;
 		private float _nextTravelDetourTime;
+		private Vector3 _reactiveLookTarget;
+		private int _reactiveLookStimulusTick = -1;
+		private float _reactiveLookUntilTime;
+		private Vector3 _lookOnlyAlertTarget;
+		private int _lookOnlyAlertTick = -1;
 
 		private const float TravelDetourRetryDelay = 0.75f;
+		private const float LookOnlyAlertTargetMatchDistance = 3f;
 
 		public ENonCombatAssignment Assignment => _assignment;
 		public Survivor FollowTarget => _followTarget;
@@ -105,14 +114,33 @@ namespace SimpleFPS
 			return ai;
 		}
 
-		public static SurvivorNonCombatAI MoveTo(Survivor survivor, Vector3 destination, SurvivorNonCombatAISettings settings)
+		public static SurvivorNonCombatAI MoveTo(Survivor survivor, Vector3 destination, SurvivorNonCombatAISettings settings, float stoppingDistance = -1f)
 		{
 			var ai = GetOrAdd(survivor);
 			if (ai == null)
 				return null;
 
 			ai.SetSettings(settings);
-			ai.SetMoveDestination(destination);
+			ai.SetMoveDestination(destination, stoppingDistance);
+			return ai;
+		}
+
+		public static SurvivorNonCombatAI MoveTo(
+			Survivor survivor,
+			Vector3 destination,
+			SurvivorNonCombatAISettings settings,
+			int groupSize,
+			float stoppingDistanceIncreasePerExtraSurvivor,
+			float maxStoppingDistance)
+		{
+			var ai = GetOrAdd(survivor);
+			if (ai == null)
+				return null;
+
+			ai.SetSettings(settings);
+			ai.SetMoveDestination(
+				destination,
+				ai.GetGroupMoveStoppingDistance(groupSize, stoppingDistanceIncreasePerExtraSurvivor, maxStoppingDistance));
 			return ai;
 		}
 
@@ -269,7 +297,7 @@ namespace SimpleFPS
 			return _assignment switch
 			{
 				ENonCombatAssignment.FollowSurvivor => Follow(target, _followTarget, settings),
-				ENonCombatAssignment.MoveToPoint => MoveTo(target, _anchorPosition, settings),
+				ENonCombatAssignment.MoveToPoint => MoveTo(target, _anchorPosition, settings, _moveStoppingDistance),
 				ENonCombatAssignment.AssignedArea => AssignedArea(target, _anchorPosition, _assignmentRadius, _assignedAreaEntryPoint, _assignedAreaPatrolPoints, settings),
 				ENonCombatAssignment.HoldPosition => HoldPosition(target, settings),
 				_ => HoldPosition(target, settings),
@@ -301,13 +329,32 @@ namespace SimpleFPS
 				_recruiting.ClearTask(true, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
 		}
 
-		public void ReceiveInvestigationAlert(Vector3 target, int stimulusTick, NetworkObject observedTarget = null)
+		public void ReceiveInvestigationAlert(Vector3 target, int stimulusTick, NetworkObject observedTarget = null, bool lookOnly = false)
 		{
+			RememberReactiveLookTarget(target, stimulusTick);
+			if (lookOnly)
+			{
+				RememberLookOnlyAlert(target, stimulusTick);
+				return;
+			}
+			if (IsSuppressedByLookOnlyAlert(target, stimulusTick))
+				return;
+
 			TryStartInvestigation(target, stimulusTick, false, observedTarget, false, false);
 		}
 
 		public void ReceiveInvestigationStimulus(Vector3 target, int stimulusTick)
 		{
+			RememberReactiveLookTarget(target, stimulusTick);
+			if (_settings.InvestigateSuspiciousStimuli == false)
+			{
+				RememberLookOnlyAlert(target, stimulusTick);
+				AlertNearbyAllies(target, stimulusTick, false);
+				return;
+			}
+			if (IsSuppressedByLookOnlyAlert(target, stimulusTick))
+				return;
+
 			TryStartInvestigation(target, stimulusTick, true);
 		}
 
@@ -322,6 +369,8 @@ namespace SimpleFPS
 			// Once committed to a recruitment, the survivor ignores investigation stimuli (gunshots, alerts) entirely.
 			// The recruitment hand-off itself clears recruiting first, so it is not blocked here.
 			if (recruitmentOrigin == false && _recruiting != null && _recruiting.HasTask)
+				return false;
+			if (recruitmentOrigin == false && IsSuppressedByLookOnlyAlert(target, stimulusTick))
 				return false;
 			return _investigation != null &&
 			       _investigation.TryStart(
@@ -541,6 +590,11 @@ namespace SimpleFPS
 
 		private NetworkedInput GetMoveToPointInput()
 		{
+			EnsureBehaviorComponents();
+
+			if (_playerAssignmentSatisfiedOnce)
+				return GetSatisfiedMovePointInput();
+
 			// Detour to recruit a nearby neutral while travelling to the move point, then resume heading there.
 			if (TryGetTravelDetourRecruitingInput(out NetworkedInput detourInput))
 				return detourInput;
@@ -552,35 +606,89 @@ namespace SimpleFPS
 					navigator.SetDestination(_anchorPosition);
 
 				navigator.Tick(_survivor.transform.position);
-				// Order reached, or close-but-blocked (navigator reports it unreachable): stop and hold rather than
-				// freezing mid-map or chasing a point we can never stand on.
-				if (navigator.IsDestinationReached || navigator.IsDestinationUnreachable)
-				{
-					SetHoldPosition(_anchorPosition);
-					return GetHoldInput();
-				}
+				if (HasReachedMoveAnchor() || navigator.IsDestinationReached)
+					return CompleteMoveToPointOrder();
+				// Close-but-blocked (navigator reports it unreachable): treat the guard point as satisfied rather
+				// than freezing mid-map or chasing a point we can never stand on.
+				if (navigator.IsDestinationUnreachable &&
+				    FlatDistanceSqr(_survivor.transform.position, _anchorPosition) <= DirectFallbackDistance * DirectFallbackDistance)
+					return CompleteMoveToPointOrder();
 				if (navigator.TryGetSteeringTarget(_survivor.transform.position, out var steeringTarget))
 					return CreatePlayerOrderMoveInput(steeringTarget, false, _moveStoppingDistance);
 			}
 
+			if (HasReachedMoveAnchor())
+				return CompleteMoveToPointOrder();
+
 			if (FlatDistanceSqr(_survivor.transform.position, _anchorPosition) <= DirectFallbackDistance * DirectFallbackDistance)
 			{
-				if (FlatDistanceSqr(_survivor.transform.position, _anchorPosition) <= _moveStoppingDistance * _moveStoppingDistance)
-				{
-					SetHoldPosition(_anchorPosition);
-					return GetHoldInput();
-				}
-
 				return CreatePlayerOrderMoveInput(_anchorPosition, true, _moveStoppingDistance);
 			}
 
 			return GetPlayerOrderHoldInput();
 		}
 
+		private NetworkedInput CompleteMoveToPointOrder()
+		{
+			_playerAssignmentSatisfiedOnce = true;
+			_survivor.Navigator?.ClearDestination();
+			return GetSatisfiedMovePointInput();
+		}
+
+		private NetworkedInput GetSatisfiedMovePointInput()
+		{
+			if (HasTemporaryNonCombatTask())
+				return GetHoldOrPickupInput();
+
+			if (HasReachedMoveAnchor() == false)
+			{
+				if (TryGetCombatInput(out var combatInput))
+					return combatInput;
+
+				return GetReturnToAnchorInput();
+			}
+
+			return GetHoldOrPickupInput();
+		}
+
+		private bool HasTemporaryNonCombatTask()
+		{
+			return (_looting != null && (_looting.HasTask || _looting.IsReturning)) ||
+			       (_investigation != null && (_investigation.HasTask || _investigation.IsReturning)) ||
+			       (_recruiting != null && (_recruiting.HasTask || _recruiting.IsReturning));
+		}
+
+		private float GetGroupMoveStoppingDistance(int groupSize, float increasePerExtraSurvivor, float maxStoppingDistance)
+		{
+			float baseDistance = Mathf.Max(0.25f, DefaultMoveStoppingDistance);
+			float increase = Mathf.Max(0f, increasePerExtraSurvivor) * Mathf.Max(0, groupSize - 1);
+			float stoppingDistance = baseDistance + increase;
+			if (maxStoppingDistance > 0f)
+				stoppingDistance = Mathf.Min(stoppingDistance, Mathf.Max(baseDistance, maxStoppingDistance));
+			return stoppingDistance;
+		}
+
+		private bool HasReachedMoveAnchor()
+		{
+			if (_survivor == null)
+				return false;
+
+			float stoppingDistance = Mathf.Max(0.01f, _moveStoppingDistance);
+			if (FlatDistanceSqr(_survivor.transform.position, _anchorPosition) > stoppingDistance * stoppingDistance)
+				return false;
+
+			CharacterNavigator navigator = _survivor.Navigator;
+			float verticalReachDistance = navigator != null ? navigator.VerticalReachDistance : 2f;
+			return Mathf.Abs(_survivor.transform.position.y - _anchorPosition.y) <= Mathf.Max(0.01f, verticalReachDistance);
+		}
+
 		private NetworkedInput GetHoldInput()
 		{
 			if (TryGetCombatInput(out var combatInput))
 				return combatInput;
+
+			if (TryGetReactiveLookInput(out NetworkedInput reactiveLookInput))
+				return reactiveLookInput;
 
 			if (_settings.InvestigateSuspiciousStimuli &&
 			    _survivor.Sensor != null &&
@@ -924,8 +1032,9 @@ namespace SimpleFPS
 					return true;
 				case ENonCombatAssignment.AssignedArea:
 					return _playerAssignmentSatisfiedOnce;
-				case ENonCombatAssignment.FollowSurvivor:
 				case ENonCombatAssignment.MoveToPoint:
+					return _playerAssignmentSatisfiedOnce;
+				case ENonCombatAssignment.FollowSurvivor:
 				default:
 					return false;
 			}
@@ -985,6 +1094,11 @@ namespace SimpleFPS
 					? combatInput.MoveDirection
 					: GetLocalMoveDirection(moveDirection, currentYaw + input.LookRotationDelta.y);
 			}
+			else if (TryGetReactiveLookDelta(out Vector2 reactiveLookDelta))
+			{
+				input.LookRotationDelta = reactiveLookDelta;
+				input.MoveDirection = GetLocalMoveDirection(moveDirection, currentYaw + input.LookRotationDelta.y);
+			}
 
 			return input;
 		}
@@ -993,6 +1107,9 @@ namespace SimpleFPS
 		{
 			if (TryGetCombatInput(out var combatInput, false, false, false))
 				return combatInput;
+
+			if (TryGetReactiveLookInput(out NetworkedInput reactiveLookInput))
+				return reactiveLookInput;
 
 			return GetIdleLookAroundInput();
 		}
@@ -1011,20 +1128,22 @@ namespace SimpleFPS
 			if (_combat.TryGetDirectTarget(out var enemy, out bool hasLineOfFire))
 			{
 				TryAlertAlliesAboutDirectEnemy(enemy);
-				bool combatEnabled = _settings.AllowCombatAIActivation;
+				bool combatMovementEnabled = _settings.AllowCombatAIActivation;
 				bool allowLostInvestigationForTarget = allowLostCombatInvestigation && IsLostCombatInvestigationTarget(enemy);
 
 				if (hasLineOfFire)
 				{
 					if (allowLostInvestigationForTarget)
 						RememberCombatEnemy(enemy);
+					if (TryGetReactiveLookInput(enemy, out input))
+						return true;
 					if (_combat.TryGetInput(
 						    enemy,
 						    hasLineOfFire,
 						    out input,
 						    isMoving,
 						    allowCombatMovement,
-						    combatEnabled))
+						    combatMovementEnabled))
 						return true;
 				}
 
@@ -1046,8 +1165,136 @@ namespace SimpleFPS
 
 		private bool HasCombatTargetWithLineOfFire()
 		{
+			return TryGetCombatTargetWithLineOfFire(out _);
+		}
+
+		private bool TryGetCombatTargetWithLineOfFire(out KnownEnemyInfo enemy)
+		{
+			enemy = default;
 			return _combat != null &&
-			       _combat.HasTargetWithLineOfFire();
+			       _combat.TryGetDirectTarget(out enemy, out bool hasLineOfFire) &&
+			       hasLineOfFire;
+		}
+
+		private void RememberReactiveLookTarget(Vector3 target, int stimulusTick)
+		{
+			if (_survivor == null || _survivor.Health == null || _survivor.Health.IsAlive == false)
+				return;
+			if (TryGetCombatTargetWithLineOfFire(out var enemy) && IsReactiveLookMoreUrgentThan(enemy, target) == false)
+				return;
+			if (stimulusTick < _reactiveLookStimulusTick)
+				return;
+
+			_reactiveLookTarget = target;
+			_reactiveLookStimulusTick = stimulusTick;
+			_reactiveLookUntilTime = Time.timeSinceLevelLoad + Mathf.Max(0f, StimulusLookDuration);
+		}
+
+		private bool TryGetReactiveLookInput(out NetworkedInput input)
+		{
+			return TryGetReactiveLookInput(default, false, out input);
+		}
+
+		private bool TryGetReactiveLookInput(KnownEnemyInfo combatTarget, out NetworkedInput input)
+		{
+			return TryGetReactiveLookInput(combatTarget, true, out input);
+		}
+
+		private bool TryGetReactiveLookInput(KnownEnemyInfo combatTarget, bool hasCombatTarget, out NetworkedInput input)
+		{
+			input = default;
+			if (TryGetReactiveLookDelta(combatTarget, hasCombatTarget, out Vector2 lookRotationDelta) == false)
+				return false;
+
+			input.LookRotationDelta = lookRotationDelta;
+			return true;
+		}
+
+		private bool TryGetReactiveLookDelta(out Vector2 lookRotationDelta)
+		{
+			return TryGetReactiveLookDelta(default, false, out lookRotationDelta);
+		}
+
+		private bool TryGetReactiveLookDelta(KnownEnemyInfo combatTarget, bool hasCombatTarget, out Vector2 lookRotationDelta)
+		{
+			lookRotationDelta = default;
+			if (_survivor == null || Time.timeSinceLevelLoad > _reactiveLookUntilTime)
+				return false;
+
+			if (hasCombatTarget)
+			{
+				if (IsReactiveLookMoreUrgentThan(combatTarget, _reactiveLookTarget) == false)
+					return false;
+			}
+			else if (TryGetCombatTargetWithLineOfFire(out var currentCombatTarget) &&
+			         IsReactiveLookMoreUrgentThan(currentCombatTarget, _reactiveLookTarget) == false)
+			{
+				return false;
+			}
+
+			Vector3 toTarget = _reactiveLookTarget - _survivor.transform.position;
+			toTarget.y = 0f;
+			if (toTarget.sqrMagnitude < 0.001f)
+				return false;
+
+			float desiredYaw = Quaternion.LookRotation(toTarget).eulerAngles.y;
+			float currentYaw = _survivor.KCC.GetLookRotation(false, true).y;
+			float yawDelta = Mathf.DeltaAngle(currentYaw, desiredYaw);
+			if (Mathf.Abs(yawDelta) < 0.1f)
+				return false;
+
+			lookRotationDelta = new Vector2(0f, Mathf.Clamp(yawDelta, -MaxYawDegreesPerTick, MaxYawDegreesPerTick));
+			return true;
+		}
+
+		private void RememberLookOnlyAlert(Vector3 target, int stimulusTick)
+		{
+			if (stimulusTick < _lookOnlyAlertTick)
+				return;
+
+			_lookOnlyAlertTarget = target;
+			_lookOnlyAlertTick = stimulusTick;
+
+			if (_investigation != null &&
+			    _investigation.HasTask &&
+			    _investigation.IsRecruitmentOrigin == false &&
+			    _investigation.LastHandledInvestigationTick == stimulusTick)
+			{
+				_investigation.ClearTask(true, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
+			}
+		}
+
+		private bool IsSuppressedByLookOnlyAlert(Vector3 target, int stimulusTick)
+		{
+			if (stimulusTick != _lookOnlyAlertTick)
+				return false;
+
+			return FlatDistanceSqr(target, _lookOnlyAlertTarget) <=
+			       LookOnlyAlertTargetMatchDistance * LookOnlyAlertTargetMatchDistance;
+		}
+
+		private void AlertNearbyAllies(Vector3 target, int stimulusTick, bool allowInvestigation, NetworkObject observedTarget = null)
+		{
+			EnsureBehaviorComponents();
+			_investigation?.AlertNearbyAllies(_survivor, target, stimulusTick, allowInvestigation, observedTarget);
+		}
+
+		private bool IsReactiveLookMoreUrgentThan(KnownEnemyInfo combatTarget, Vector3 stimulusTarget)
+		{
+			if (_survivor == null)
+				return false;
+
+			Vector3 combatTargetPosition = combatTarget.Object != null
+				? combatTarget.Object.transform.position
+				: combatTarget.LastKnownPosition;
+
+			float ratio = Mathf.Clamp01(CombatReactiveLookDistanceRatio);
+			if (ratio <= 0f)
+				return false;
+
+			float stimulusDistanceSqr = FlatDistanceSqr(_survivor.transform.position, stimulusTarget);
+			float combatDistanceSqr = FlatDistanceSqr(_survivor.transform.position, combatTargetPosition);
+			return stimulusDistanceSqr < combatDistanceSqr * ratio * ratio;
 		}
 
 		private void RememberCombatEnemy(KnownEnemyInfo enemy)
@@ -1100,15 +1347,13 @@ namespace SimpleFPS
 
 		private void TryAlertAlliesAboutDirectEnemy(KnownEnemyInfo enemy)
 		{
-			if (_settings.InvestigateSuspiciousStimuli == false)
-				return;
 			if (_survivor == null || _survivor.IsActiveCharacter())
 				return;
 			if (enemy.Tick <= _lastAlertedDirectEnemyTick)
 				return;
 
 			_lastAlertedDirectEnemyTick = enemy.Tick;
-			_investigation?.AlertNearbyAllies(_survivor, enemy.LastKnownPosition, enemy.Tick, _settings.InvestigateSuspiciousStimuli, enemy.Object);
+			AlertNearbyAllies(enemy.LastKnownPosition, enemy.Tick, _settings.InvestigateSuspiciousStimuli, enemy.Object);
 		}
 
 		private static bool IsLostCombatInvestigationTarget(KnownEnemyInfo enemy)

@@ -74,7 +74,7 @@ namespace SimpleFPS
 			out NetworkedInput input,
 			bool isAlreadyMoving = false,
 			bool allowMovement = true,
-			bool combatEnabled = true)
+			bool combatMovementEnabled = true)
 		{
 			input = default;
 			EnsureSurvivor();
@@ -84,17 +84,16 @@ namespace SimpleFPS
 				return false;
 
 			if (IsZombieTarget(enemy))
-				return TryGetZombieInput(enemy, hasLineOfFire, out input, isAlreadyMoving, allowMovement, combatEnabled);
+				return TryGetZombieInput(enemy, hasLineOfFire, out input, isAlreadyMoving, allowMovement, combatMovementEnabled);
 
 			Vector3 moveDirection = default;
-			bool hasMovement = combatEnabled &&
+			bool hasMovement = combatMovementEnabled &&
 			                   allowMovement &&
 			                   _movement != null &&
 			                   _movement.TryGetMoveDirection(_survivor, enemy, out moveDirection);
 
 			NetworkedInput shootingInput = default;
-			bool hasShooting = combatEnabled &&
-			                   hasLineOfFire &&
+			bool hasShooting = hasLineOfFire &&
 			                   _survivor.AIShooting.TryGetInput(out shootingInput, isAlreadyMoving || hasMovement);
 
 			if (hasShooting)
@@ -116,7 +115,7 @@ namespace SimpleFPS
 				input.MoveDirection = GetLocalMoveDirection(moveDirection, currentYaw + input.LookRotationDelta.y);
 			}
 
-			return hasShooting || hasMovement || combatEnabled == false || input.LookRotationDelta != Vector2.zero;
+			return hasShooting || hasMovement || input.LookRotationDelta != Vector2.zero;
 		}
 
 		private bool TryGetZombieInput(
@@ -125,17 +124,17 @@ namespace SimpleFPS
 			out NetworkedInput input,
 			bool isAlreadyMoving,
 			bool allowMovement,
-			bool combatEnabled)
+			bool combatMovementEnabled)
 		{
 			input = default;
 
 			Vector3 moveDirection = default;
-			bool hasMovement = allowMovement &&
+			bool hasMovement = combatMovementEnabled &&
+			                   allowMovement &&
 			                   TryGetZombieRetreatDirection(enemy, out moveDirection);
 
 			NetworkedInput shootingInput = default;
-			bool hasShooting = combatEnabled &&
-			                   hasLineOfFire &&
+			bool hasShooting = hasLineOfFire &&
 			                   _survivor.AIShooting.TryGetInput(out shootingInput, isAlreadyMoving || hasMovement);
 
 			if (hasShooting)
@@ -153,7 +152,7 @@ namespace SimpleFPS
 				input.MoveDirection = GetLocalMoveDirection(moveDirection, currentYaw + input.LookRotationDelta.y);
 			}
 
-			return hasShooting || hasMovement || combatEnabled == false || input.LookRotationDelta != Vector2.zero;
+			return hasShooting || hasMovement || input.LookRotationDelta != Vector2.zero;
 		}
 
 		private void Awake()

@@ -254,6 +254,7 @@ namespace SimpleFPS
 						cell.HeightLevel = heightCell.HeightLevel;
 						cell.IsLedge = heightCell.IsLedge;
 						cell.CanBeHeightChangeRoad = heightCell.CanBeReplacedByHeightChangeRoad;
+						cell.AllowsTraversalWithoutRoad = heightCell.AllowsTraversalWithoutRoad;
 						cell.HighDirection = heightCell.HighDirection;
 						cell.LowHeightLevel = heightCell.LowHeightLevel;
 						cell.HighHeightLevel = heightCell.HighHeightLevel;
@@ -289,6 +290,7 @@ namespace SimpleFPS
 
 			AddExtraRoads(grid, random);
 			EnsureHeightChangeRoadContinuations(grid);
+			RemoveHeightTraversalLedgesNearRamps(grid);
 			DeriveSockets(grid);
 
 			Debug.Log($"{nameof(RoadGridGenerator)} generated {width}x{height} road grid with {_actualExitCount}/{Settings.RequestedExitCount} exits and {_failedPathAttempts} failed path attempts.", this);
@@ -1088,6 +1090,73 @@ namespace SimpleFPS
 				Debug.Log($"{nameof(RoadGridGenerator)} completed {completed} one-sided ramp(s) and reverted {reverted} invalid ramp(s).", this);
 		}
 
+		private void RemoveHeightTraversalLedgesNearRamps(RoadCell[,] grid)
+		{
+			int minimumSpacing = GetMinHeightTraversalTileSpacing();
+			if (minimumSpacing <= 0 || HeightGenerator == null)
+				return;
+
+			var ramps = new List<Vector2Int>();
+			for (int x = 0; x < grid.GetLength(0); x++)
+			{
+				for (int y = 0; y < grid.GetLength(1); y++)
+				{
+					if (grid[x, y].IsHeightChangeRoad)
+						ramps.Add(new Vector2Int(x, y));
+				}
+			}
+
+			if (ramps.Count == 0)
+				return;
+
+			int demoted = 0;
+			for (int x = 0; x < grid.GetLength(0); x++)
+			{
+				for (int y = 0; y < grid.GetLength(1); y++)
+				{
+					ref RoadCell cell = ref grid[x, y];
+					if (cell.IsLedge == false ||
+					    cell.IsHeightChangeRoad ||
+					    cell.AllowsTraversalWithoutRoad == false)
+					{
+						continue;
+					}
+
+					if (IsNearAnyHeightChangeRoad(cell.Position, ramps, minimumSpacing) == false)
+						continue;
+
+					if (HeightGenerator.TryReplaceTraversalLedgeWithNonTraversalTile(cell.Position))
+					{
+						cell.AllowsTraversalWithoutRoad = false;
+						demoted++;
+					}
+				}
+			}
+
+			if (demoted > 0)
+				Debug.Log($"{nameof(RoadGridGenerator)} replaced {demoted} walkable ledge tile(s) near height-change road ramp(s).", this);
+		}
+
+		private int GetMinHeightTraversalTileSpacing()
+		{
+			return HeightGenerator != null && HeightGenerator.Settings != null
+				? Mathf.Max(0, HeightGenerator.Settings.MinCellsBetweenHeightTraversalTiles)
+				: 0;
+		}
+
+		private static bool IsNearAnyHeightChangeRoad(Vector2Int position, List<Vector2Int> ramps, int minimumSpacing)
+		{
+			for (int i = 0; i < ramps.Count; i++)
+			{
+				Vector2Int ramp = ramps[i];
+				int distance = Mathf.Max(Mathf.Abs(position.x - ramp.x), Mathf.Abs(position.y - ramp.y));
+				if (distance <= minimumSpacing)
+					return true;
+			}
+
+			return false;
+		}
+
 		private bool TryCompleteRampContinuation(RoadCell[,] grid, Vector2Int rampPosition)
 		{
 			RoadCell ramp = grid[rampPosition.x, rampPosition.y];
@@ -1482,6 +1551,7 @@ namespace SimpleFPS
 			public bool IsBoundaryExit;
 			public bool IsLedge;
 			public bool CanBeHeightChangeRoad;
+			public bool AllowsTraversalWithoutRoad;
 			public bool IsHeightChangeRoad;
 			public int LowHeightLevel;
 			public int HighHeightLevel;

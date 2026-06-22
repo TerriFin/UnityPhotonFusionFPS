@@ -47,6 +47,7 @@ public float MaxYawDegreesPerTick = 8f;
 public float MaxPitchDegreesPerTick = 6f;
 
 public float TargetSwitchHysteresis = 1.5f;
+public float UrgentTargetSwitchDistanceRatio = 0.5f;
 ```
 
 `Survivor.Spawned()` finds an existing component or auto-adds one if missing. Add it to prefabs directly when designer-tuned values are needed.
@@ -63,6 +64,7 @@ public float TargetSwitchHysteresis = 1.5f;
 - Multiplies that first-shot delay by `MovingFirstShotDelayMultiplier` when movement AI asks for combat input while moving.
 - Requires current line of fire before pressing `Fire`, so memory from noise, bullet impacts, or enemies behind blockers can make the survivor look but not shoot.
 - Requests a desired weapon from `SurvivorWeaponPreferenceAI` before firing. Strong-weapon modes use each weapon's `AIWeaponStrength` and `AIEffectiveMaxRange` instead of a fixed weapon-type priority.
+- Respects `ESurvivorWeaponPreference.HoldFire` by tracking the direct target without switching weapons or pressing `Fire`.
 - Holds `EInputButton.Fire` for `TriggerHoldDuration` when aligned enough and the delay has elapsed.
 - Waits a random follow-up delay before the next burst.
 
@@ -83,9 +85,12 @@ If line of fire is lost during a burst, the component releases `Fire` immediatel
 Target selection picks the closest valid direct enemy, but it does **not** switch off the current target every time another enemy becomes marginally closer. The survivor keeps its current target until either:
 
 - the current target is no longer a valid direct enemy (dead, out of direct awareness, or not auto-attackable), or
-- a different enemy is closer than the current target by more than `TargetSwitchHysteresis` metres.
+- a different enemy is closer than the current target by more than `TargetSwitchHysteresis` metres, or
+- a different enemy is at or below `UrgentTargetSwitchDistanceRatio` of the current target distance.
 
 This matters when a pack surrounds the survivor. Several zombies sit at near-equal distances, so a pure "closest enemy" choice flips between them on every sensor tick (every `SensorInterval`, default `0.2s`). Each flip changes the current target, which resets the first-shot delay (`FirstShotDelayMin..Max`, `0.5–1.4s`). Because the flip interval is shorter than that delay, the timer never elapses and the surrounded survivor never actually fires — it just keeps re-aiming. Stickiness locks onto one zombie long enough to complete the delay, fire, and continue, while still re-prioritising a zombie that pushes decisively closer (more than `TargetSwitchHysteresis` nearer than the current one). Set `TargetSwitchHysteresis` to `0` to restore the old always-closest behaviour.
+
+`UrgentTargetSwitchDistanceRatio` is the close-ambush escape hatch. At the default `0.5`, an enemy at half the current target distance or closer bypasses stickiness immediately, so survivors do not stay glued to a far target while a closer enemy attacks from behind.
 
 ## AI Weapon Selection
 
@@ -103,7 +108,7 @@ Rules:
 - If all limited-ammo weapons are unavailable or empty, the pistol is selected as the fallback.
 - If the current limited-ammo weapon has reserve ammo, normal weapon auto-reload can keep it in use.
 
-See `Docs/SurvivorWeaponPreferenceAI.md` for the complete three-state behavior and scoring rules.
+See `Docs/SurvivorWeaponPreferenceAI.md` for the complete four-state behavior and scoring rules.
 
 ## Aim Error
 
@@ -145,7 +150,7 @@ This keeps the AI and player accuracy model aligned: movement penalties should e
 
 ## Fire Permission
 
-There is currently no player hotkey for toggling AI fire permission. `AutoShootEnabled` remains on the component as the local flag used by the shooting helper, but player-facing hold-fire behavior should be added later as a combat AI/fire-mode setting rather than as a temporary nearby command.
+Player-facing fire permission is handled by the roster weapon/fire mode. `HoldFire` means the survivor can still notice and look at direct enemies, but AI combat will not switch weapons or press `Fire`. `AutoShootEnabled` remains on the component as a local/debug flag, but normal player control should use the four-state mode instead.
 
 ## Network Model
 

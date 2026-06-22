@@ -62,8 +62,8 @@ On the local client, the human input provider is the survivor currently assigned
 Hold position:
 
 - Returns zero movement.
-- Uses `SurvivorAIShooting` when there is a direct target with line of fire and the roster combat toggle is enabled.
-- The roster has one combat behavior toggle; the old combat keyboard shortcuts and separate movement toggle are removed.
+- Uses `SurvivorAIShooting` when there is a direct target with line of fire and the weapon/fire mode allows shooting.
+- The roster combat movement toggle controls tactical repositioning only; shooting is controlled by the weapon/fire mode.
 - Uses `CharacterSensor` investigation look input only when its non-combat settings allow investigation.
 
 Follow assignment:
@@ -84,11 +84,11 @@ Move assignment:
 - Sets that destination on `CharacterNavigator`.
 - Steers toward the current path corner and keeps emitting movement until the destination is reached.
 - Can layer `SurvivorAIShooting` look/fire input over movement when a direct enemy has line of fire.
-- The combat behavior toggle is separate from non-combat orders. Disabling it does not cancel follow, move, hold, or assigned-area orders; it stops shooting and survivor-vs-survivor tactical repositioning while retaining close-zombie retreat.
-- Returns hold/combat look input once the destination is reached.
+- The combat movement toggle is separate from non-combat orders. Disabling it does not cancel follow, move, hold, or assigned-area orders; it stops tactical repositioning against both enemy survivors and zombies.
+- Once the destination is reached, the move point remains a persistent guard anchor. Combat, investigation, pickup collection, or recruiting may temporarily pull the survivor away, but it returns to that anchor afterward.
 - Does not directly move transforms.
 
-`SurvivorNonCombatAI` can consume `SurvivorAIShooting` input when the combat behavior toggle is enabled. Hold position can aim/fire while standing still. Movement assignments should continue their movement order while aiming/firing when possible, so survivors can return fire during long moves or while following. If shooting has no direct target, assignments fall back to sensor look input only when allowed by settings and when that does not break their movement responsibility. Shooting input can hold `Fire` for configurable bursts, so automatic weapons fire differently from semi-auto weapons without special AI weapon code.
+`SurvivorNonCombatAI` can consume `SurvivorAIShooting` input when a direct target has line of fire. Hold position can aim/fire while standing still unless the weapon/fire mode is `HoldFire`. Movement assignments should continue their movement order while aiming/firing when possible, so survivors can return fire during long moves or while following. If shooting has no direct target, assignments fall back to sensor look input only when allowed by settings and when that does not break their movement responsibility. Shooting input can hold `Fire` for configurable bursts, so automatic weapons fire differently from semi-auto weapons without special AI weapon code.
 
 When movement and shooting both want look control, direct combat aim has priority over path-corner look while the target has line of fire. Movement still uses the same `MoveDirection` input, so the character keeps advancing instead of stopping just because it is firing.
 
@@ -239,8 +239,11 @@ When a group command resolves to a static-destination assignment (move or assign
   - `LaneOffsetCornerSoftenDistance` (default `1.5 m`) — soften the offset near the current path corner, so a perpendicular shove doesn't make a survivor cut a corner from the inside.
   - `LaneOffsetSampleDistance` (default `1.0 m`) — `NavMesh.SamplePosition` clamp distance applied to the offset target so a sideways shove never pushes the steering target into a wall.
   - `ValidateLaneOffsetPath` (default `true`) — after the offset target is sampled onto the NavMesh, `CharacterNavigator` does one cheap `NavMesh.Raycast` from the survivor to that offset target. If that straight NavMesh segment is blocked, it ignores the lane offset for that steering query and uses the original path corner.
+  - `MoveStoppingDistanceIncreasePerExtraSurvivor` (default `0.2 m`) — move orders increase their arrival radius by this much for each extra survivor beyond the first ordered survivor.
+  - `MoveStoppingDistanceMax` (default `3 m`) — cap for that group-scaled move arrival radius. The cap never shrinks a survivor below its base `DefaultMoveStoppingDistance`.
 - The assignment helper writes the lane values onto `CharacterNavigator` each time it installs a new input source. The navigator carries them as runtime state (the prefab adds the navigator via `AddComponent` at startup, so these aren't authored per-prefab — retuning the Gameplay settings is the only place the values are edited).
 - `CharacterNavigator.TryGetSteeringTarget` applies the lateral offset perpendicular to the current path segment direction, caps it by `MaxLaneOffset`, then `NavMesh.SamplePosition` clamps it back onto walkable mesh. Where the corridor narrows the offset gets clamped or rejected and the group files through; once the corridor widens again they spread back out automatically.
+- Move-order arrival uses the per-order stopping distance, including the group-scaled value, plus the navigator's vertical reach tolerance. This lets larger groups accept a loose cluster around the point without falsely completing a move on the ground below an elevated target.
 - `SurvivorAICommand` carries an `AllowsLaneSpread` flag. `MoveTo` and `AssignedArea` set it to `true`; `Idle` and `Follow` leave it `false`, and the assignment helper resets the navigator lane to `0` in those cases so a previous group's lane assignment never leaks into a follow target's path. Single-target commands also reset to `0` automatically because the group size is `1`.
 
 This is intentionally cheap: one perpendicular vector, one `NavMesh.SamplePosition`, and optionally one `NavMesh.Raycast` per lane-spread steering query. It avoids extra path calculations while still preventing most indoor offsets that would make KCC steer through props.

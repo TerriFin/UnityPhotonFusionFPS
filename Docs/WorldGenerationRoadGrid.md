@@ -53,6 +53,7 @@ RoadCell
     bool IsBoundaryExit;
     bool IsLedge;
     bool IsHeightChangeRoad;
+    bool AllowsTraversalWithoutRoad;
     RoadSocket North;
     RoadSocket East;
     RoadSocket South;
@@ -345,6 +346,7 @@ If a height snapshot exists:
 
 - same-height cells can connect normally,
 - non-road ledge cells block road/building placement,
+- authored ledge tiles that allow traversal without a road keep their `AllowsTraversalWithoutRoad` flag from the height snapshot,
 - different-height roads cannot be directly adjacent; a ledge cell must sit between the two levels,
 - a `1x1` straight road-replaceable ledge cell can be replaced by a height-change road tile,
 - normal roads are placed at `HeightLevel * HeightLevelWorldUnits`.
@@ -475,6 +477,8 @@ Height-change ramp cells are repaired as a small grid-level transaction before p
 This prevents an invalid `road -> ramp -> building` layout and an invalid `road -> ramp -> map edge` layout. The final layout is either `road -> ramp -> road`, or the ramp candidate remains a normal ledge.
 
 Roads may only override a ledge cell when that ledge is road-replaceable (a `1x1` straight ledge with valid cardinal low/high sides). Every road-placement entry point — exits, exit-inner cells, pathfinding, stubs, ramp continuations — refuses to mark a non-replaceable ledge as a road. Exit candidates whose boundary cell or inner cell falls on a non-replaceable ledge are filtered out during exit selection, so straight boundary ledges, corner ledges, and diagonal-step inner/outer corner ledges produced by the height pass never get covered by a normal road tile.
+
+Road ramps are allowed to place without checking the height generator's `MinCellsBetweenHeightTraversalTiles`, because the road graph has to stay connected. After the ramp set is final, the road generator removes nearby non-road traversal ledges from the height pass by asking `HeightMapGenerator` to replace them with non-traversal variants. That spacing rule sees both road ramps and authored traversal ledges as height traversal tiles, but only the authored ledges are demoted.
 
 After that, calculate sockets from neighbors:
 

@@ -43,7 +43,7 @@ These values belong on the behavior component, not in `SurvivorNonCombatAISettin
 
 ## Activation Rules
 
-Investigation may start only when:
+Movement investigation may start only when:
 
 - `SurvivorNonCombatAISettings.InvestigateSuspiciousStimuli` is enabled.
 - The survivor is unpossessed.
@@ -54,6 +54,8 @@ Investigation may start only when:
 - The survivor is not following another survivor.
 
 Follow orders, unreached move orders, and first-time travel into an assigned area are treated as active player intent, so investigation does not interrupt them. After an assigned area has been reached once, investigation may temporarily pull the survivor outside the circle and the assigned area remains the fallback order.
+
+Disabling `InvestigateSuspiciousStimuli` only blocks this movement investigation. Immediate stimuli can still make a survivor briefly look toward the source through `SurvivorNonCombatAI.StimulusLookDuration`. During combat, this reactive look is allowed only when the stimulus source is closer than `SurvivorNonCombatAI.CombatReactiveLookDistanceRatio` times the current direct combat target distance.
 
 ## Stimuli
 
@@ -90,14 +92,16 @@ Arrival can be detected either by direct distance to the investigation target or
 
 The same `InvestigateSuspiciousStimuli` setting controls same-team alerting. There is no separate `AlertNearbyAllies` setting.
 
-If a survivor with investigation enabled notices a suspicious sound, bullet impact, or direct enemy sighting, it may alert nearby same-team survivors that also have investigation enabled. Alerted survivors receive the same investigation target.
+If a survivor with investigation enabled notices a suspicious sound, bullet impact, or direct enemy sighting, it may alert nearby same-team survivors. Alerted survivors receive the same investigation target.
+
+If the originating survivor has `InvestigateSuspiciousStimuli` disabled, it still sends the alert, but marks it as look-only. A look-only alert makes receivers briefly face the source without starting movement investigation, even if the receiver's own investigation setting is enabled. If a normal alert and a look-only alert for the same stimulus tick/position both arrive, look-only wins and the same-tick investigation is cancelled or suppressed.
 
 Alert rules:
 
 - Possessed survivors do not originate investigation alerts.
 - Possessed survivors do not receive investigation alerts.
 - Alerted survivors do not re-broadcast the alert.
-- Allies that already have their own line-of-fire combat target ignore investigation alerts.
+- Allies that already have their own line-of-fire combat target do not start movement investigation, but may briefly look toward the alert if it is much closer than their current target.
 - Allies with only vague or proximity knowledge can still be alerted.
 - Alerts are one-hop only to prevent alert chains from crossing the whole map.
 - Alert range is controlled by `SurvivorInvestigationAI.AllyAlertRadius`.

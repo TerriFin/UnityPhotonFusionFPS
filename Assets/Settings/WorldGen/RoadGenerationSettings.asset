@@ -18,8 +18,8 @@ MonoBehaviour:
   MaxRoadSpacing: 2
   PreventSolidRoadBlocks: 1
   MaxRoadCellsIn3x3: 5
-  ExtraRoadDensity: 0.582
-  StubRoadStartDensity: 0.49
+  ExtraRoadDensity: 0.729
+  StubRoadStartDensity: 0.652
   RequireDiagonalSpaceForStubRoads: 1
   MinConnectingRoadLength: 5
   MaxPathAttempts: 200
