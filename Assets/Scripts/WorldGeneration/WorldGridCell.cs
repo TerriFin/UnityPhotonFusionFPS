@@ -58,6 +58,17 @@ namespace SimpleFPS
 			return true;
 		}
 
+		public bool TryGetCell(Vector3 worldPosition, out WorldGridCell cell)
+		{
+			cell = default;
+			if (_cells == null || TileSize <= 0f)
+				return false;
+
+			int x = Mathf.RoundToInt((worldPosition.x - Origin.x) / TileSize);
+			int y = Mathf.RoundToInt((worldPosition.z - Origin.z) / TileSize);
+			return TryGetCell(new Vector2Int(x, y), out cell);
+		}
+
 		public Vector3 CellToWorld(Vector2 position)
 		{
 			return Origin + new Vector3(position.x * TileSize, 0f, position.y * TileSize);

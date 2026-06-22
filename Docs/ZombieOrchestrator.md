@@ -307,6 +307,7 @@ This is not a perfect island-area calculation. It is a cheap "can this spawn rea
 Non-forced blocker checks should be cheap:
 
 - Use the known survivor registry if available.
+- Ignore survivor sensor entries whose Fusion `NetworkObject` has not completed spawning yet. Generated/spawned components may register their sensors before `Spawned()` runs, and networked health or ownership must not be read during that window.
 - Use squared distance.
 - Check only during spawn pulses.
 
@@ -351,10 +352,13 @@ Building placement
 NavMesh rebuild
 Loot spawning
 Zombie spawn point collection
+Terrain climb surface registration
 Zombie orchestrator starts
 ```
 
 The orchestrator gathers `ZombieSpawnPoint` components from generated world roots, not from prefab assets or disabled editor helpers. It currently scans both the generated building root and the generated height/ledge root, so zombie spawners can live in building prefabs or authored ledge/height tiles.
+
+After generated spawn points exist, the orchestrator also builds terrain zombie climb surfaces from `WorldHeightSnapshot` and caches the generated `WorldGridSnapshot` for road-tile checks. The terrain climb surfaces are broad ledge-face permissions used by `ZombieAI` for direct ledge climbs; they are not NavMesh links and are needed only on scene authority because zombie AI runs only there. Reusable prop/building rescue surfaces register themselves through `ZombieClimbableSurface`.
 
 Suggested component references:
 

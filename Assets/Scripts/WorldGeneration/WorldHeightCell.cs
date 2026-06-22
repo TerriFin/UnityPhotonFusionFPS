@@ -14,6 +14,10 @@ namespace SimpleFPS
 		public readonly int LedgeRotationSteps;
 		public readonly int LowHeightLevel;
 		public readonly int HighHeightLevel;
+		// True when the ledge tile instantiated here is walkable up/down without a road ramp (stairs, gentle ramp,
+		// etc., flagged on its HeightTileDefinition). Such ledges have ordinary NavMesh, so the zombie spine walks
+		// them and the terrain climb/drop shortcut leaves them alone. Set during ledge instantiation, not cell build.
+		public readonly bool AllowsTraversalWithoutRoad;
 
 		public WorldHeightCell(
 			Vector2Int position,
@@ -25,7 +29,8 @@ namespace SimpleFPS
 			RoadDirection highDirection,
 			int ledgeRotationSteps,
 			int lowHeightLevel,
-			int highHeightLevel)
+			int highHeightLevel,
+			bool allowsTraversalWithoutRoad = false)
 		{
 			Position = position;
 			HeightLevel = heightLevel;
@@ -37,6 +42,13 @@ namespace SimpleFPS
 			LedgeRotationSteps = ledgeRotationSteps;
 			LowHeightLevel = lowHeightLevel;
 			HighHeightLevel = highHeightLevel;
+			AllowsTraversalWithoutRoad = allowsTraversalWithoutRoad;
+		}
+
+		public WorldHeightCell WithAllowsTraversalWithoutRoad(bool value)
+		{
+			return new WorldHeightCell(Position, HeightLevel, IsLedge, IsBoundaryLedge, CanBeReplacedByHeightChangeRoad,
+				LedgeShape, HighDirection, LedgeRotationSteps, LowHeightLevel, HighHeightLevel, value);
 		}
 	}
 
@@ -89,13 +101,31 @@ namespace SimpleFPS
 			return TryGetCell(new Vector2Int(x, y), out cell);
 		}
 
-		// The terrain height level at a world position. This is the logical terrace level, independent of the
-		// caller's actual Y, so a character on a tall structure built on a level-0 cell still reads level 0.
+		// The terrain height level at a world position. For a normal plateau cell this is the logical terrace level,
+		// independent of the caller's actual Y, so a character on a tall structure built on a level-0 cell still
+		// reads level 0 (buildings never sit on ledge cells).
+		//
+		// A ledge cell is the exception: it is the transition between two plateaus and is stored with HeightLevel =
+		// the LOW side, which would mislabel anything standing on its high side (a survivor perched on the ledge top,
+		// or a zombie that just crested it). For ledge cells resolve the level from the position's actual height,
+		// snapping worldY to the nearer of the cell's low/high plateau heights.
 		public bool TryGetHeightLevel(Vector3 worldPosition, out int level)
 		{
 			level = 0;
 			if (TryGetCell(worldPosition, out var cell) == false)
 				return false;
+
+			if (cell.IsLedge && HeightLevelWorldUnits > 0f && cell.HighHeightLevel > cell.LowHeightLevel)
+			{
+				// Count as the high level only once the position is essentially on the high plateau (within the top
+				// quarter of the transition). Biasing to the top keeps a zombie climbing a cliff reading "low" — so
+				// its upward terrain shortcut stays active — until it has actually crested, while still classifying a
+				// survivor standing on the ledge top, or a zombie that just mantled up, as "high".
+				float highY = Origin.y + cell.HighHeightLevel * HeightLevelWorldUnits;
+				float highMargin = HeightLevelWorldUnits * 0.25f;
+				level = worldPosition.y >= highY - highMargin ? cell.HighHeightLevel : cell.LowHeightLevel;
+				return true;
+			}
 
 			level = cell.HeightLevel;
 			return true;

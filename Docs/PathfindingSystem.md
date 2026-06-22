@@ -106,7 +106,7 @@ public void Tick(Vector3 currentPosition);
 
 `TryFindReachablePoint(...)` is used before setting destinations for suspicious investigation targets. It samples nearby NavMesh around the raw target and verifies a complete path from the survivor. This is useful when a player creates a stimulus from a position that is valid for players but not AI-walkable, such as firing from the top of a car.
 
-The overload returning `pathLength` is used by zombie explicit-goal routing. It lets zombies compare the normal NavMesh route against direct distance and choose whether to follow the path or traverse directly by climbing and dropping through obstacles.
+`CurrentPathLength` and `HasCompletePathToDestination` are used by zombie explicit-goal routing. They let zombies compare the normal NavMesh route against direct distance before taking an authorized terrain climb surface shortcut.
 
 `NavMeshPath` must be created in `Awake()` or another Unity lifecycle method, not in a field initializer or MonoBehaviour constructor. Unity's native NavMesh path initialization is not allowed during script construction.
 
@@ -120,7 +120,7 @@ The component should not call `transform.position`, `NavMeshAgent.SetDestination
 - **Destination-change detection:** `SetDestination` ignores a new destination only when it is within `DestinationChangeRepathDistance` of the current one in **3D**. A flat compare would treat two patrol points stacked on different floors (same XZ) as the same destination and never repath to the new floor.
 - `CornerReachDistance` advancement stays horizontal. NavMesh path corners climb via ramps/stairs that progress in XZ, so flat corner advancement is sufficient and avoids stalling a climb.
 
-This is shared infrastructure: the same height-aware reach applies to every navigator consumer (survivor move/patrol/investigation **and** zombies). For elevated targets it removes the previous false "arrived" while flat-near-but-below a goal; the zombie sheltered-climb fallback is unaffected because it switches to climbing when the NavMesh route is exhausted (`HasPath` goes false), not when `IsDestinationReached` flips.
+This is shared infrastructure: the same height-aware reach applies to every navigator consumer (survivor move/patrol/investigation **and** zombies). For elevated targets it removes the previous false "arrived" while flat-near-but-below a goal. Zombie rescue climbs now also check registered climb surfaces and can use `IsDestinationReached`/`IsDestinationUnreachable` as the signal that the NavMesh has brought the zombie as close as it can.
 
 ## Move Assignment
 

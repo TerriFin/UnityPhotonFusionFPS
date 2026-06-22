@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Fusion;
 using UnityEngine;
 using UnityEngine.AI;
+using UnityEngine.Serialization;
 
 namespace SimpleFPS
 {
@@ -30,6 +31,21 @@ namespace SimpleFPS
 		public bool CollectSpawnPointsOnStart = true;
 		public bool SpawnOnStart = true;
 		public bool SpawnDuringSkirmish;
+
+		[Header("Climb Surfaces")]
+		// Generates broad zombie-climbable faces across terrain ledges. Zombies still steer directly toward explicit
+		// goals; these faces only decide whether the wall in front of them is allowed to become a climb.
+		[FormerlySerializedAs("BuildClimbLinks")]
+		public bool BuildTerrainClimbSurfaces = true;
+		// Former ClimbLinkCost: the terrain ledge shortcut is allowed only when the normal NavMesh route is at least
+		// this many metres longer than direct movement through the ledge face.
+		[FormerlySerializedAs("ClimbLinkCost")]
+		public float TerrainClimbShortcutMinPathSavings = 4f;
+		[FormerlySerializedAs("ClimbLinkWidthFactor")]
+		public float TerrainClimbSurfaceWidthFactor = 0.9f;
+		[FormerlySerializedAs("ClimbLinkTopInset")]
+		[Tooltip("How far onto the landing side a generated terrain ledge mantle ends. Lower this if zombies hoist too far inward.")]
+		public float TerrainClimbLandingInset = 0.75f;
 
 		private readonly List<ZombieSpawnPoint> _spawnPoints = new();
 		private readonly List<SpawnCandidate> _candidates = new();
@@ -100,10 +116,10 @@ namespace SimpleFPS
 
 		private void OnDisable()
 		{
-			// Drop the shared terrain snapshot when the primary orchestrator goes away (match end, scene unload) so a
-			// stale height map cannot leak into a later session if domain reload is disabled. A fresh match republishes.
+			// Drop the generated terrain climb surfaces when the primary orchestrator goes away (match end, scene
+			// unload) so they cannot leak into a later session if domain reload is disabled. A fresh match rebuilds.
 			if (_isPrimary)
-				ZombieTerrain.Clear();
+				ZombieClimbSurfaces.ClearTerrain();
 		}
 
 		private void Update()
@@ -156,9 +172,9 @@ namespace SimpleFPS
 
 			_loggedNoSpawnPoints = false;
 
-			// Generation has produced spawn points, so the height snapshot is ready. Publish it for ZombieAI's
-			// terrain-aware climbing. Cheap (a struct read) and idempotent, so re-running it picks up regeneration.
-			PublishTerrainSnapshot();
+			// Generation has produced spawn points, so the height snapshot is ready. Build the zombie ledge climb
+			// surfaces from it. Idempotent per generated map, so re-running it picks up regeneration.
+			RefreshClimbSurfaces();
 
 			// Match-start reroll, mirroring the neutral survivor orchestrator: once the match leaves skirmish, clear
 			// the skirmish horde and re-seed a fresh match-start layout. Until then, run the normal one-time initial
@@ -610,7 +626,9 @@ namespace SimpleFPS
 				}
 
 				var survivor = sensor.Survivor;
-				if (survivor == null || survivor.Health == null || survivor.Health.IsAlive == false)
+				if (survivor == null || survivor.Object == null || survivor.Object.IsValid == false)
+					continue;
+				if (survivor.Health == null || survivor.Health.IsAlive == false)
 					continue;
 				// Only player-owned survivors keep zombies from spawning. Neutral survivors are meant to be
 				// threatened by the horde, so they must not suppress nearby zombie spawns.
@@ -808,18 +826,49 @@ namespace SimpleFPS
 			return HeightGenerator != null ? HeightGenerator.GeneratedRoot : null;
 		}
 
-		// Hand the generated height snapshot to the zombie terrain service so ZombieAI can make terrain-aware
-		// climbing decisions. HeightGenerator is already resolved by CollectSpawnPoints; re-publishing each tick is
-		// cheap (a struct read) and lets a mid-session regeneration replace the cached snapshot.
-		private void PublishTerrainSnapshot()
+		// Generate broad zombie-climbable faces from the generated height snapshot. Runs only here on scene authority
+		// (zombie AI is authority-only, so the generated terrain registry is needed nowhere else) and is idempotent per
+		// generated map. HeightGenerator is already resolved by CollectSpawnPoints. See ZombieClimbSurfaces.
+		private void RefreshClimbSurfaces()
 		{
+			RefreshRoadGridSnapshot();
+
+			if (BuildTerrainClimbSurfaces == false)
+				return;
+
 			if (HeightGenerator == null)
 				GetGeneratedHeightRoot();
 			if (HeightGenerator == null)
 				return;
 
-			if (HeightGenerator.TryGetHeightSnapshot(out WorldHeightSnapshot snapshot) && snapshot.IsValid)
-				ZombieTerrain.SetSnapshot(snapshot);
+			if (HeightGenerator.TryGetHeightSnapshot(out WorldHeightSnapshot snapshot) == false || snapshot.IsValid == false)
+				return;
+
+			ZombieClimbSurfaces.BuildTerrain(snapshot, new ZombieClimbSurfaces.TerrainBuildConfig
+			{
+				WidthFactor = TerrainClimbSurfaceWidthFactor,
+				LandingInset = TerrainClimbLandingInset,
+				ShortcutMinPathSavings = TerrainClimbShortcutMinPathSavings,
+			});
+		}
+
+		private void RefreshRoadGridSnapshot()
+		{
+			RoadGridGenerator roadGenerator = null;
+			if (BuildingGenerator != null)
+				roadGenerator = BuildingGenerator.RoadGenerator;
+			if (roadGenerator == null)
+				roadGenerator = GetComponent<RoadGridGenerator>();
+			if (roadGenerator == null)
+				roadGenerator = FindObjectOfType<RoadGridGenerator>();
+
+			if (roadGenerator != null && roadGenerator.TryGetWorldGridSnapshot(out WorldGridSnapshot snapshot) && snapshot.IsValid)
+			{
+				ZombieClimbSurfaces.SetRoadGrid(snapshot);
+				return;
+			}
+
+			ZombieClimbSurfaces.ClearRoadGrid();
 		}
 
 		private NetworkRunner GetRunner()

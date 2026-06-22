@@ -1664,6 +1664,17 @@ namespace SimpleFPS
 						continue;
 
 					HeightTileCandidate tile = ChooseTile(cell, recentPlacements, placementIndex, random);
+
+					// Record whether the chosen tile is walkable without a road ramp so the runtime height snapshot
+					// knows this ledge has ordinary NavMesh. `cells` is the same array exposed by the snapshot, so
+					// writing it back here makes the flag available to consumers like ZombieClimbSurfaces, which skips
+					// these walkable ledges because both factions already walk them normally.
+					if (tile.IsValid && tile.Definition.AllowsTraversalWithoutRoad)
+					{
+						cell = cell.WithAllowsTraversalWithoutRoad(true);
+						cells[x, y] = cell;
+					}
+
 					Vector3 position = CellToWorld(cell.Position, (cell.LowHeightLevel + cell.HighHeightLevel) * 0.5f);
 					Quaternion rotation = tile.IsValid ? Quaternion.Euler(0f, tile.YRotationDegrees, 0f) : Quaternion.identity;
 

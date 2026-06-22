@@ -27,6 +27,7 @@ namespace SimpleFPS
 		public float DesiredDistance = 0.65f;
 		public float PushSpeed = 1.5f;
 		public int MaxNeighbors = 8;
+		public float RefreshInterval = 0.1f;
 
 		private Survivor _survivor;
 		private ZombieCharacter _zombie;
@@ -35,6 +36,9 @@ namespace SimpleFPS
 		private Func<KCC, Collider, bool> _previousResolveCollision;
 		private Func<KCC, Collider, bool> _resolveCollisionCallback;
 		private bool _isRegistered;
+		private bool _hasCachedSeparationDirection;
+		private Vector3 _cachedSeparationDirection;
+		private float _nextSeparationRefreshTime;
 
 		public void Activate(Survivor survivor)
 		{
@@ -61,6 +65,7 @@ namespace SimpleFPS
 			RestoreCollisionPairs();
 			ActiveSeparators.Remove(this);
 			_isRegistered = false;
+			InvalidateSeparationCache();
 		}
 
 		public bool HasSeparation()
@@ -96,7 +101,10 @@ namespace SimpleFPS
 			}
 
 			if (needsRefresh)
+			{
 				RefreshCollisionPairs();
+				InvalidateSeparationCache();
+			}
 		}
 
 		private void OnValidate()
@@ -105,6 +113,7 @@ namespace SimpleFPS
 			DesiredDistance = Mathf.Clamp(DesiredDistance, 0.01f, Radius);
 			PushSpeed = Mathf.Max(0f, PushSpeed);
 			MaxNeighbors = Mathf.Max(1, MaxNeighbors);
+			RefreshInterval = Mathf.Max(0f, RefreshInterval);
 		}
 
 		private void ActivateShared()
@@ -119,9 +128,32 @@ namespace SimpleFPS
 			}
 
 			RefreshCollisionPairs();
+			InvalidateSeparationCache();
 		}
 
 		private Vector3 GetSeparationDirection()
+		{
+			if (_isRegistered == false || IsAlive() == false)
+			{
+				_cachedSeparationDirection = Vector3.zero;
+				_hasCachedSeparationDirection = true;
+				return Vector3.zero;
+			}
+
+			float interval = Mathf.Max(0f, RefreshInterval);
+			if (_hasCachedSeparationDirection == false ||
+			    interval <= 0f ||
+			    Time.timeSinceLevelLoad >= _nextSeparationRefreshTime)
+			{
+				_cachedSeparationDirection = CalculateSeparationDirection();
+				_hasCachedSeparationDirection = true;
+				ScheduleNextSeparationRefresh(interval);
+			}
+
+			return _cachedSeparationDirection;
+		}
+
+		private Vector3 CalculateSeparationDirection()
 		{
 			if (_isRegistered == false || IsAlive() == false)
 				return Vector3.zero;
@@ -172,6 +204,24 @@ namespace SimpleFPS
 				return Vector3.zero;
 
 			return awaySum.normalized;
+		}
+
+		private void ScheduleNextSeparationRefresh(float interval)
+		{
+			if (interval <= 0f)
+			{
+				_nextSeparationRefreshTime = 0f;
+				return;
+			}
+
+			_nextSeparationRefreshTime = Time.timeSinceLevelLoad + UnityEngine.Random.Range(interval * 0.75f, interval * 1.25f);
+		}
+
+		private void InvalidateSeparationCache()
+		{
+			_hasCachedSeparationDirection = false;
+			_cachedSeparationDirection = Vector3.zero;
+			_nextSeparationRefreshTime = 0f;
 		}
 
 		private bool ShouldSeparateFrom(CharacterSeparation other)

@@ -4,7 +4,7 @@
 
 Zombies are simple hostile characters designed to scale to high counts. They should be cheaper than survivors while still spreading through the map, reacting to noise, attacking survivors, and creating pressure that players cannot avoid by standing on props or ledges.
 
-The global spawn and difficulty system is documented in `Docs/ZombieOrchestrator.md`.
+The global spawn and difficulty system is documented in `Docs/ZombieOrchestrator.md`. The traversal design history and failed approaches are documented in `Docs/ZombieAIDesignHistory.md`.
 
 ## Design Principles
 
@@ -129,7 +129,7 @@ Rules:
 - Prefer wander points that move away from nearby zombies.
 - Use `CharacterSeparation` only as the close-range anti-overlap layer.
 - If a survivor is detected, switch to Attacking.
-- If suspicious sound or impact stimulus is received, switch to Investigating.
+- If suspicious sound or impact stimulus is received while no live survivor target is being chased, switch to Investigating.
 
 Idle spread should slowly diffuse zombie clusters through roads, alleys, and rooms. Candidate sampling is deliberately small and staggered so idle movement remains cheap.
 
@@ -157,6 +157,7 @@ Rules:
 - Move through the shared explicit-goal routing policy.
 - Alert nearby zombies to the target position.
 - Periodically reconsider direct targets using `AttackRetargetInterval`.
+- Ignore suspicious sound and bullet-impact investigation stimuli while the current survivor target is alive.
 - Apply melee damage inside `ZombieStats.AttackRange`.
 - If the target dies and no other direct target exists, switch to Idle.
 - If the living target escapes detection, investigate its last known position immediately.
@@ -183,82 +184,85 @@ Rules:
 
 ## Explicit-Goal Routing
 
-Investigating, Attacking, and Hunting all have a concrete world-space goal. They share one unified movement policy in `BuildExplicitGoalMoveInput`. The **NavMesh is the spine** for all horizontal travel — it crosses terrain levels through ramp (height-change road) tiles, enters buildings through doors, and avoids obstacles. **Climbing is a bounded overlay**, not a competing mode, with exactly two triggers, each individually capped so a zombie never scales a structure it could have walked around or up:
+Investigating, Attacking, and Hunting all have a concrete world-space goal. Normal walking still uses `CharacterNavigator` and NavMesh corners. Climbing is not represented as NavMesh links or special NavMesh areas. Zombies use registered **climb surfaces** for terrain/building-style traversal, plus a separate road-only direct chase mode for nearby visible survivors.
 
-1. **Spine.** Set the navigator destination to the goal itself and follow it. The navigator's path-following plus midpoint-chaining gets the zombie as close as the mesh allows, even on long, winding interior routes (up a tower's internal ramp, across a floor, to the foot of a perch). The spine is **not** gated on `TryFindReachablePoint` returning a complete route: a long winding interior path can exceed `NavMesh.CalculatePath`'s node budget, and treating that as "unreachable" is exactly what used to send zombies climbing the *outside* of a building they could have walked up.
-2. **Terrain-ledge shortcut (climb up a cliff instead of detouring to a far ramp).** Only when the goal is on a higher terrain level than the zombie (read from the height map via `ZombieTerrain`) and the NavMesh ramp route is a meaningful detour (`route length > direct distance × DirectRouteLengthMultiplier`, or there is no complete route at all). The zombie then navigates to the **base** of the nearest single-level cliff between it and the goal and climbs it. Because the height generator guarantees neighbours differ by at most one level, that cliff is a single `HeightLevelWorldUnits` step, open-air and (by authoring) overhang-free — a bounded, safe climb. After cresting, the route clears and the policy re-evaluates from the new, higher level, chaining one ledge at a time for multi-level climbs. See `ZombieTerrain`.
-3. **Final-approach climb (reach an off-mesh perch).** When the NavMesh can get no closer and the goal sits above the zombie (a survivor on a crate/box/platform, indoors or out), climb the last stretch straight up toward it. `ShouldClimbTowardGoal` caps this at the goal's own height, so the zombie rises onto the perch but never overshoots up onto a roof above it.
+How it works:
 
-Route decisions are cached for `ExplicitGoalRouteRefreshInterval`; the expensive NavMesh/height resolution does not run every tick.
+1. **Normal route first for non-road goals.** The navigator calculates the ordinary walking path to the explicit goal. If walking is the best option, the zombie follows path corners exactly like before.
+2. **Terrain ledge shortcuts.** `ZombieOrchestrator` builds broad climbable face segments from `WorldHeightSnapshot` for every non-walkable ledge. When the direct line to the goal crosses one of those generated faces and the normal NavMesh path is at least `TerrainClimbShortcutMinPathSavings` metres longer than direct movement, the zombie ignores the ramp detour and takes the generated ledge face instead. While still outside `ClimbSurfaceEngageDistance`, it closes on the direct-line approach point at that face; once close enough, it climbs or drops through the face toward the survivor/goal. This applies to investigation targets too, so sound and bullet-impact stimuli can still pull zombies over ledges instead of sending them across the map to the nearest ramp. Walkable ledges and ramp road tiles are skipped because ordinary NavMesh already handles them.
+3. **Road direct chase.** When a zombie has a directly sensed survivor target, or an explicit visible investigation/last-known goal, the goal resolves to a road cell in `WorldGridSnapshot`, and flat distance is within `RoadDirectMaxDistance`, the zombie ignores path corners and walks directly toward it. The zombie itself does not have to be on a road cell, so it can step from a nearby prop/navmesh island back into street-prop chase behavior. The direct sensor hit is trusted as the visibility gate; non-sensed explicit points still use a world ray, so a blocker such as a pole or wall prevents road-direct and lets normal pathing go around. In this road-only mode it may climb local blockers such as cars, trucks, crates, and street fence lips up to `RoadDirectMaxObstacleHeight` metres. A candidate street-obstacle landing must either be on the same support object as the goal or make flat-distance progress toward the goal, which prevents zombies from vaulting onto a wrong smaller car that is farther from the survivor. If the zombie is already stranded on a different prop support than the goal, candidate landings on that wrong support are rejected so it first walks/drops toward the useful ground or target prop. If the zombie becomes higher than the goal by more than `RoadDirectClimbMaxZombieHeightAboveTarget`, road direct chase keeps walking but stops climbing, so it drops back down instead of living on the prop.
+4. **Rescue climbs.** Props and buildings can register climb surfaces through `ZombieClimbableSurface`. These are normally `Rescue` surfaces: zombies ignore them during ordinary movement, but once an explicit survivor target is elevated and the navigator has already reached the closest reachable ground (or reports the target unreachable), the zombie may climb a nearby registered face whose top height matches the target within `RescueLandingHeightTolerance` and whose landing point is within `RescueLandingFlatTolerance` of the target. Use these for props on building/ledge tiles where street direct chase is intentionally unavailable.
+5. **Explicit-goal stuck fallback.** If a zombie is already stranded off NavMesh or on a tiny elevated NavMesh island and has an explicit goal (survivor, overtime target, sound, or bullet-impact investigation), it walks directly toward that goal without starting a generic climb. This lets it step/drop back to useful ground and then re-evaluate through the normal road/surface/path rules. If the goal has no useful flat direction, it falls back to the idle random unstuck direction.
+6. **Idle stuck fallback.** If there is no visible survivor and an idle zombie is off NavMesh or on a tiny elevated NavMesh island (`StuckSmallIslandRadius`), it walks in a random direction for a short time. This is deliberately simple: it is just a way to fall off a prop and return to normal thinking.
 
-`MaxDirectTraversalDistance` is a hard leash on the **climb** portion only (the spine's NavMesh approach is unleashed, so a zombie can path a long way to a cliff base and then do a short, bounded climb). If the straight-line distance to the climb goal exceeds this, the zombie holds rather than climbing.
+If no generated or prefab-authored climb surfaces exist, zombies still use ordinary NavMesh walking and melee. Street props are handled by road direct chase only when there is a nearby visible survivor.
 
-Terrain height is supplied by `ZombieTerrain`, a state-authority-only service that the `ZombieOrchestrator` populates with the generated `WorldHeightSnapshot`. If no snapshot is available (flat map, generation not finished, or no height generator), `ZombieTerrain.HasSnapshot` is false and zombies fall back to spine + final-approach climb only — which still reaches every target, just without the cliff shortcut.
+### Authoring contract (no cheese)
 
-Configurability:
+A zombie reaches a survivor given that every survivor-reachable elevated place has either ordinary NavMesh access, a registered climb surface whose landing height matches that place, or is a street obstacle within road direct chase range and visibility. Terrain ledges are automatic. Reusable tall props and buildings still opt in once at the prefab/root level with `ZombieClimbableSurface`; ordinary street cars/crates/fence lips are expected to be handled by road direct chase without per-prop authoring.
 
-- `DirectRouteLengthMultiplier` is the **ramp-vs-cliff preference**: low makes zombies eager to climb a cliff rather than walk to a ramp; high makes them prefer ramps unless the detour is large. It no longer enables climbing arbitrary geometry — climbing is gated by the height map.
-- `MaxDirectTraversalDistance` caps how far the climb portion may reach.
-- `ReachablePointSampleDistance` controls how far around a goal/ledge-base the approach search may snap.
-- `ExplicitGoalRouteRefreshInterval` controls route resolution cost for moving targets.
+### Surface / authoring setup
 
-### Reachability contract (no cheese)
+- Terrain ledge climb surfaces are generated automatically from `WorldHeightSnapshot` by `ZombieClimbSurfaces.BuildTerrain`, called by `ZombieOrchestrator.RefreshClimbSurfaces`. The generated face sits on the ledge tile center line where the low and high halves meet; corner ledges generate two half-length faces for their actual exposed sides.
+- Walkable ledges (stairs / gentle ramps flagged `AllowsTraversalWithoutRoad`) get no climb surface because both factions can already walk them.
+- Perch props such as crates, dumpsters, fences, balconies, and roof access points on building/ledge tiles can add `ZombieClimbableSurface` on the reusable prefab root when they need reliable rescue climbing. Street cars/trucks normally do not need this component.
+- Roof-capable building prefabs should add `ZombieClimbableSurface` on the building root if players can reach the roof and zombies must be able to follow. Keep those surfaces `Rescue` unless the building exterior should also be used as a normal shortcut.
+- `ZombieClimbableSurface` builds four climb faces from child collider bounds by default. If a prefab's collider bounds are too broad or too narrow, enable `UseManualLocalBounds` and size the local box to the climbable volume.
 
-The policy guarantees a zombie always reaches a survivor *given an authoring contract*: every survivor-reachable perch must have NavMesh at its foot within climb-cap reach, ledges/perches must have no climb-blocking overhang, and ramp tiles must bake as walkable NavMesh. Cross-level survivors are reached by ramps (spine) or a direct cliff climb (shortcut); off-mesh perches by the final-approach climb. Building/structure verticality is **never** treated as a terrain ledge, so zombies do not scale building exteriors when a NavMesh route in/up exists — which is what kept them off the watchtower overhang.
+Configurable terrain-surface knobs live on `ZombieOrchestrator` (`BuildTerrainClimbSurfaces`, `TerrainClimbShortcutMinPathSavings`, `TerrainClimbSurfaceWidthFactor`, `TerrainClimbLandingInset`). Runtime behavior knobs live on `ZombieAI` (`UseClimbSurfaces`, `UseTerrainShortcutClimbs`, `UseRescueClimbs`, `ClimbSurfaceEngageDistance`, `ClimbDirectApproachDistance`, `ExplicitGoalClimbRefreshInterval`, `ClimbRouteSideTolerance`, `ClimbMinRise`, `RescueMinTargetHeight`, `RescueLandingHeightTolerance`, `RescueLandingFlatTolerance`, `ClimbMaxDuration`, `ClimbMantleMaxSnapHeight`, `ClimbMantleMaxHorizontalSnapDistance`, `ClimbSpeedMultiplier`, `ClimbCommitDuration`, `UseRoadDirectMovement`, `RoadDirectMaxDistance`, `RoadDirectMaxObstacleHeight`, `RoadDirectClimbMaxZombieHeightAboveTarget`, `RoadDirectClimbMinRise`, `RoadDirectClimbProbeDistance`, `RoadDirectClimbMaxHeight`, `RoadDirectClimbLandingInset`, `RoadDirectClimbMinSurfaceNormalY`, `StuckSmallIslandRadius`). `ClimbDirectApproachDistance` limits nearby rescue climb searches, while terrain shortcut ledges are searched along the full direct segment to the explicit goal. `ExplicitGoalClimbRefreshInterval` throttles the expensive surface scan / approach-validation step per zombie and is jittered so hordes do not all refresh on the same tick. `TerrainClimbLandingInset`, `ZombieClimbableSurface.LandingInset`, and `RoadDirectClimbLandingInset` control how far inward the mantle endpoint is placed.
 
-## Direct Traversal And Climbing
+## Climb Execution
 
-Direct traversal is deliberately crude and threatening:
+Once `BuildExplicitGoalMoveInput` commits to a registered climb surface or road direct chase commits to a street-obstacle mantle, `ZombieAI.WantsToClimb` drives the ascent and `ZombieCharacter` turns it into movement:
 
-- Walking toward a lower goal naturally drops the zombie from ledges.
-- A single forward raycast at approximately knee height in front of a directly moving zombie detects walls, low props, and ledge faces and enables climbing.
-- Climb and mantle probes ignore colliders that belong to zombies or survivors. Packed hordes should press against each other through ordinary separation, not mistake another character for climbable geometry or hoist onto one.
-- A nearby higher goal also enables climbing.
-- `ShouldClimbTowardGoal` caps **every** climb at the goal's own height: it only returns true while the goal (a terrain-ledge top, or a survivor on a perch) is more than `ClimbStopRise` above the zombie, so the zombie crests the ledge / rises onto the crate but never overshoots up onto a roof above it. This cap wins over the climb commit timer.
-- The climb goal itself is chosen by `BuildExplicitGoalMoveInput` (see "Explicit-Goal Routing"): a terrain-ledge top for a cliff shortcut, otherwise the goal/survivor for a final approach. Direct traversal never climbs arbitrary geometry on its own — it climbs toward whichever bounded goal that policy hands it.
-- While Attacking or Hunting, a zombie that is already inside `ZombieStats.AttackRange` holds position and faces the target during attack cooldown instead of continuing to push forward. This prevents packed zombies from trying to climb the wall behind a survivor they can already hit.
-- Climb obstacle probes are capped before the current goal point. A wall behind the survivor is not treated as climbable progress toward the survivor.
-- A short commitment timer prevents the climb impulse from flickering off while the zombie rises past an obstacle edge. The commit deliberately persists across state transitions (Investigating → Attacking when the zombie crests the ledge and finally sees the survivor, for example). Resetting it on the state change would cause the climb impulse to switch off the same tick the survivor becomes visible, the zombie would drop back below the ledge, re-engage the climb on the next obstacle hit, and loop.
-- A forward/down mantle probe lets the authoritative KCC hoist the body onto the ledge once a valid top surface is reachable.
+- While climbing, `ZombieCharacter` disables gravity, scales horizontal speed by `ClimbSpeedMultiplier`, and applies an upward KCC impulse. The zombie presses horizontally into the cliff face and rises.
+- The climb goal is the surface landing point: the direct-route contact point projected to the surface top and inset slightly onto the landing side. Once the zombie is within `ClimbMantleMaxSnapHeight` vertically and `ClimbMantleMaxHorizontalSnapDistance` horizontally, it mantles directly onto that point.
+- `ZombieCharacter.MantleTo` spreads the hoist over `MantleAnimationDuration` (default `0.25s`, ease-out cubic) so the body visibly clambers up instead of teleporting. `MantleAnimationDuration = 0` reverts to the instant `KCC.SetPosition` behaviour.
+- A short commit timer (`ClimbCommitDuration`) keeps the climb impulse from flickering off across a state transition that happens mid-climb (Investigating -> Attacking when the zombie crests the ledge and finally sees the survivor, for example). Resetting it on the state change would drop the zombie back below the ledge and loop.
+- While actively climbing, investigation stimuli from shots/noise do not clear the current climb. The zombie finishes the ledge commitment first, then resumes normal target evaluation.
+- While Attacking or Hunting, a zombie already inside `ZombieStats.AttackRange` holds position and faces the target during attack cooldown instead of pushing forward, so a packed crowd does not try to scale the wall behind a survivor it can already hit. This hold is skipped for a target above the zombie that still requires climbing. A zombie actively climbing can melee a survivor directly above it (capped by the larger of attack range and `ClimbMantleMaxSnapHeight`) without canceling the climb, so a survivor on the ledge lip cannot make it hang helplessly below.
 
-Climbing is not limited to cars. It is a general ability available whenever Investigating, Attacking, or Hunting chooses direct traversal.
+A full terrain step is `HeightLevelWorldUnits` tall; the zombie scales most of it by sustained climb impulse against the cliff face, then mantles the last part onto the surface landing point.
 
-`ZombieCharacter` converts `ZombieAI.WantsToClimb` into reduced horizontal speed, disabled gravity, and upward KCC impulse. The traversal mask includes both `Default` and `MapNonVisible`, because generated world geometry can use either layer.
-
-Mantling rejects same-height ground so zombies near ledges do not repeatedly snap forward onto ordinary ground. The climb sequence pairs the knee-height obstacle probe with the mantle's forward/down probe:
-
-- While the knee probe hits a wall, the zombie's knee is still below the obstacle's top edge — keep climbing.
-- The mantle's forward/down probe checks for the top surface during the climb. It originates at `zombie.y + ClimbMantleMaxSnapHeight + 0.35`, casts down `ClimbMantleMaxSnapHeight + 1.1`, and accepts surfaces with `heightDifference` (the gap between the zombie's feet and the surface) in the `[0.08, ClimbMantleMaxSnapHeight]` range.
-
-The downward probe starts generously high so it can reliably discover the top surface. Do not require the knee ray to clear completely before allowing the mantle: the KCC capsule can stall while that ray still grazes the ledge face, causing the zombie to peek over the top and fall back down without hoisting.
-
-`ZombieCharacter.MantleAnimationDuration` (default `0.25s`) spreads the remaining displacement over multiple ticks with an ease-out cubic so the body visibly hoists onto the ledge instead of teleporting. Setting `MantleAnimationDuration = 0` reverts to the instant `KCC.SetPosition` behaviour.
-
-Useful movement tunables:
+Useful movement / climb tunables (`ZombieAI`):
 
 ```text
 StoppingDistance
 DirectMoveDistance
 ReachablePointSampleDistance
 ExplicitGoalStoppingDistance
-ExplicitGoalRouteRefreshInterval
-DirectRouteLengthMultiplier
-MaxDirectTraversalDistance
 ExplicitGoalHeightTolerance
-CanClimbDirectGoals
+UseClimbSurfaces
+UseTerrainShortcutClimbs
+UseRescueClimbs
+ClimbSurfaceEngageDistance
+ClimbDirectApproachDistance
+ExplicitGoalClimbRefreshInterval
+ClimbRouteSideTolerance
+ClimbMinRise
+RescueMinTargetHeight
+RescueLandingHeightTolerance
+RescueLandingFlatTolerance
+ClimbStuckTimeout
+ClimbMaxDuration
+ClimbCooldown
 ClimbSpeedMultiplier
-ClimbObstacleProbeDistance
 ClimbCommitDuration
 ClimbMantleMaxSnapHeight
+ClimbMantleMaxHorizontalSnapDistance
+UseRoadDirectMovement
+RoadDirectMaxDistance
+RoadDirectMaxObstacleHeight
+RoadDirectClimbMaxZombieHeightAboveTarget
+RoadDirectClimbMinRise
+RoadDirectClimbProbeDistance
+RoadDirectClimbMaxHeight
+RoadDirectClimbLandingInset
+RoadDirectClimbMinSurfaceNormalY
+StuckSmallIslandRadius
 ```
 
-The roof-raycast avoidance (`AvoidClimbingToRoofedGoals` / `RoofCheckHeight`) was removed. It was a band-aid for the old route-length-vs-direct climb flip; with climbing now gated by the height map and the NavMesh spine handling interiors, a zombie no longer scales a building exterior when a route in exists, so the roof check is unnecessary.
-
-`ExplicitGoalStoppingDistance` is treated as a final-goal/attack-position tuning value.
-While following a NavMesh path, `ZombieAI` clamps the steering-corner stop distance below
-`CharacterNavigator.CornerReachDistance`. This prevents zombies from stopping just short
-of a corner that the navigator has not advanced yet, which otherwise looks like the zombie
-is staring through a wall until another zombie bumps it forward.
+`ExplicitGoalStoppingDistance` is a final-goal/attack-position tuning value. While following a NavMesh path, `ZombieAI` clamps the steering-corner stop distance below `CharacterNavigator.CornerReachDistance`, so a zombie does not stop just short of a corner the navigator has not advanced yet (which otherwise looks like it is staring through a wall until another zombie bumps it).
 
 Recommended first-pass defaults:
 
@@ -267,26 +271,52 @@ StoppingDistance: 1.35
 DirectMoveDistance: 0.25
 ReachablePointSampleDistance: 6
 ExplicitGoalStoppingDistance: 0.2
-ExplicitGoalRouteRefreshInterval: 0.5
-DirectRouteLengthMultiplier: 1.5
-MaxDirectTraversalDistance: 40
 ExplicitGoalHeightTolerance: 0.75
-CanClimbDirectGoals: true
-ClimbSpeedMultiplier: 0.5
-ClimbObstacleProbeDistance: 1.25
+UseClimbSurfaces: true
+UseTerrainShortcutClimbs: true
+UseRescueClimbs: true
+ClimbSurfaceEngageDistance: 1.25
+ClimbDirectApproachDistance: 18
+ExplicitGoalClimbRefreshInterval: 0.2
+ClimbRouteSideTolerance: 1.5
+ClimbMinRise: 0.75
+RescueMinTargetHeight: 0.75
+RescueLandingHeightTolerance: 2.5
+RescueLandingFlatTolerance: 2.5
+ClimbStuckTimeout: 1.5
+ClimbMaxDuration: 15
+ClimbCooldown: 2
+ClimbSpeedMultiplier: 0.5   (climb rises at MoveSpeed x this; raise for a faster climb)
 ClimbCommitDuration: 0.75
 ClimbMantleMaxSnapHeight: 2.0
+ClimbMantleMaxHorizontalSnapDistance: 1.5
+UseRoadDirectMovement: true
+RoadDirectMaxDistance: 18
+RoadDirectMaxObstacleHeight: 5
+RoadDirectClimbMaxZombieHeightAboveTarget: 0.75
+RoadDirectClimbMinRise: 0.2
+RoadDirectClimbProbeDistance: 1.25
+RoadDirectClimbMaxHeight: 2.25
+RoadDirectClimbLandingInset: 0.75
+RoadDirectClimbMinSurfaceNormalY: 0.45
+StuckSmallIslandRadius: 4
 ```
 
-`ClimbMantleMaxSnapHeight` (2.0) is only the final mantle hop; a full terrain step is `HeightLevelWorldUnits` (~4), which the zombie scales by sustained climb impulse against the cliff face and then mantles the last ~2 units onto the top — the same way it already scaled taller building walls.
+Terrain surface generation defaults (`ZombieOrchestrator`):
 
+```text
+BuildTerrainClimbSurfaces: true
+TerrainClimbShortcutMinPathSavings: 4
+TerrainClimbSurfaceWidthFactor: 0.9 (x TileSize)
+TerrainClimbLandingInset: 0.75
+```
 ## Idle Off-NavMesh Recovery
 
 A zombie can finish direct traversal on a prop and then lose its goal. Idle retains one small cleanup fallback:
 
 1. Periodically sample NavMesh at the zombie's current position using `StuckSampleRadius`.
-2. Treat the zombie as elevated when the sample fails or the sampled point is more than `StuckMinHeightAboveNavMesh` below it.
-3. While elevated and Idle, move in a random horizontal direction for `StuckRandomWanderDurationMin..Max`.
+2. Treat the zombie as elevated when the sample fails, the sampled point is more than `StuckMinHeightAboveNavMesh` below it, it is on a tiny elevated NavMesh island, or it is standing on a small support collider such as a car/truck/prop top.
+3. While elevated and Idle, move in a random horizontal direction for `StuckRandomWanderDurationMin..Max`; if still elevated, keep choosing new random directions until it falls back to normal ground.
 4. Resume ordinary idle wandering once the zombie returns to NavMesh-covered ground.
 
 Recommended defaults:
@@ -299,7 +329,7 @@ StuckRandomWanderDurationMin: 1
 StuckRandomWanderDurationMax: 2.5
 ```
 
-This is intentionally idle-only. Zombies with an explicit goal use the general route-versus-direct policy instead.
+This is intentionally idle-only. Zombies with an explicit goal use the explicit-goal routing policy described above instead.
 
 ## Alerting
 
@@ -390,6 +420,8 @@ Keep zombie AI cheap:
 - no cover checks,
 - no weapon logic,
 - cached explicit-goal routing,
+- cached and jittered climb-surface decisions (`ExplicitGoalClimbRefreshInterval`),
+- cached character separation direction (`CharacterSeparation.RefreshInterval`),
 - staggered target updates,
 - one-hop capped alerts,
 - no path calculations while Idle unless wandering,

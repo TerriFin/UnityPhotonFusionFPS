@@ -62,6 +62,7 @@ public float Radius = 0.8f;
 public float DesiredDistance = 0.65f;
 public float PushSpeed = 1.5f;
 public int MaxNeighbors = 8;
+public float RefreshInterval = 0.1f;
 ```
 
 The component should expose a method similar to:
@@ -172,14 +173,17 @@ Filtering happens while iterating the registry:
 
 At prototype scale, a flat registry is acceptable for survivors. For larger zombie counts, the same component can later switch to a grid or spatial buckets without changing AI code.
 
+`RefreshInterval` throttles the registry scan per character. The component caches the last separation direction and refreshes it on a jittered interval, so a large horde does not perform an `active separators x active separators` scan every simulation tick. `RefreshInterval = 0` restores per-call calculation.
+
 ## Future Zombie Use
 
-Zombies should eventually use the same separation component with zombie-tuned values:
+Zombies use the same separation component with zombie-tuned values:
 
 ```csharp
 Radius: smaller
 PushSpeed: lower
 MaxNeighbors: lower
+RefreshInterval: 0.1 or higher
 ```
 
 Zombie-vs-zombie phasing should reduce horde traffic jams. Zombie-vs-survivor collision should remain solid enough for attacks and body pressure.
@@ -193,7 +197,7 @@ Zombie-vs-zombie phasing should reduce horde traffic jams. Zombie-vs-survivor co
 5. `MoveSurvivor(...)` adds separation velocity before calling `KCC.Move(...)`.
 6. The settled-character skip checks `HasSeparationIntent()` so overlap/separation wakes idle characters.
 7. Same-team survivor phasing uses `SimpleKCC.ResolveCollision` plus pairwise `Physics.IgnoreCollision(...)`; enemy teams keep normal collision.
-8. Later, add the same component to zombie prefabs with `Kind = Zombie`.
+8. Zombies use the same component with `Kind = Zombie`.
 
 ## Testing Checklist
 

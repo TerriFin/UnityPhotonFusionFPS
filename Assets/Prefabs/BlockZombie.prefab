@@ -1234,17 +1234,30 @@ MonoBehaviour:
   MaxYawDegreesPerTick: 6
   ReachablePointSampleDistance: 8
   ExplicitGoalStoppingDistance: 0.66
-  ExplicitGoalRouteRefreshInterval: 0.5
-  DirectRouteLengthMultiplier: 1.6
-  MaxDirectTraversalDistance: 20
   ExplicitGoalHeightTolerance: 0.75
-  CanClimbDirectGoals: 1
+  UseClimbSurfaces: 1
+  UseTerrainShortcutClimbs: 1
+  UseRescueClimbs: 1
   ClimbSpeedMultiplier: 0.45
-  ClimbObstacleProbeDistance: 1.25
+  ClimbSurfaceEngageDistance: 1.25
   ClimbCommitDuration: 0.75
   ClimbMantleMaxSnapHeight: 1.75
-  AvoidClimbingToRoofedGoals: 1
-  RoofCheckHeight: 20
+  ClimbDirectApproachDistance: 18
+  ClimbRouteSideTolerance: 1.6
+  ClimbMinRise: 0.75
+  RescueMinTargetHeight: 0.75
+  RescueLandingHeightTolerance: 2.5
+  ClimbStuckTimeout: 1.5
+  ClimbMaxDuration: 15
+  ClimbCooldown: 2
+  UseEmergencyObstacleClimbs: 1
+  EmergencyClimbStuckTime: 1.25
+  EmergencyClimbMinProgress: 0.35
+  EmergencyClimbMinRise: 0.2
+  EmergencyClimbProbeDistance: 1.25
+  EmergencyClimbMaxHeight: 2.25
+  EmergencyClimbLandingInset: 0.75
+  EmergencyClimbMinSurfaceNormalY: 0.45
   MaxAlertRecipients: 16
   AlertCooldown: 2
   StuckSampleRadius: 0.6
@@ -1291,8 +1304,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   RepathInterval: 0.4
-  CornerReachDistance: 0.66
+  CornerReachDistance: 0.5
   DestinationReachDistance: 0.66
+  VerticalReachDistance: 2
   DestinationChangeRepathDistance: 0.33
   SampleMaxDistance: 2
   ReachablePointSampleMaxDistance: 8

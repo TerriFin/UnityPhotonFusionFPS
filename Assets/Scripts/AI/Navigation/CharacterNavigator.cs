@@ -63,11 +63,15 @@ namespace SimpleFPS
 		private int _cornerIndex;
 		private bool _hasDestination;
 		private bool _hasPath;
+		private bool _hasCompletePathToDestination;
+		private float _currentPathLength;
 		private bool _isDestinationReached;
 		private bool _isDestinationUnreachable;
 
 		public bool HasDestination => _hasDestination;
 		public bool HasPath => _hasPath;
+		public bool HasCompletePathToDestination => _hasCompletePathToDestination;
+		public float CurrentPathLength => _currentPathLength;
 		public bool IsPathPending => false;
 		public bool IsDestinationReached => _isDestinationReached;
 		// True when the saved order has no complete path and is inside UnreachableDistance — the last stretch is
@@ -92,6 +96,8 @@ namespace SimpleFPS
 			_sampledDestination = destination;
 			_hasDestination = true;
 			_hasPath = false;
+			_hasCompletePathToDestination = false;
+			_currentPathLength = 0f;
 			_isDestinationReached = false;
 			_isDestinationUnreachable = false;
 			_cornerIndex = 0;
@@ -103,6 +109,8 @@ namespace SimpleFPS
 		{
 			_hasDestination = false;
 			_hasPath = false;
+			_hasCompletePathToDestination = false;
+			_currentPathLength = 0f;
 			_isDestinationReached = false;
 			_isDestinationUnreachable = false;
 			_cornerIndex = 0;
@@ -113,6 +121,8 @@ namespace SimpleFPS
 		public void ForceRepath()
 		{
 			_hasPath = false;
+			_hasCompletePathToDestination = false;
+			_currentPathLength = 0f;
 			_isDestinationUnreachable = false;
 			_cornerIndex = 0;
 			_corners = Array.Empty<Vector3>();
@@ -128,6 +138,8 @@ namespace SimpleFPS
 			if (_isDestinationReached)
 			{
 				_hasPath = false;
+				_hasCompletePathToDestination = false;
+				_currentPathLength = 0f;
 				_isDestinationUnreachable = false;
 				return;
 			}
@@ -276,6 +288,8 @@ namespace SimpleFPS
 				_path = new NavMeshPath();
 
 			_hasPath = false;
+			_hasCompletePathToDestination = false;
+			_currentPathLength = 0f;
 			_corners = Array.Empty<Vector3>();
 			_cornerIndex = 0;
 			_isDestinationUnreachable = false;
@@ -302,6 +316,8 @@ namespace SimpleFPS
 				{
 					_corners = _path.corners;
 					_hasPath = true;
+					_hasCompletePathToDestination = true;
+					_currentPathLength = GetPathLength(_path);
 					return;
 				}
 			}
@@ -372,6 +388,8 @@ namespace SimpleFPS
 
 				_corners = _path.corners;
 				_hasPath = true;
+				_hasCompletePathToDestination = false;
+				_currentPathLength = GetPathLength(_path);
 				return true;
 			}
 
@@ -390,6 +408,8 @@ namespace SimpleFPS
 			if (_cornerIndex >= _corners.Length)
 			{
 				_hasPath = false;
+				_hasCompletePathToDestination = false;
+				_currentPathLength = 0f;
 			}
 		}
 

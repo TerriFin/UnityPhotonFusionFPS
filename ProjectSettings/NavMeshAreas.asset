@@ -11,7 +11,7 @@ NavMeshProjectSettings:
     cost: 1
   - name: Jump
     cost: 2
-  - name: 
+  - name: ZombieClimb
     cost: 1
   - name: 
     cost: 1
@@ -77,8 +77,8 @@ NavMeshProjectSettings:
     agentHeight: 2.25
     agentSlope: 45
     agentClimb: 0.6
-    ledgeDropHeight: 1
-    maxJumpAcrossDistance: 2
+    ledgeDropHeight: 8
+    maxJumpAcrossDistance: 8
     minRegionArea: 2
     manualCellSize: 0
     cellSize: 0.16666667

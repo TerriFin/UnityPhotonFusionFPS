@@ -7,13 +7,11 @@ feel free to read, might give good context :)
  - World gen should stay layered: height -> roads -> buildings -> loot -> special encounters.
 
 ## To-do list:
-- Overall polishing of survivor AI (at this point all behaviors should be in, can polish)
 - Rework weapon system (all characters "have" all weapons at the same time, unnecessary)
 - Pickup system (no loot respawning, drop loot when dying, zombies can drop with a small chance?)
 - Loot distribution system (toggleable setting for non-combat AI? Player can "take" weapon from non-controlled characters?)
 - Large, detailed points of interests
 - Hostile, non-recruitable survivors
-- Garrison system for non-controlled human AIs (pre-set waypoints within structures? Solves multi-level structure problem?)
 - Actual models for everything
 
 ## Nice to have ideas:
