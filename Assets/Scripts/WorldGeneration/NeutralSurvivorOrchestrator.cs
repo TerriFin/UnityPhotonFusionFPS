@@ -438,7 +438,7 @@ namespace SimpleFPS
 				if (candidate.Health == null || candidate.Health.IsAlive == false)
 					continue;
 
-				float distanceSqr = FlatDistanceSqr(candidate.transform.position, neutral.transform.position);
+				float distanceSqr = (candidate.transform.position - neutral.transform.position).sqrMagnitude;
 				if (distanceSqr > radiusSqr || distanceSqr >= closestDistanceSqr)
 					continue;
 

@@ -17,6 +17,7 @@ namespace SimpleFPS
 		public int MatchStartSeedOffset = 7919;
 		public float SpawnNavMeshSampleDistance = 1.5f;
 		public float MinimumSpawnConnectedNavMeshRadius = 8f;
+		[Tooltip("3D world-space radius required for recruitment. Survivors directly above or below each other are not considered close.")]
 		public float RecruitmentRadius = 3f;
 		public float RecruitmentCheckInterval = 0.25f;
 

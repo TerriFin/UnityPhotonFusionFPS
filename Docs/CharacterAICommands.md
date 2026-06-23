@@ -88,6 +88,8 @@ Move assignment:
 - Once the destination is reached, the move point remains a persistent guard anchor. Combat, investigation, pickup collection, or recruiting may temporarily pull the survivor away, but it returns to that anchor afterward.
 - Does not directly move transforms.
 
+Every starting player-owned survivor receives a `MoveToPoint` assignment anchored at its individual spawn position immediately after spawning. It is normally satisfied on the first AI tick, but remains the survivor's persistent default guard order. This gives an untouched survivor a real order for temporary-behavior returns and for neutral survivors recruited by that AI survivor to inherit.
+
 `SurvivorNonCombatAI` can consume `SurvivorAIShooting` input when a direct target has line of fire. Hold position can aim/fire while standing still unless the weapon/fire mode is `HoldFire`. Movement assignments should continue their movement order while aiming/firing when possible, so survivors can return fire during long moves or while following. If shooting has no direct target, assignments fall back to sensor look input only when allowed by settings and when that does not break their movement responsibility. Shooting input can hold `Fire` for configurable bursts, so automatic weapons fire differently from semi-auto weapons without special AI weapon code.
 
 When movement and shooting both want look control, direct combat aim has priority over path-corner look while the target has line of fire. Movement still uses the same `MoveDirection` input, so the character keeps advancing instead of stopping just because it is firing.

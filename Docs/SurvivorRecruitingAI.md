@@ -21,7 +21,7 @@ SurvivorNonCombatAI
 
 ## Who Performs The Recruitment
 
-This component does **not** perform the ownership/team transfer. The authoritative recruitment is still done by `NeutralSurvivorOrchestrator` (see `NeutralSurvivors.md`): on a periodic check, any player-owned survivor within `NeutralSurvivorSpawnSettings.RecruitmentRadius` of a neutral recruits it.
+This component does **not** perform the ownership/team transfer. The authoritative recruitment is still done by `NeutralSurvivorOrchestrator` (see `NeutralSurvivors.md`): on a periodic check, any player-owned survivor within the spherical 3D `NeutralSurvivorSpawnSettings.RecruitmentRadius` of a neutral recruits it. The transfer check includes Y distance, so survivors cannot recruit through floors.
 
 `SurvivorRecruitingAI` only provides the missing piece: it moves an AI survivor toward a sensed neutral so it enters that radius. When the orchestrator flips the target's ownership, the target's `IsNeutral` becomes false, the recruiting behavior detects the target is no longer valid, and the survivor returns to its task.
 
@@ -110,7 +110,7 @@ Notes:
 
 ## Recruited Survivor's Order
 
-When the recruiter is an unpossessed player survivor, the freshly recruited survivor inherits the recruiter's current player-given assignment through the existing `Gameplay.ApplyRecruitmentOrder` -> `SurvivorNonCombatAI.CreateEquivalentAssignmentFor` path. Because recruiting is a temporary deviation that never changes the recruiter's underlying assignment, the recruited survivor gets the same hold/move/patrol/follow order the recruiter had. (If the recruiter was the possessed player, the recruit follows the player instead.)
+When the recruiter is an unpossessed player survivor, the freshly recruited survivor inherits the recruiter's current player-given assignment through the existing `Gameplay.ApplyRecruitmentOrder` -> `SurvivorNonCombatAI.CreateEquivalentAssignmentFor` path. Because recruiting is a temporary deviation that never changes the recruiter's underlying assignment, the recruited survivor gets the same hold/move/patrol/follow order the recruiter had. Starting player-owned survivors receive a persistent move/guard anchor at their spawn position, so an otherwise untouched AI survivor passes that spawn order to its recruit instead of creating a hold order at the recruitment spot. (If the recruiter was the possessed player, the recruit follows the player instead.)
 
 ## Network Model
 

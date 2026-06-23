@@ -589,6 +589,11 @@ namespace SimpleFPS
 				return false;
 			if (IsElevatedOffNavMesh() == false && IsOnSmallElevatedNavMeshIsland() == false)
 				return false;
+			if (HasCompleteNavMeshPathToGoalHeight(
+				    transform.position,
+				    targetPosition,
+				    Mathf.Max(0.1f, ExplicitGoalHeightTolerance)))
+				return false;
 
 			if (_climbingSurface && transform.position.y - targetPosition.y > Mathf.Max(0f, RoadDirectClimbMaxZombieHeightAboveTarget))
 			{
@@ -607,6 +612,11 @@ namespace SimpleFPS
 			if (_climbingSurface || IsClimbing)
 				return false;
 			if (IsStuckElevatedCached() == false)
+				return false;
+			if (HasCompleteNavMeshPathToGoalHeight(
+				    transform.position,
+				    goal,
+				    Mathf.Max(0.1f, ExplicitGoalHeightTolerance)))
 				return false;
 
 			ClearNavigator();
@@ -836,11 +846,6 @@ namespace SimpleFPS
 			}
 
 			return true;
-		}
-
-		private bool HasCompleteNavMeshPath(Vector3 start, Vector3 goal)
-		{
-			return HasCompleteNavMeshPathToGoalHeight(start, goal, float.PositiveInfinity);
 		}
 
 		private bool HasCompleteNavMeshPathToGoalHeight(Vector3 start, Vector3 goal, float maxGoalHeightDelta)

@@ -66,7 +66,7 @@ On recruitment:
 8. Temporary neutral-only stat overrides are restored to the survivor prefab's normal values.
 9. The survivor receives a post-recruitment order:
    - if the recruiter is player-possessed, follow the recruiter,
-   - if the recruiter is AI-controlled and had a player move order, follow the recruiter,
+   - if the recruiter is AI-controlled and had a player move order, inherit the same persistent move/guard anchor,
    - if the recruiter is AI-controlled and had an assigned patrol/defend area, inherit the same area,
    - otherwise inherit the closest equivalent current non-combat assignment.
 
@@ -127,7 +127,7 @@ Rules:
 - AI-controlled player survivors recruit in just the same way as the player possessed survivor; they also actively walk to sensed neutral survivors via `SurvivorRecruitingAI` (see `SurvivorRecruitingAI.md`),
 - the recruiting survivor must be alive,
 - the neutral survivor must be alive,
-- recruitment happens once when the player survivor enters radius.
+- recruitment happens once when the player survivor enters the spherical 3D radius. Vertical separation counts, so survivors on stacked floors do not recruit through ceilings.
 
 The proximity check can live on:
 

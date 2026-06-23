@@ -161,6 +161,7 @@ for i in 0 .. StartingCharacterCount - 1:
     character = Runner.Spawn(SurvivorPrefab, position, basePoint.rotation, playerRef)
     character.GetComponent<Survivor>().OwnerRef       = playerRef
     character.GetComponent<Survivor>().CharacterIndex = i
+    character.SetAI(MoveToPoint(position)) // persistent default spawn guard anchor
 
 playerData.ActiveCharacterIndex = 0
 playerData.AliveCharacterMask   = (1L << StartingCharacterCount) - 1L  // all N bits set

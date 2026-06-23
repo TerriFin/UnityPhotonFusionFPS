@@ -762,13 +762,21 @@ namespace SimpleFPS
 				int capturedIndex = i;
 				Vector3 position = spawnPoint.position + offsets[i];
 
-				Runner.Spawn(SurvivorPrefab, position, spawnPoint.rotation, playerRef,
+				Survivor spawnedSurvivor = Runner.Spawn(SurvivorPrefab, position, spawnPoint.rotation, playerRef,
 					(runner, obj) =>
 					{
 						var character = obj.GetComponent<Survivor>();
 						character.OwnerRef       = playerRef;
 						character.CharacterIndex = capturedIndex;
 					});
+
+				if (spawnedSurvivor != null)
+				{
+					spawnedSurvivor.SetAI(SurvivorNonCombatAI.MoveTo(
+						spawnedSurvivor,
+						position,
+						spawnedSurvivor.NonCombatAISettings));
+				}
 			}
 
 			var playerData = PlayerData.Get(playerRef);

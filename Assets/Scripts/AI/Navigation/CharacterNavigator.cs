@@ -400,7 +400,7 @@ namespace SimpleFPS
 		{
 			float reachDistanceSqr = CornerReachDistance * CornerReachDistance;
 			while (_hasPath && _cornerIndex < _corners.Length &&
-			       FlatDistanceSqr(currentPosition, _corners[_cornerIndex]) <= reachDistanceSqr)
+			       (currentPosition - _corners[_cornerIndex]).sqrMagnitude <= reachDistanceSqr)
 			{
 				_cornerIndex++;
 			}
@@ -418,7 +418,18 @@ namespace SimpleFPS
 			Vector3 target = _sampledDestination;
 			bool horizontalReached = FlatDistanceSqr(currentPosition, target) <= DestinationReachDistance * DestinationReachDistance;
 			bool verticalReached = Mathf.Abs(currentPosition.y - target.y) <= Mathf.Max(0.01f, VerticalReachDistance);
-			_isDestinationReached = horizontalReached && verticalReached;
+			_isDestinationReached = horizontalReached && verticalReached && IsCloseDestinationNavMeshSegmentClear(currentPosition, target);
+		}
+
+		private bool IsCloseDestinationNavMeshSegmentClear(Vector3 currentPosition, Vector3 target)
+		{
+			float sampleDistance = Mathf.Max(0.01f, SampleMaxDistance);
+			if (NavMesh.SamplePosition(currentPosition, out var currentHit, sampleDistance, AreaMask) == false)
+				return true;
+			if (NavMesh.SamplePosition(target, out var targetHit, sampleDistance, AreaMask) == false)
+				return true;
+
+			return NavMesh.Raycast(currentHit.position, targetHit.position, out _, AreaMask) == false;
 		}
 
 		private static float FlatDistanceSqr(Vector3 a, Vector3 b)
