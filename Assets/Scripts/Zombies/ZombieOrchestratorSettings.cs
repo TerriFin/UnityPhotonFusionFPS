@@ -44,6 +44,9 @@ namespace SimpleFPS
 
 		[Header("Overtime Stats")]
 		public float OvertimeHealth = 180f;
+		[Min(0f)]
+		[Tooltip("Flat max-health bonus applied only to newly spawned overtime zombies for each completed 10 seconds of overtime. Existing zombies are not repeatedly rescaled. Set to 0 to disable progressive overtime health.")]
+		public float OvertimeNewZombieHealthIncreasePer10Seconds = 10f;
 		public float OvertimeDamage = 35f;
 		public float OvertimeMoveSpeed = 7.5f;
 
@@ -76,6 +79,7 @@ namespace SimpleFPS
 			StartAlertRadius = Mathf.Max(0f, StartAlertRadius);
 			EndAlertRadius = Mathf.Max(0f, EndAlertRadius);
 			OvertimeHealth = Mathf.Max(1f, OvertimeHealth);
+			OvertimeNewZombieHealthIncreasePer10Seconds = Mathf.Max(0f, OvertimeNewZombieHealthIncreasePer10Seconds);
 			OvertimeDamage = Mathf.Max(0f, OvertimeDamage);
 			OvertimeMoveSpeed = Mathf.Max(0f, OvertimeMoveSpeed);
 			RegionGridSize = Mathf.Max(1, RegionGridSize);

@@ -11,7 +11,6 @@ namespace SimpleFPS
 		CollectVisiblePickups = 0,
 		InvestigateSuspiciousStimuli = 1,
 		RecruitNeutralSurvivors = 2,
-		AllowCombatAIActivation = 3,
 	}
 
 	[Serializable]
@@ -165,19 +164,6 @@ namespace SimpleFPS
 			});
 		}
 
-		public void SetNearbyTeamCombatSettings(PlayerRef owner, int originCharacterIndex, bool enabled)
-		{
-			if (TryGetCommandContext(owner, originCharacterIndex, out var data, out var origin) == false)
-				return;
-
-			ForEachNearbyTeamSurvivor(owner, data, origin, originCharacterIndex, survivor =>
-			{
-				var settings = survivor.NonCombatAISettings;
-				settings.AllowCombatAIActivation = enabled;
-				survivor.SetNonCombatAISettings(settings);
-			});
-		}
-
 		public void MoveNearbyTeamToLookPoint(PlayerRef owner, int originCharacterIndex)
 		{
 			if (TryGetCommandContext(owner, originCharacterIndex, out var data, out var origin) == false)
@@ -302,25 +288,6 @@ namespace SimpleFPS
 			}
 		}
 
-		public void ApplySelectedTeamCombatSettings(PlayerRef owner, CharacterMask128 selectedCharacterMask, bool enabled)
-		{
-			if (TryGetSelectedCommandContext(owner, selectedCharacterMask, out var data, out var survivors) == false)
-				return;
-
-			foreach (var pair in survivors)
-			{
-				int characterIndex = pair.Key;
-				var survivor = pair.Value;
-
-				if (IsSelectedCommandTargetValid(data, selectedCharacterMask, characterIndex, survivor) == false)
-					continue;
-
-				var settings = survivor.NonCombatAISettings;
-				settings.AllowCombatAIActivation = enabled;
-				survivor.SetNonCombatAISettings(settings);
-			}
-		}
-
 		public void ApplySelectedTeamAISetting(PlayerRef owner, CharacterMask128 selectedCharacterMask, ESurvivorAISetting setting, bool enabled)
 		{
 			if (TryGetSelectedCommandContext(owner, selectedCharacterMask, out var data, out var survivors) == false)
@@ -357,6 +324,92 @@ namespace SimpleFPS
 				settings.WeaponPreference = preference;
 				survivor.SetCombatAISettings(settings);
 			}
+		}
+
+		public void ApplySelectedTeamCombatBehavior(
+			PlayerRef owner,
+			CharacterMask128 selectedCharacterMask,
+			ESurvivorCombatBehavior behavior)
+		{
+			if (TryGetSelectedCommandContext(owner, selectedCharacterMask, out var data, out var survivors) == false)
+				return;
+
+			foreach (var pair in survivors)
+			{
+				int characterIndex = pair.Key;
+				Survivor survivor = pair.Value;
+				if (IsSelectedCommandTargetValid(data, selectedCharacterMask, characterIndex, survivor, allowActiveCharacter: true) == false)
+					continue;
+
+				var settings = survivor.CombatAISettings;
+				settings.CombatBehavior = behavior;
+				survivor.SetCombatAISettings(settings);
+			}
+		}
+
+		public void ApplySelectedTeamRetreatMode(
+			PlayerRef owner,
+			CharacterMask128 selectedCharacterMask,
+			ESurvivorRetreatMode mode)
+		{
+			if (TryGetSelectedCommandContext(owner, selectedCharacterMask, out var data, out var survivors) == false)
+				return;
+
+			foreach (var pair in survivors)
+			{
+				int characterIndex = pair.Key;
+				Survivor survivor = pair.Value;
+				if (IsSelectedCommandTargetValid(data, selectedCharacterMask, characterIndex, survivor, allowActiveCharacter: true) == false)
+					continue;
+
+				survivor.SetRetreatMode(mode);
+			}
+		}
+
+		public bool TryValidateAssignedArea(PlayerRef owner, Vector3 center, float radius)
+		{
+			if (_gameplay.HasStateAuthority == false ||
+			    _gameplay.PlayerData.TryGet(owner, out PlayerData data) == false ||
+			    _survivorsByOwner.TryGetValue(owner, out var survivors) == false)
+			{
+				return false;
+			}
+
+			foreach (var pair in survivors)
+			{
+				Survivor survivor = pair.Value;
+				if (survivor == null || survivor.Health == null || survivor.Health.IsAlive == false)
+					continue;
+				if (data.IsCharacterAlive(pair.Key) == false)
+					continue;
+				if (SurvivorNonCombatAI.TryBuildAssignedAreaPatrolPoints(survivor, center, radius, out _))
+					return true;
+			}
+
+			return false;
+		}
+
+		public bool TryApplyRetreatAssignedArea(Survivor survivor, Vector3 center, float radius)
+		{
+			if (_gameplay.HasStateAuthority == false ||
+			    survivor == null ||
+			    survivor.Health == null ||
+			    survivor.Health.IsAlive == false ||
+			    survivor.IsActiveCharacter())
+			{
+				return false;
+			}
+			if (SurvivorNonCombatAI.TryBuildAssignedAreaPatrolPoints(survivor, center, radius, out Vector3[] patrolPoints) == false)
+				return false;
+
+			Vector3 entryPoint = patrolPoints[0];
+			var inputSource = SurvivorAICommand.AssignedArea(center, radius, entryPoint, patrolPoints).CreateInputSource(survivor);
+			if (inputSource == null)
+				return false;
+
+			survivor.SetAI(inputSource, retreatAssignment: true);
+			ClearLaneOffset(survivor);
+			return true;
 		}
 
 		private void ApplyNearbyTeamCommand(
@@ -429,13 +482,6 @@ namespace SimpleFPS
 				{
 					var settings = survivor.NonCombatAISettings;
 					settings.RecruitNeutralSurvivors = enabled;
-					survivor.SetNonCombatAISettings(settings);
-					break;
-				}
-				case ESurvivorAISetting.AllowCombatAIActivation:
-				{
-					var settings = survivor.NonCombatAISettings;
-					settings.AllowCombatAIActivation = enabled;
 					survivor.SetNonCombatAISettings(settings);
 					break;
 				}

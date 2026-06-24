@@ -125,9 +125,10 @@ public enum FireMode
 
 public enum CombatAIMode
 {
-    Defensive,
-    Passive,
+    Normal,
     Aggressive,
+    Defensive,
+    None,
 }
 
 public enum NonCombatAIMode
@@ -140,7 +141,7 @@ public struct SurvivorAISettings
 {
     public bool CollectVisiblePickups;
     public bool InvestigateSuspiciousStimuli;
-    public bool AllowCombatAIActivation;
+    public CombatAIMode CombatBehavior;
 }
 ```
 

@@ -12,6 +12,7 @@ namespace SimpleFPS
 		public GameMapIconController IconController;
 		public RectTransform SelectionBox;
 		public RectTransform AssignedAreaCircle;
+		public RectTransform HomeBaseCircle;
 		public RectTransform InputBlocker;
 		public float DragThreshold = 8f;
 		public float DoubleClickTime = 0.35f;
@@ -22,6 +23,8 @@ namespace SimpleFPS
 		public float AssignedAreaBorderThickness = 3f;
 		public Color AssignedAreaFillColor = new Color(0.3f, 0.8f, 1f, 0.15f);
 		public Color AssignedAreaBorderColor = new Color(0.3f, 0.8f, 1f, 0.9f);
+		public Color HomeBaseFillColor = new Color(0.45f, 1f, 0.45f, 0.75f);
+		public Color HomeBaseBorderColor = new Color(0.45f, 1f, 0.45f, 0.75f);
 
 		private readonly HashSet<Survivor> _selected = new();
 		private readonly List<Survivor> _selectionRemoval = new();
@@ -31,6 +34,7 @@ namespace SimpleFPS
 		private float _currentAreaRadius;
 		private bool _areaDragging;
 		private bool _areaCircleVisible;
+		private bool _editingHomeBase;
 		private Survivor _lastClickedSurvivor;
 		private float _lastClickTime;
 		// Per-frame mode flags from the spectator controller: a defeated spectator can select any team's survivor
@@ -40,6 +44,8 @@ namespace SimpleFPS
 		private bool _ignoreNextSelectionModifierRelease;
 		private Image _assignedAreaFillImage;
 		private Image _assignedAreaBorderImage;
+		private Image _homeBaseFillImage;
+		private Image _homeBaseBorderImage;
 		private Sprite _circleSprite;
 		private Sprite _ringSprite;
 
@@ -98,6 +104,8 @@ namespace SimpleFPS
 
 			EnsureSelectionBox(mapView);
 			EnsureAssignedAreaCircle(mapView);
+			EnsureHomeBaseCircle(mapView);
+			UpdateHomeBaseCircle(mapView, gameplay, runner);
 			RemoveHiddenOrInvalidSelections(gameplay, runner);
 
 			var mouse = Mouse.current;
@@ -224,6 +232,7 @@ namespace SimpleFPS
 			{
 				_currentAreaRadius = 0f;
 				_areaCircleVisible = false;
+				_editingHomeBase = BuildSelectedMask(gameplay, runner).IsEmpty;
 				_areaDragging = canStartMapInput && mapView.TryMapUIToWorld(mousePosition, out _areaDragStartWorld);
 				SetAssignedAreaCircleVisible(false);
 			}
@@ -236,7 +245,12 @@ namespace SimpleFPS
 			if (_areaDragging && mouse.rightButton.wasReleasedThisFrame)
 			{
 				CharacterMask128 selectedMask = BuildSelectedMask(gameplay, runner);
-				if (selectedMask.IsEmpty == false && _areaCircleVisible)
+				if (selectedMask.IsEmpty)
+				{
+					float radius = _areaCircleVisible ? _currentAreaRadius : GetAssignedAreaMinRadius(gameplay);
+					gameplay.RequestSetHomeBase(_areaDragStartWorld, radius);
+				}
+				else if (_areaCircleVisible)
 				{
 					gameplay.RequestMapAssignedAreaOrder(selectedMask, _areaDragStartWorld, _currentAreaRadius);
 				}
@@ -247,6 +261,7 @@ namespace SimpleFPS
 
 				_areaDragging = false;
 				_areaCircleVisible = false;
+				_editingHomeBase = false;
 				SetAssignedAreaCircleVisible(false);
 			}
 		}
@@ -286,9 +301,14 @@ namespace SimpleFPS
 
 			if (_currentAreaRadius < minRadius)
 			{
-				_areaCircleVisible = false;
-				SetAssignedAreaCircleVisible(false);
-				return;
+				if (_editingHomeBase == false)
+				{
+					_areaCircleVisible = false;
+					SetAssignedAreaCircleVisible(false);
+					return;
+				}
+
+				_currentAreaRadius = minRadius;
 			}
 
 			Vector3 direction = offset.sqrMagnitude > 0.001f ? offset.normalized : Vector3.right;
@@ -301,6 +321,28 @@ namespace SimpleFPS
 			UpdateAssignedAreaCircleImages();
 			_areaCircleVisible = true;
 			SetAssignedAreaCircleVisible(true);
+		}
+
+		private void UpdateHomeBaseCircle(GameMapView mapView, Gameplay gameplay, NetworkRunner runner)
+		{
+			if (HomeBaseCircle == null ||
+			    gameplay == null ||
+			    runner == null ||
+			    gameplay.PlayerData.TryGet(runner.LocalPlayer, out PlayerData data) == false ||
+			    data.IsAlive == false ||
+			    gameplay.TryGetHomeBase(runner.LocalPlayer, out Vector3 center, out float radius) == false)
+			{
+				if (HomeBaseCircle != null)
+					HomeBaseCircle.gameObject.SetActive(false);
+				return;
+			}
+
+			Vector2 localCenter = mapView.WorldToMapUI(center);
+			Vector2 localEdge = mapView.WorldToMapUI(center + Vector3.right * radius);
+			float uiRadius = Vector2.Distance(localCenter, localEdge);
+			HomeBaseCircle.anchoredPosition = localCenter;
+			HomeBaseCircle.sizeDelta = new Vector2(uiRadius * 2f, uiRadius * 2f);
+			HomeBaseCircle.gameObject.SetActive(true);
 		}
 
 		private float GetAssignedAreaMinRadius(Gameplay gameplay)
@@ -642,11 +684,47 @@ namespace SimpleFPS
 				SetAssignedAreaCircleVisible(false);
 		}
 
+		private void EnsureHomeBaseCircle(GameMapView mapView)
+		{
+			if (mapView == null || mapView.MapImage == null)
+				return;
+
+			if (HomeBaseCircle == null)
+			{
+				var circleObject = new GameObject("HomeBaseCircle", typeof(RectTransform));
+				HomeBaseCircle = circleObject.GetComponent<RectTransform>();
+			}
+
+			if (HomeBaseCircle.parent != mapView.MapImage.rectTransform)
+				HomeBaseCircle.SetParent(mapView.MapImage.rectTransform, false);
+
+			HomeBaseCircle.anchorMin = new Vector2(0.5f, 0.5f);
+			HomeBaseCircle.anchorMax = new Vector2(0.5f, 0.5f);
+			HomeBaseCircle.pivot = new Vector2(0.5f, 0.5f);
+			EnsureCircleImage(HomeBaseCircle, ref _homeBaseBorderImage, "Border", 0f, HomeBaseBorderColor);
+			EnsureCircleImage(
+				HomeBaseCircle,
+				ref _homeBaseFillImage,
+				"Fill",
+				Mathf.Max(0f, AssignedAreaBorderThickness),
+				HomeBaseFillColor);
+		}
+
 		private void EnsureAssignedAreaCircleImage(ref Image image, string name, float inset)
+		{
+			EnsureCircleImage(
+				AssignedAreaCircle,
+				ref image,
+				name,
+				inset,
+				name == "Border" ? AssignedAreaBorderColor : AssignedAreaFillColor);
+		}
+
+		private void EnsureCircleImage(RectTransform circle, ref Image image, string name, float inset, Color color)
 		{
 			if (image == null)
 			{
-				Transform child = AssignedAreaCircle.Find(name);
+				Transform child = circle.Find(name);
 				if (child != null)
 					image = child.GetComponent<Image>();
 			}
@@ -654,7 +732,7 @@ namespace SimpleFPS
 			if (image == null)
 			{
 				var imageObject = new GameObject(name, typeof(RectTransform), typeof(Image));
-				imageObject.transform.SetParent(AssignedAreaCircle, false);
+				imageObject.transform.SetParent(circle, false);
 				image = imageObject.GetComponent<Image>();
 			}
 
@@ -666,15 +744,16 @@ namespace SimpleFPS
 
 			image.sprite = name == "Border" ? GetRingSprite() : GetCircleSprite();
 			image.type = Image.Type.Simple;
+			image.color = color;
 			image.raycastTarget = false;
 		}
 
 		private void UpdateAssignedAreaCircleImages()
 		{
 			if (_assignedAreaBorderImage != null)
-				_assignedAreaBorderImage.color = AssignedAreaBorderColor;
+				_assignedAreaBorderImage.color = _editingHomeBase ? HomeBaseBorderColor : AssignedAreaBorderColor;
 			if (_assignedAreaFillImage != null)
-				_assignedAreaFillImage.color = AssignedAreaFillColor;
+				_assignedAreaFillImage.color = _editingHomeBase ? HomeBaseFillColor : AssignedAreaFillColor;
 		}
 
 		private Sprite GetCircleSprite()

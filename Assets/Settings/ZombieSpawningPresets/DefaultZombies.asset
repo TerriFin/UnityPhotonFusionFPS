@@ -33,6 +33,7 @@ MonoBehaviour:
   EndAlertRadius: 24
   OvertimeSpawnRatePerMinute: 60
   OvertimeHealth: 265
+  OvertimeNewZombieHealthIncreasePer10Seconds: 20
   OvertimeDamage: 16
   OvertimeMoveSpeed: 7.25
   UnderpopulatedRegionBias: 0.6

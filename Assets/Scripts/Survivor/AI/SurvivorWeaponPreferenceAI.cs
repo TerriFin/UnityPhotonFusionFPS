@@ -43,6 +43,7 @@ namespace SimpleFPS
 				return false;
 
 			float targetDistance = Vector3.Distance(GetFireOrigin(), enemy.Object.transform.position);
+			ESurvivorCombatBehavior behavior = _survivor.CombatAISettings.CombatBehavior;
 			switch (preference)
 			{
 				case ESurvivorWeaponPreference.HoldFire:
@@ -52,11 +53,19 @@ namespace SimpleFPS
 					return TryGetPistolOrFallback(targetDistance, out weapon);
 
 				case ESurvivorWeaponPreference.PreferStrongWeapons:
+					if (behavior == ESurvivorCombatBehavior.Defensive)
+						return TryGetLongestRangeWeapon(out weapon);
+					if (behavior == ESurvivorCombatBehavior.Aggressive)
+						return TryGetHighestStrengthWeapon(out weapon);
 					return TryGetStrongWeapon(targetDistance, out weapon);
 
 				case ESurvivorWeaponPreference.Automatic:
-				if (IsZombie(enemy.Object) == false || IsOvertime() || ShouldEscalateAgainstZombies())
-					return TryGetStrongWeapon(targetDistance, out weapon);
+					if (behavior == ESurvivorCombatBehavior.Defensive)
+						return TryGetLongestRangeWeapon(out weapon);
+					if (behavior == ESurvivorCombatBehavior.Aggressive)
+						return TryGetHighestStrengthWeapon(out weapon);
+					if (IsZombie(enemy.Object) == false || IsOvertime() || ShouldEscalateAgainstZombies())
+						return TryGetStrongWeapon(targetDistance, out weapon);
 
 				return TryGetPistolOrFallback(targetDistance, out weapon);
 
@@ -77,6 +86,60 @@ namespace SimpleFPS
 				return true;
 
 			return TryGetStrongWeapon(targetDistance, out weapon);
+		}
+
+		private bool TryGetHighestStrengthWeapon(out Weapon weapon)
+		{
+			weapon = null;
+			float bestStrength = float.MinValue;
+			Weapon currentWeapon = _survivor.Weapons.CurrentWeapon;
+			Weapon[] weapons = _survivor.Weapons.AllWeapons;
+			if (weapons == null)
+				return false;
+
+			for (int i = 0; i < weapons.Length; i++)
+			{
+				Weapon candidate = weapons[i];
+				if (IsUsable(candidate) == false)
+					continue;
+
+				float strength = Mathf.Max(0f, candidate.AIWeaponStrength);
+				if (strength > bestStrength + ScoreEpsilon ||
+				    (Mathf.Abs(strength - bestStrength) <= ScoreEpsilon && candidate == currentWeapon))
+				{
+					bestStrength = strength;
+					weapon = candidate;
+				}
+			}
+
+			return weapon != null;
+		}
+
+		private bool TryGetLongestRangeWeapon(out Weapon weapon)
+		{
+			weapon = null;
+			float bestRange = float.MinValue;
+			Weapon currentWeapon = _survivor.Weapons.CurrentWeapon;
+			Weapon[] weapons = _survivor.Weapons.AllWeapons;
+			if (weapons == null)
+				return false;
+
+			for (int i = 0; i < weapons.Length; i++)
+			{
+				Weapon candidate = weapons[i];
+				if (IsUsable(candidate) == false)
+					continue;
+
+				float range = Mathf.Max(0.1f, candidate.AIEffectiveMaxRange);
+				if (range > bestRange + ScoreEpsilon ||
+				    (Mathf.Abs(range - bestRange) <= ScoreEpsilon && candidate == currentWeapon))
+				{
+					bestRange = range;
+					weapon = candidate;
+				}
+			}
+
+			return weapon != null;
 		}
 
 		private bool TryGetStrongWeapon(float targetDistance, out Weapon weapon)

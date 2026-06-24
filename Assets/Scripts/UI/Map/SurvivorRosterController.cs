@@ -3,6 +3,7 @@ using Fusion;
 using TMPro;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.Serialization;
 using UnityEngine.UI;
 
 namespace SimpleFPS
@@ -25,10 +26,15 @@ namespace SimpleFPS
 		public Toggle BulkCollectPickupsToggle;
 		public Toggle BulkInvestigateToggle;
 		public Toggle BulkRecruitToggle;
-		public Toggle BulkCombatActivationToggle;
+		[FormerlySerializedAs("BulkRetreatToggle")]
+		[FormerlySerializedAs("BulkCombatActivationToggle")]
+		[HideInInspector]
+		public Toggle LegacyBulkRetreatToggle;
 		[HideInInspector]
 		public Toggle BulkCombatMovementToggle;
+		public SurvivorRetreatModeControl BulkRetreatModeControl;
 		public SurvivorWeaponPreferenceControl BulkWeaponPreferenceControl;
+		public SurvivorCombatBehaviorControl BulkCombatBehaviorControl;
 
 		[Header("Hover Link")]
 		public RectTransform HoverLine;
@@ -147,9 +153,12 @@ namespace SimpleFPS
 			AddBulkToggleListener(BulkCollectPickupsToggle, ESurvivorAISetting.CollectVisiblePickups);
 			AddBulkToggleListener(BulkInvestigateToggle, ESurvivorAISetting.InvestigateSuspiciousStimuli);
 			AddBulkToggleListener(BulkRecruitToggle, ESurvivorAISetting.RecruitNeutralSurvivors);
-			AddBulkToggleListener(BulkCombatActivationToggle, ESurvivorAISetting.AllowCombatAIActivation);
+			if (BulkRetreatModeControl != null)
+				BulkRetreatModeControl.ValueChanged += HandleBulkRetreatModeChanged;
 			if (BulkWeaponPreferenceControl != null)
 				BulkWeaponPreferenceControl.ValueChanged += HandleBulkWeaponPreferenceChanged;
+			if (BulkCombatBehaviorControl != null)
+				BulkCombatBehaviorControl.ValueChanged += HandleBulkCombatBehaviorChanged;
 
 			_listenersAttached = true;
 		}
@@ -182,7 +191,9 @@ namespace SimpleFPS
 					entry.Clicked += HandleEntryClicked;
 					entry.HoverChanged += HandleEntryHoverChanged;
 					entry.SettingChanged += HandleEntrySettingChanged;
+					entry.RetreatModeChanged += HandleEntryRetreatModeChanged;
 					entry.WeaponPreferenceChanged += HandleEntryWeaponPreferenceChanged;
+					entry.CombatBehaviorChanged += HandleEntryCombatBehaviorChanged;
 					forceLayout = true;
 				}
 
@@ -279,6 +290,26 @@ namespace SimpleFPS
 			_gameplay.RequestMapWeaponPreference(mask, preference);
 		}
 
+		private void HandleEntryRetreatModeChanged(Survivor survivor, ESurvivorRetreatMode mode)
+		{
+			if (_gameplay == null || survivor == null)
+				return;
+
+			var mask = new CharacterMask128();
+			mask.Set(survivor.CharacterIndex, true);
+			_gameplay.RequestMapRetreatMode(mask, mode);
+		}
+
+		private void HandleEntryCombatBehaviorChanged(Survivor survivor, ESurvivorCombatBehavior behavior)
+		{
+			if (_gameplay == null || survivor == null)
+				return;
+
+			var mask = new CharacterMask128();
+			mask.Set(survivor.CharacterIndex, true);
+			_gameplay.RequestMapCombatBehavior(mask, behavior);
+		}
+
 		private void HandleBulkToggleChanged(ESurvivorAISetting setting, bool enabled)
 		{
 			if (_suppressBulkToggleEvents || _gameplay == null || _runner == null)
@@ -305,6 +336,32 @@ namespace SimpleFPS
 			BulkWeaponPreferenceControl?.SetValueWithoutNotify(preference);
 		}
 
+		private void HandleBulkRetreatModeChanged(ESurvivorRetreatMode mode)
+		{
+			if (_suppressBulkToggleEvents || _gameplay == null || _runner == null)
+				return;
+
+			CharacterMask128 mask = GetBulkTargetMask();
+			if (mask.IsEmpty)
+				return;
+
+			_gameplay.RequestMapRetreatMode(mask, mode);
+			BulkRetreatModeControl?.SetValueWithoutNotify(mode);
+		}
+
+		private void HandleBulkCombatBehaviorChanged(ESurvivorCombatBehavior behavior)
+		{
+			if (_suppressBulkToggleEvents || _gameplay == null || _runner == null)
+				return;
+
+			CharacterMask128 mask = GetBulkTargetMask();
+			if (mask.IsEmpty)
+				return;
+
+			_gameplay.RequestMapCombatBehavior(mask, behavior);
+			BulkCombatBehaviorControl?.SetValueWithoutNotify(behavior);
+		}
+
 		private void HandleSelectionChanged()
 		{
 			RefreshBulkSnapshot();
@@ -325,9 +382,63 @@ namespace SimpleFPS
 			SetToggleWithoutNotify(BulkCollectPickupsToggle, GetMajorityValue(_survivors, ESurvivorAISetting.CollectVisiblePickups));
 			SetToggleWithoutNotify(BulkInvestigateToggle, GetMajorityValue(_survivors, ESurvivorAISetting.InvestigateSuspiciousStimuli));
 			SetToggleWithoutNotify(BulkRecruitToggle, GetMajorityValue(_survivors, ESurvivorAISetting.RecruitNeutralSurvivors));
-			SetToggleWithoutNotify(BulkCombatActivationToggle, GetMajorityValue(_survivors, ESurvivorAISetting.AllowCombatAIActivation));
+			BulkRetreatModeControl?.SetValueWithoutNotify(GetMajorityRetreatMode(_survivors));
 			BulkWeaponPreferenceControl?.SetValueWithoutNotify(GetMajorityWeaponPreference(_survivors));
+			BulkCombatBehaviorControl?.SetValueWithoutNotify(GetMajorityCombatBehavior(_survivors));
 			_suppressBulkToggleEvents = false;
+		}
+
+		private static ESurvivorCombatBehavior GetMajorityCombatBehavior(List<Survivor> survivors)
+		{
+			int normal = 0;
+			int aggressive = 0;
+			int defensive = 0;
+			int none = 0;
+			for (int i = 0; i < survivors.Count; i++)
+			{
+				switch (survivors[i].CombatAISettings.CombatBehavior)
+				{
+					case ESurvivorCombatBehavior.Aggressive:
+						aggressive++;
+						break;
+					case ESurvivorCombatBehavior.Defensive:
+						defensive++;
+						break;
+					case ESurvivorCombatBehavior.None:
+						none++;
+						break;
+					default:
+						normal++;
+						break;
+				}
+			}
+
+			if (aggressive > normal && aggressive > defensive && aggressive > none)
+				return ESurvivorCombatBehavior.Aggressive;
+			if (defensive > normal && defensive > aggressive && defensive > none)
+				return ESurvivorCombatBehavior.Defensive;
+			if (none > normal && none > aggressive && none > defensive)
+				return ESurvivorCombatBehavior.None;
+			return ESurvivorCombatBehavior.Normal;
+		}
+
+		private static ESurvivorRetreatMode GetMajorityRetreatMode(List<Survivor> survivors)
+		{
+			int[] counts = new int[4];
+			for (int i = 0; i < survivors.Count; i++)
+			{
+				int index = Mathf.Clamp((int)survivors[i].RetreatMode, 0, counts.Length - 1);
+				counts[index]++;
+			}
+
+			int bestIndex = 0;
+			for (int i = 1; i < counts.Length; i++)
+			{
+				if (counts[i] > counts[bestIndex])
+					bestIndex = i;
+			}
+
+			return (ESurvivorRetreatMode)bestIndex;
 		}
 
 		private static ESurvivorWeaponPreference GetMajorityWeaponPreference(List<Survivor> survivors)
@@ -392,9 +503,6 @@ namespace SimpleFPS
 					break;
 				case ESurvivorAISetting.RecruitNeutralSurvivors:
 					SetToggleWithoutNotify(BulkRecruitToggle, enabled);
-					break;
-				case ESurvivorAISetting.AllowCombatAIActivation:
-					SetToggleWithoutNotify(BulkCombatActivationToggle, enabled);
 					break;
 			}
 			_suppressBulkToggleEvents = false;
@@ -515,7 +623,6 @@ namespace SimpleFPS
 				ESurvivorAISetting.CollectVisiblePickups => survivor.NonCombatAISettings.CollectVisiblePickups,
 				ESurvivorAISetting.InvestigateSuspiciousStimuli => survivor.NonCombatAISettings.InvestigateSuspiciousStimuli,
 				ESurvivorAISetting.RecruitNeutralSurvivors => survivor.NonCombatAISettings.RecruitNeutralSurvivors,
-				ESurvivorAISetting.AllowCombatAIActivation => survivor.NonCombatAISettings.AllowCombatAIActivation,
 				_ => false,
 			};
 		}
@@ -640,7 +747,7 @@ namespace SimpleFPS
 			{
 				if (ResponsiveGrid == null)
 					ResponsiveGrid = Content.GetComponent<ResponsiveRosterGrid>();
-				if (BulkWeaponPreferenceControl == null)
+				if (BulkRetreatModeControl == null || BulkWeaponPreferenceControl == null || BulkCombatBehaviorControl == null)
 					EnsureRuntimeBulkBar();
 				EnsureHoverLine();
 				return;
@@ -702,12 +809,15 @@ namespace SimpleFPS
 			BulkCollectPickupsToggle ??= CreateBulkToggle(bar, "P");
 			BulkInvestigateToggle ??= CreateBulkToggle(bar, "?");
 			BulkRecruitToggle ??= CreateBulkToggle(bar, "+");
-			BulkCombatActivationToggle ??= CreateBulkToggle(bar, "!");
+			BulkRetreatModeControl ??= CreateBulkRetreatModeControl(bar);
 			BulkWeaponPreferenceControl ??= CreateBulkWeaponPreferenceControl(bar);
+			BulkCombatBehaviorControl ??= CreateBulkCombatBehaviorControl(bar);
 		}
 
 		private void DisableLegacyCombatMovementToggle()
 		{
+			if (LegacyBulkRetreatToggle != null)
+				LegacyBulkRetreatToggle.gameObject.SetActive(false);
 			if (BulkCombatMovementToggle != null)
 				BulkCombatMovementToggle.gameObject.SetActive(false);
 		}
@@ -798,6 +908,23 @@ namespace SimpleFPS
 			return toggle;
 		}
 
+		private SurvivorRetreatModeControl CreateBulkRetreatModeControl(RectTransform parent)
+		{
+			var root = new GameObject(
+				"Retreat Mode",
+				typeof(RectTransform),
+				typeof(Image),
+				typeof(Button),
+				typeof(LayoutElement),
+				typeof(SurvivorRetreatModeControl));
+			root.transform.SetParent(parent, false);
+			root.GetComponent<RectTransform>().sizeDelta = new Vector2(58f, 28f);
+			var layout = root.GetComponent<LayoutElement>();
+			layout.preferredWidth = 58f;
+			layout.preferredHeight = 28f;
+			return root.GetComponent<SurvivorRetreatModeControl>();
+		}
+
 		private SurvivorWeaponPreferenceControl CreateBulkWeaponPreferenceControl(RectTransform parent)
 		{
 			var root = new GameObject(
@@ -808,11 +935,28 @@ namespace SimpleFPS
 				typeof(LayoutElement),
 				typeof(SurvivorWeaponPreferenceControl));
 			root.transform.SetParent(parent, false);
-			root.GetComponent<RectTransform>().sizeDelta = new Vector2(68f, 28f);
+			root.GetComponent<RectTransform>().sizeDelta = new Vector2(58f, 28f);
 			var layout = root.GetComponent<LayoutElement>();
-			layout.preferredWidth = 68f;
+			layout.preferredWidth = 58f;
 			layout.preferredHeight = 28f;
 			return root.GetComponent<SurvivorWeaponPreferenceControl>();
+		}
+
+		private SurvivorCombatBehaviorControl CreateBulkCombatBehaviorControl(RectTransform parent)
+		{
+			var root = new GameObject(
+				"Combat Behavior",
+				typeof(RectTransform),
+				typeof(Image),
+				typeof(Button),
+				typeof(LayoutElement),
+				typeof(SurvivorCombatBehaviorControl));
+			root.transform.SetParent(parent, false);
+			root.GetComponent<RectTransform>().sizeDelta = new Vector2(58f, 28f);
+			var layout = root.GetComponent<LayoutElement>();
+			layout.preferredWidth = 58f;
+			layout.preferredHeight = 28f;
+			return root.GetComponent<SurvivorCombatBehaviorControl>();
 		}
 
 		private void EnsureHoverLine()

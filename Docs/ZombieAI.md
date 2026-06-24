@@ -73,7 +73,8 @@ During overtime:
 
 - All living zombies receive overtime stats immediately.
 - Existing zombies preserve their current health percentage when max health changes.
-- Newly spawned zombies receive overtime stats.
+- Newly spawned zombies receive overtime stats, with an additional flat max-health bonus for each completed 10 seconds of overtime as configured by `ZombieOrchestratorSettings.OvertimeNewZombieHealthIncreasePer10Seconds`.
+- Existing zombies are not repeatedly upgraded by that progressive spawn-health bonus.
 - Zombies switch to hunting behavior.
 
 ## Sensor Setup

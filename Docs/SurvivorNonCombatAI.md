@@ -26,6 +26,8 @@ The matching behavior docs are:
 - `Docs/SurvivorInvestigationAI.md`
 - `Docs/SurvivorRecruitingAI.md`
 - `Docs/SurvivorAssignedAreaAI.md`
+- `Docs/SurvivorRetreatAI.md` for the planned damage-triggered persistent home-base patrol order.
+- `Docs/HomeBaseSystem.md` for the shared per-player patrol area used by retreat.
 
 The intended expandable pattern is:
 
@@ -62,7 +64,6 @@ public struct SurvivorNonCombatAISettings
 	public bool CollectVisiblePickups;
 	public bool InvestigateSuspiciousStimuli;
 	public bool RecruitNeutralSurvivors;
-	public bool AllowCombatAIActivation;
 }
 ```
 
@@ -72,8 +73,9 @@ Suggested defaults:
 CollectVisiblePickups: true
 InvestigateSuspiciousStimuli: true
 RecruitNeutralSurvivors: true
-AllowCombatAIActivation: true
 ```
+
+Combat style is not part of this struct. `ESurvivorCombatBehavior.None` replaces the removed `AllowCombatAIActivation` boolean, and the other combat styles live in `SurvivorCombatAISettings`.
 
 If all optional settings are disabled, the survivor behaves like the current idle AI.
 
@@ -208,7 +210,7 @@ Recruiting differs from the other temporary behaviors in priority and persistenc
 
 That loss investigation is part of recruiting, not a stimulus investigation: it is started with `recruitmentOrigin = true`, so it runs regardless of `InvestigateSuspiciousStimuli` and is instead governed by `RecruitNeutralSurvivors`. `SurvivorInvestigationAI.IsRecruitmentOrigin` tracks this so `SetSettings` cancels it with the recruit toggle, not the investigate toggle — the two settings never cross-cancel. (A closer combat threat can still preempt it like any investigation.)
 
-The recruited survivor inherits the recruiter's current player order through `Gameplay.ApplyRecruitmentOrder` -> `CreateEquivalentAssignmentFor`, because recruiting never changes the recruiter's underlying assignment.
+The recruited survivor inherits the recruiter's current player order through `Gameplay.ApplyRecruitmentOrder` -> `CreateEquivalentAssignmentFor`, because recruiting never changes the recruiter's underlying assignment. It also receives a one-time copy of the recruiter's non-combat toggles, combat behavior, weapon preference, and retreat mode.
 
 See `Docs/SurvivorRecruitingAI.md`.
 
@@ -239,9 +241,8 @@ Non-combat AI is active only while combat AI is not taking over.
 
 Handoff rules:
 
-- `AllowCombatAIActivation` is the legacy field name for the roster's combat movement toggle.
-- If enabled and a valid direct enemy is reported, the survivor may use tactical combat movement.
-- If disabled, the survivor does not use tactical combat movement against enemy survivors or zombies. It may still turn toward visible enemies and shoot according to its weapon/fire mode.
+- `None` means no tactical combat movement; `Normal`, `Aggressive`, and `Defensive` select enabled movement profiles.
+- `None` may still turn toward visible enemies and shoot according to the weapon/fire mode.
 - Non-combat AI keeps its current assignment data while suspended.
 - If the enemy dies, combat AI releases control and non-combat AI resumes the previous assignment.
 - If an enemy survivor is alive but breaks line of fire, non-combat AI can investigate the last known enemy survivor position before returning to the previous assignment.

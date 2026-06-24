@@ -121,6 +121,8 @@ Avoid adding sensor features that require every sensor to raycast against every 
 
 ## Network Optimization Options
 
+For measured current replication sizes and a ranked implementation audit, see `Docs/NetworkOptimizationAudit.md`.
+
 ### Avoid Networked AI Memory
 
 AI perception and memory should generally not be `[Networked]`.

@@ -2,6 +2,7 @@ using System;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.Serialization;
 using UnityEngine.UI;
 
 namespace SimpleFPS
@@ -33,10 +34,15 @@ namespace SimpleFPS
 		public Toggle CollectPickupsToggle;
 		public Toggle InvestigateToggle;
 		public Toggle RecruitToggle;
-		public Toggle CombatActivationToggle;
+		[FormerlySerializedAs("RetreatToggle")]
+		[FormerlySerializedAs("CombatActivationToggle")]
+		[HideInInspector]
+		public Toggle LegacyRetreatToggle;
 		[HideInInspector]
 		public Toggle CombatMovementToggle;
+		public SurvivorRetreatModeControl RetreatModeControl;
 		public SurvivorWeaponPreferenceControl WeaponPreferenceControl;
+		public SurvivorCombatBehaviorControl CombatBehaviorControl;
 
 		[Header("Colors")]
 		public Color NormalBackgroundColor = new Color(0.08f, 0.1f, 0.12f, 0.82f);
@@ -56,7 +62,9 @@ namespace SimpleFPS
 		public event Action<Survivor> Clicked;
 		public event Action<Survivor, bool> HoverChanged;
 		public event Action<Survivor, ESurvivorAISetting, bool> SettingChanged;
+		public event Action<Survivor, ESurvivorRetreatMode> RetreatModeChanged;
 		public event Action<Survivor, ESurvivorWeaponPreference> WeaponPreferenceChanged;
+		public event Action<Survivor, ESurvivorCombatBehavior> CombatBehaviorChanged;
 
 		private void Awake()
 		{
@@ -159,8 +167,9 @@ namespace SimpleFPS
 			SetToggleWithoutNotify(CollectPickupsToggle, _survivor.NonCombatAISettings.CollectVisiblePickups);
 			SetToggleWithoutNotify(InvestigateToggle, _survivor.NonCombatAISettings.InvestigateSuspiciousStimuli);
 			SetToggleWithoutNotify(RecruitToggle, _survivor.NonCombatAISettings.RecruitNeutralSurvivors);
-			SetToggleWithoutNotify(CombatActivationToggle, _survivor.NonCombatAISettings.AllowCombatAIActivation);
+			RetreatModeControl?.SetValueWithoutNotify(_survivor.RetreatMode);
 			WeaponPreferenceControl?.SetValueWithoutNotify(_survivor.CombatAISettings.WeaponPreference);
+			CombatBehaviorControl?.SetValueWithoutNotify(_survivor.CombatAISettings.CombatBehavior);
 			_suppressToggleEvents = false;
 		}
 
@@ -183,9 +192,12 @@ namespace SimpleFPS
 			AddToggleListener(CollectPickupsToggle, ESurvivorAISetting.CollectVisiblePickups);
 			AddToggleListener(InvestigateToggle, ESurvivorAISetting.InvestigateSuspiciousStimuli);
 			AddToggleListener(RecruitToggle, ESurvivorAISetting.RecruitNeutralSurvivors);
-			AddToggleListener(CombatActivationToggle, ESurvivorAISetting.AllowCombatAIActivation);
+			if (RetreatModeControl != null)
+				RetreatModeControl.ValueChanged += HandleRetreatModeChanged;
 			if (WeaponPreferenceControl != null)
 				WeaponPreferenceControl.ValueChanged += HandleWeaponPreferenceChanged;
+			if (CombatBehaviorControl != null)
+				CombatBehaviorControl.ValueChanged += HandleCombatBehaviorChanged;
 
 			_listenersAttached = true;
 		}
@@ -218,6 +230,22 @@ namespace SimpleFPS
 				return;
 
 			WeaponPreferenceChanged?.Invoke(_survivor, preference);
+		}
+
+		private void HandleRetreatModeChanged(ESurvivorRetreatMode mode)
+		{
+			if (_suppressToggleEvents || _survivor == null)
+				return;
+
+			RetreatModeChanged?.Invoke(_survivor, mode);
+		}
+
+		private void HandleCombatBehaviorChanged(ESurvivorCombatBehavior behavior)
+		{
+			if (_suppressToggleEvents || _survivor == null)
+				return;
+
+			CombatBehaviorChanged?.Invoke(_survivor, behavior);
 		}
 
 		private void EnsureRuntimeLayout()
@@ -328,8 +356,9 @@ namespace SimpleFPS
 			if (CollectPickupsToggle != null &&
 			    InvestigateToggle != null &&
 			    RecruitToggle != null &&
-			    CombatActivationToggle != null &&
-			    WeaponPreferenceControl != null)
+			    RetreatModeControl != null &&
+			    WeaponPreferenceControl != null &&
+			    CombatBehaviorControl != null)
 				return;
 
 			Transform row = transform.Find("Toggle Row");
@@ -356,12 +385,15 @@ namespace SimpleFPS
 			CollectPickupsToggle ??= CreateToggle(row, "P");
 			InvestigateToggle ??= CreateToggle(row, "?");
 			RecruitToggle ??= CreateToggle(row, "+");
-			CombatActivationToggle ??= CreateToggle(row, "!");
+			RetreatModeControl ??= CreateRetreatModeControl(row);
 			WeaponPreferenceControl ??= CreateWeaponPreferenceControl(row);
+			CombatBehaviorControl ??= CreateCombatBehaviorControl(row);
 		}
 
 		private void DisableLegacyCombatMovementToggle()
 		{
+			if (LegacyRetreatToggle != null)
+				LegacyRetreatToggle.gameObject.SetActive(false);
 			if (CombatMovementToggle != null)
 				CombatMovementToggle.gameObject.SetActive(false);
 		}
@@ -408,6 +440,23 @@ namespace SimpleFPS
 			return toggle;
 		}
 
+		private SurvivorRetreatModeControl CreateRetreatModeControl(Transform parent)
+		{
+			var root = new GameObject(
+				"Retreat Mode",
+				typeof(RectTransform),
+				typeof(Image),
+				typeof(Button),
+				typeof(LayoutElement),
+				typeof(SurvivorRetreatModeControl));
+			root.transform.SetParent(parent, false);
+			root.GetComponent<RectTransform>().sizeDelta = new Vector2(44f, 22f);
+			var layout = root.GetComponent<LayoutElement>();
+			layout.preferredWidth = 44f;
+			layout.preferredHeight = 22f;
+			return root.GetComponent<SurvivorRetreatModeControl>();
+		}
+
 		private SurvivorWeaponPreferenceControl CreateWeaponPreferenceControl(Transform parent)
 		{
 			var root = new GameObject(
@@ -423,6 +472,23 @@ namespace SimpleFPS
 			layout.preferredWidth = 54f;
 			layout.preferredHeight = 22f;
 			return root.GetComponent<SurvivorWeaponPreferenceControl>();
+		}
+
+		private SurvivorCombatBehaviorControl CreateCombatBehaviorControl(Transform parent)
+		{
+			var root = new GameObject(
+				"Combat Behavior",
+				typeof(RectTransform),
+				typeof(Image),
+				typeof(Button),
+				typeof(LayoutElement),
+				typeof(SurvivorCombatBehaviorControl));
+			root.transform.SetParent(parent, false);
+			root.GetComponent<RectTransform>().sizeDelta = new Vector2(54f, 22f);
+			var layout = root.GetComponent<LayoutElement>();
+			layout.preferredWidth = 54f;
+			layout.preferredHeight = 22f;
+			return root.GetComponent<SurvivorCombatBehaviorControl>();
 		}
 	}
 }

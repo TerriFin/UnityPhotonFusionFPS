@@ -108,9 +108,24 @@ Notes:
 - If the target was taken by **another team**, it is now an enemy survivor. If it is still in the survivor's senses, `SurvivorNonCombatAI` hands off to combat first (an enemy player interrupts recruiting); otherwise the loss investigation sends the survivor to look where it last saw it.
 - A successful recruitment onto our own team (the **Recruited** outcome) never triggers this — only death, loss of sight, or another team taking the recruit does.
 
-## Recruited Survivor's Order
+## Recruited Survivor's Order And Behaviors
 
 When the recruiter is an unpossessed player survivor, the freshly recruited survivor inherits the recruiter's current player-given assignment through the existing `Gameplay.ApplyRecruitmentOrder` -> `SurvivorNonCombatAI.CreateEquivalentAssignmentFor` path. Because recruiting is a temporary deviation that never changes the recruiter's underlying assignment, the recruited survivor gets the same hold/move/patrol/follow order the recruiter had. Starting player-owned survivors receive a persistent move/guard anchor at their spawn position, so an otherwise untouched AI survivor passes that spawn order to its recruit instead of creating a hold order at the recruitment spot. (If the recruiter was the possessed player, the recruit follows the player instead.)
+
+The recruited survivor also inherits the recruiter's complete durable behavior profile:
+
+```text
+CollectVisiblePickups
+InvestigateSuspiciousStimuli
+RecruitNeutralSurvivors
+WeaponPreference
+CombatBehavior
+RetreatMode
+```
+
+The settings are copied on state authority during recruitment. The movement assignment is installed before the inherited retreat mode is applied, so an already-injured recruit whose inherited percentage threshold is active may immediately replace that inherited order with a retreat-to-home-base assignment.
+
+Later changes remain per-survivor. Inheritance is a one-time copy, not a permanent link between recruiter and recruit.
 
 ## Network Model
 

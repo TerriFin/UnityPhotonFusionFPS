@@ -213,8 +213,10 @@ namespace SimpleFPS
 			_directTargets.Clear();
 			_survivor.Sensor.GetDirectKnownEnemies(_directTargets);
 
-			float closestDistanceSqr = float.MaxValue;
-			KnownEnemyInfo closest = default;
+			float closestSurvivorDistanceSqr = float.MaxValue;
+			KnownEnemyInfo closestSurvivor = default;
+			float closestZombieDistanceSqr = float.MaxValue;
+			KnownEnemyInfo closestZombie = default;
 			float currentDistanceSqr = float.MaxValue;
 			KnownEnemyInfo current = default;
 			bool hasCurrent = false;
@@ -229,10 +231,18 @@ namespace SimpleFPS
 					continue;
 
 				float distanceSqr = (candidate.LastKnownPosition - origin).sqrMagnitude;
-				if (distanceSqr < closestDistanceSqr)
+				if (IsZombie(candidate.Object))
 				{
-					closestDistanceSqr = distanceSqr;
-					closest = candidate;
+					if (distanceSqr < closestZombieDistanceSqr)
+					{
+						closestZombieDistanceSqr = distanceSqr;
+						closestZombie = candidate;
+					}
+				}
+				else if (distanceSqr < closestSurvivorDistanceSqr)
+				{
+					closestSurvivorDistanceSqr = distanceSqr;
+					closestSurvivor = candidate;
 				}
 
 				if (_currentTarget != null && candidate.Object == _currentTarget)
@@ -244,17 +254,29 @@ namespace SimpleFPS
 			}
 
 			_directTargets.Clear();
-			if (closestDistanceSqr == float.MaxValue)
+			if (closestSurvivorDistanceSqr == float.MaxValue && closestZombieDistanceSqr == float.MaxValue)
 				return false;
+
+			float emergencyZombieDistance = _survivor.CombatAI != null
+				? _survivor.CombatAI.GetEmergencyZombieDistance()
+				: 0f;
+			bool hasEmergencyZombie = closestZombieDistanceSqr <= emergencyZombieDistance * emergencyZombieDistance;
+			KnownEnemyInfo preferred = hasEmergencyZombie || closestSurvivorDistanceSqr == float.MaxValue
+				? closestZombie
+				: closestSurvivor;
+			float preferredDistanceSqr = hasEmergencyZombie || closestSurvivorDistanceSqr == float.MaxValue
+				? closestZombieDistanceSqr
+				: closestSurvivorDistanceSqr;
 
 			// Target stickiness: keep the still-valid current target unless a different enemy is decisively closer.
 			// Without this, a surrounding pack makes the "closest" enemy flip between several near-equal candidates
 			// every sensor tick; each flip resets the first-shot delay in UpdateTargetState, so the survivor stays
 			// perpetually "about to fire" and never actually shoots.
-			enemy = closest;
-			if (hasCurrent && current.Object != closest.Object)
+			enemy = preferred;
+			if (hasEmergencyZombie == false && hasCurrent && current.Object != preferred.Object &&
+			    IsSameTargetCategory(current.Object, preferred.Object))
 			{
-				float closestDistance = Mathf.Sqrt(closestDistanceSqr);
+				float closestDistance = Mathf.Sqrt(preferredDistanceSqr);
 				float currentDistance = Mathf.Sqrt(currentDistanceSqr);
 				float urgentRatio = Mathf.Clamp01(UrgentTargetSwitchDistanceRatio);
 				bool urgentSwitch = urgentRatio > 0f && closestDistance <= currentDistance * urgentRatio;
@@ -264,6 +286,16 @@ namespace SimpleFPS
 
 			hasLineOfFire = HasLineOfFire(enemy);
 			return true;
+		}
+
+		private static bool IsSameTargetCategory(NetworkObject a, NetworkObject b)
+		{
+			return IsZombie(a) == IsZombie(b);
+		}
+
+		private static bool IsZombie(NetworkObject target)
+		{
+			return target != null && target.GetComponent<ZombieCharacter>() != null;
 		}
 
 		private void Awake()

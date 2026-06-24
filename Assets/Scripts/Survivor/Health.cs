@@ -41,17 +41,19 @@ namespace SimpleFPS
 				return false;
 
 			CurrentHealth -= damage;
+			var survivor = GetComponent<Survivor>();
 
 			if (CurrentHealth <= 0f)
 			{
 				CurrentHealth = 0f;
 
-				var survivor = GetComponent<Survivor>();
 				if (survivor != null && _sceneObjects != null && _sceneObjects.Gameplay != null)
 				{
 					_sceneObjects.Gameplay.CharacterKilled(instigator, survivor.OwnerRef, survivor.CharacterIndex, weaponType, isCritical);
 				}
 			}
+
+			survivor?.NotifyDamageTaken();
 
 			// Store relative hit position.
 			// Only last hit is stored. For casual gameplay this is enough, no need to store precise data for each hit.

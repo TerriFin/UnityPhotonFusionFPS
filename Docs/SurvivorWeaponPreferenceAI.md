@@ -8,7 +8,7 @@ Implemented.
 - `SurvivorAIShooting` supplies the current direct target and converts the selected weapon into normal weapon input.
 - The preference is stored as a replicated enum on `Survivor`.
 - Normal survivors start in `Automatic`.
-- Neutral survivors start in `PreferStrongWeapons` and switch to `Automatic` when recruited.
+- Neutral survivors start in `PreferStrongWeapons`; when recruited, they inherit the recruiter's weapon preference.
 - Individual and bulk roster controls cycle through `AUTO`, `STRONG`, `PISTOL`, and `HOLD`.
 
 ## Goal
@@ -266,9 +266,9 @@ public static SurvivorCombatAISettings Default => new SurvivorCombatAISettings
 };
 ```
 
-Changing the combat movement toggle must not reset weapon preference. Changing weapon preference must not reset the combat movement toggle or any non-combat setting.
+Changing combat behavior must not reset weapon preference. Changing weapon preference must not reset combat behavior or any non-combat setting.
 
-Recruitment and ordinary player orders should preserve the survivor's current preference. Newly spawned normal survivors start in `Automatic`.
+Ordinary player orders preserve the survivor's current preference. Newly spawned normal survivors start in `Automatic`, while recruited survivors inherit their recruiter's preference.
 
 ## Switching Flow
 
@@ -387,7 +387,7 @@ The component does not override weapon input while the survivor is possessed. Th
 
 ### Neutral Survivors
 
-Neutral survivors by default use option 2, "Strongest weapon available, always". When they are recruited, they should switch to use 1, "automatic" mode.
+Neutral survivors by default use option 2, "Strongest weapon available, always". When recruited, they copy the recruiting survivor's current weapon preference.
 
 ## Implemented Flow
 

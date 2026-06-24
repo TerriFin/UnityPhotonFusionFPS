@@ -59,6 +59,8 @@ hold right click on map
 -> selected inactive survivors receive AssignedArea(center, radius)
 ```
 
+The same gesture edits the player's home base when the survivor selection is empty. A click creates the minimum-radius home base and a drag creates a larger one. It does not order survivors immediately. See `Docs/HomeBaseSystem.md`.
+
 The preview must stay a circle. Dragging farther than the maximum radius clamps the radius instead of stretching the shape. Zooming is disabled while the circle is being dragged so the preview radius stays stable.
 
 If the dragged radius is smaller than `AssignedAreaMinRadius`, the circle is hidden. Releasing right click while no circle is visible falls back to the normal point order at the current mouse cursor position.

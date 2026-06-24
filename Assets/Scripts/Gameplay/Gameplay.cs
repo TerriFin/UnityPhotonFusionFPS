@@ -31,6 +31,9 @@ namespace SimpleFPS
 		public int       AliveCharMask3;      // bits 96-127, serialized as int by Fusion
 		public int       CharacterCount;
 		public int       TeamColorIndex;
+		public Vector3   HomeBaseCenter;
+		public float     HomeBaseRadius;
+		public NetworkBool HomeBaseInitialized;
 
 		// Convenience wrapper — NOT a Fusion-serialized field (no [Networked] attribute).
 		// Fusion only serializes public fields, not computed properties, so this property is transparent to the network.
@@ -271,10 +274,10 @@ namespace SimpleFPS
 			playerData.IsAlive = true;
 			PlayerData.Set(owner, playerData);
 
-			var recruitedCombatSettings = neutral.CombatAISettings;
-			recruitedCombatSettings.WeaponPreference = ESurvivorWeaponPreference.Automatic;
-			neutral.SetCombatAISettings(recruitedCombatSettings);
+			neutral.SetNonCombatAISettings(recruiter.NonCombatAISettings);
+			neutral.SetCombatAISettings(recruiter.CombatAISettings);
 			ApplyRecruitmentOrder(neutral, recruiter);
+			neutral.SetRetreatMode(recruiter.RetreatMode);
 			return true;
 		}
 
@@ -386,15 +389,42 @@ namespace SimpleFPS
 			RPC_RequestMapNonCombatSettings(selectedCharacterMask.Mask0, selectedCharacterMask.Mask1, selectedCharacterMask.Mask2, selectedCharacterMask.Mask3, enabled);
 		}
 
-		public void RequestMapCombatSettings(CharacterMask128 selectedCharacterMask, bool enabled)
+		public void RequestMapCombatBehavior(CharacterMask128 selectedCharacterMask, ESurvivorCombatBehavior behavior)
 		{
+			if (System.Enum.IsDefined(typeof(ESurvivorCombatBehavior), behavior) == false)
+				return;
+
 			if (HasStateAuthority)
 			{
-				SurvivorAICommands.ApplySelectedTeamCombatSettings(Runner.LocalPlayer, selectedCharacterMask, enabled);
+				SurvivorAICommands.ApplySelectedTeamCombatBehavior(Runner.LocalPlayer, selectedCharacterMask, behavior);
 				return;
 			}
 
-			RPC_RequestMapCombatSettings(selectedCharacterMask.Mask0, selectedCharacterMask.Mask1, selectedCharacterMask.Mask2, selectedCharacterMask.Mask3, enabled);
+			RPC_RequestMapCombatBehavior(
+				selectedCharacterMask.Mask0,
+				selectedCharacterMask.Mask1,
+				selectedCharacterMask.Mask2,
+				selectedCharacterMask.Mask3,
+				(int)behavior);
+		}
+
+		public void RequestMapRetreatMode(CharacterMask128 selectedCharacterMask, ESurvivorRetreatMode mode)
+		{
+			if (System.Enum.IsDefined(typeof(ESurvivorRetreatMode), mode) == false)
+				return;
+
+			if (HasStateAuthority)
+			{
+				SurvivorAICommands.ApplySelectedTeamRetreatMode(Runner.LocalPlayer, selectedCharacterMask, mode);
+				return;
+			}
+
+			RPC_RequestMapRetreatMode(
+				selectedCharacterMask.Mask0,
+				selectedCharacterMask.Mask1,
+				selectedCharacterMask.Mask2,
+				selectedCharacterMask.Mask3,
+				(int)mode);
 		}
 
 		public void RequestMapAISetting(CharacterMask128 selectedCharacterMask, ESurvivorAISetting setting, bool enabled)
@@ -425,6 +455,29 @@ namespace SimpleFPS
 				selectedCharacterMask.Mask2,
 				selectedCharacterMask.Mask3,
 				(int)preference);
+		}
+
+		public void RequestSetHomeBase(Vector3 center, float radius)
+		{
+			if (HasStateAuthority)
+			{
+				TrySetHomeBase(Runner.LocalPlayer, center, radius);
+				return;
+			}
+
+			RPC_RequestSetHomeBase(center, radius);
+		}
+
+		public bool TryGetHomeBase(PlayerRef owner, out Vector3 center, out float radius)
+		{
+			center = default;
+			radius = 0f;
+			if (PlayerData.TryGet(owner, out PlayerData data) == false || data.HomeBaseInitialized == false)
+				return false;
+
+			center = data.HomeBaseCenter;
+			radius = data.HomeBaseRadius;
+			return radius > 0f;
 		}
 
 		public void RequestSwitchActiveCharacter(int targetCharacterIndex)
@@ -537,7 +590,8 @@ namespace SimpleFPS
 			if (previousCharacter != null)
 			{
 				previousCharacter.ResetVerticalLook();
-				previousCharacter.SetIdleAI();
+				if (previousCharacter.HasRetreatAssignment == false)
+					previousCharacter.SetIdleAI();
 			}
 
 			data.ActiveCharacterIndex = nextIndex;
@@ -545,7 +599,7 @@ namespace SimpleFPS
 			UpdatePlayerObject(owner, data);
 
 			var activeCharacter = GetSurvivor(owner, data.ActiveCharacterIndex);
-			if (activeCharacter != null)
+			if (activeCharacter != null && activeCharacter.HasRetreatAssignment == false)
 			{
 				activeCharacter.SetIdleAI();
 			}
@@ -786,6 +840,11 @@ namespace SimpleFPS
 			playerData.SetFirstAliveCharacters(count);
 			playerData.CharacterCount       = count;
 			playerData.IsAlive              = true;
+			float minHomeRadius = AICommandSettings != null ? Mathf.Max(0.1f, AICommandSettings.AssignedAreaMinRadius) : 3f;
+			float maxHomeRadius = AICommandSettings != null ? Mathf.Max(minHomeRadius, AICommandSettings.AssignedAreaMaxRadius) : 3f;
+			playerData.HomeBaseCenter       = SnapAssignedAreaCenterToHeightMap(spawnPoint.position);
+			playerData.HomeBaseRadius       = Mathf.Clamp(3f, minHomeRadius, maxHomeRadius);
+			playerData.HomeBaseInitialized  = true;
 			PlayerData.Set(playerRef, playerData);
 
 			UpdatePlayerObject(playerRef, playerData);
@@ -1270,13 +1329,45 @@ namespace SimpleFPS
 		}
 
 		[Rpc(RpcSources.All, RpcTargets.StateAuthority, Channel = RpcChannel.Reliable)]
-		private void RPC_RequestMapCombatSettings(int selectedMask0, int selectedMask1, int selectedMask2, int selectedMask3, bool enabled, RpcInfo info = default)
+		private void RPC_RequestMapCombatBehavior(
+			int selectedMask0,
+			int selectedMask1,
+			int selectedMask2,
+			int selectedMask3,
+			int behaviorId,
+			RpcInfo info = default)
 		{
 			if (IsValidMapOrderSource(info.Source) == false)
 				return;
+			if (System.Enum.IsDefined(typeof(ESurvivorCombatBehavior), behaviorId) == false)
+				return;
 
 			var selectedCharacterMask = new CharacterMask128(selectedMask0, selectedMask1, selectedMask2, selectedMask3);
-			SurvivorAICommands.ApplySelectedTeamCombatSettings(info.Source, selectedCharacterMask, enabled);
+			SurvivorAICommands.ApplySelectedTeamCombatBehavior(
+				info.Source,
+				selectedCharacterMask,
+				(ESurvivorCombatBehavior)behaviorId);
+		}
+
+		[Rpc(RpcSources.All, RpcTargets.StateAuthority, Channel = RpcChannel.Reliable)]
+		private void RPC_RequestMapRetreatMode(
+			int selectedMask0,
+			int selectedMask1,
+			int selectedMask2,
+			int selectedMask3,
+			int modeId,
+			RpcInfo info = default)
+		{
+			if (IsValidMapOrderSource(info.Source) == false)
+				return;
+			if (System.Enum.IsDefined(typeof(ESurvivorRetreatMode), modeId) == false)
+				return;
+
+			var selectedCharacterMask = new CharacterMask128(selectedMask0, selectedMask1, selectedMask2, selectedMask3);
+			SurvivorAICommands.ApplySelectedTeamRetreatMode(
+				info.Source,
+				selectedCharacterMask,
+				(ESurvivorRetreatMode)modeId);
 		}
 
 		[Rpc(RpcSources.All, RpcTargets.StateAuthority, Channel = RpcChannel.Reliable)]
@@ -1310,6 +1401,15 @@ namespace SimpleFPS
 				info.Source,
 				selectedCharacterMask,
 				(ESurvivorWeaponPreference)preferenceId);
+		}
+
+		[Rpc(RpcSources.All, RpcTargets.StateAuthority, Channel = RpcChannel.Reliable)]
+		private void RPC_RequestSetHomeBase(Vector3 center, float radius, RpcInfo info = default)
+		{
+			if (IsValidMapOrderSource(info.Source) == false)
+				return;
+
+			TrySetHomeBase(info.Source, center, radius);
 		}
 
 		[Rpc(RpcSources.All, RpcTargets.StateAuthority, Channel = RpcChannel.Reliable)]
@@ -1347,6 +1447,45 @@ namespace SimpleFPS
 
 			radius = Mathf.Min(requestedRadius, maxRadius);
 			return radius > 0f;
+		}
+
+		private bool TrySetHomeBase(PlayerRef owner, Vector3 requestedCenter, float requestedRadius)
+		{
+			if (HasStateAuthority == false ||
+			    IsValidMapOrderSource(owner) == false ||
+			    IsFinite(requestedCenter) == false ||
+			    TryGetValidAssignedAreaRadius(requestedRadius, out float radius) == false)
+			{
+				return false;
+			}
+
+			Vector3 center = SnapAssignedAreaCenterToHeightMap(requestedCenter);
+			if (SurvivorAICommands.TryValidateAssignedArea(owner, center, radius) == false)
+				return false;
+			if (PlayerData.TryGet(owner, out PlayerData data) == false)
+				return false;
+
+			data.HomeBaseCenter = center;
+			data.HomeBaseRadius = radius;
+			data.HomeBaseInitialized = true;
+			PlayerData.Set(owner, data);
+			NotifyHomeBaseChanged(owner);
+			return true;
+		}
+
+		private void NotifyHomeBaseChanged(PlayerRef owner)
+		{
+			if (_characterCache.TryGetValue(owner, out var survivors) == false)
+				return;
+
+			foreach (var pair in survivors)
+			{
+				Survivor survivor = pair.Value;
+				if (survivor == null || survivor.Health == null || survivor.Health.IsAlive == false)
+					continue;
+
+				survivor.RetreatAI?.HandleHomeBaseChanged();
+			}
 		}
 
 		// Replace the raw map-raycast Y (which may have hit a roof, car, or other scenery) with the ground Y of

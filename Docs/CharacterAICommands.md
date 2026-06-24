@@ -63,7 +63,7 @@ Hold position:
 
 - Returns zero movement.
 - Uses `SurvivorAIShooting` when there is a direct target with line of fire and the weapon/fire mode allows shooting.
-- The roster combat movement toggle controls tactical repositioning only; shooting is controlled by the weapon/fire mode.
+- Combat behavior `None` disables tactical repositioning only; shooting is controlled by the weapon/fire mode.
 - Uses `CharacterSensor` investigation look input only when its non-combat settings allow investigation.
 
 Follow assignment:
@@ -84,7 +84,7 @@ Move assignment:
 - Sets that destination on `CharacterNavigator`.
 - Steers toward the current path corner and keeps emitting movement until the destination is reached.
 - Can layer `SurvivorAIShooting` look/fire input over movement when a direct enemy has line of fire.
-- The combat movement toggle is separate from non-combat orders. Disabling it does not cancel follow, move, hold, or assigned-area orders; it stops tactical repositioning against both enemy survivors and zombies.
+- Combat behavior is separate from non-combat orders. Setting it to `None` does not cancel follow, move, hold, assigned-area, or home-base retreat orders; it stops tactical repositioning against both enemy survivors and zombies.
 - Once the destination is reached, the move point remains a persistent guard anchor. Combat, investigation, pickup collection, or recruiting may temporarily pull the survivor away, but it returns to that anchor afterward.
 - Does not directly move transforms.
 

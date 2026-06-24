@@ -257,18 +257,69 @@ Initial non-combat toggles should map to current settings:
 CollectVisiblePickups
 InvestigateSuspiciousStimuli
 RecruitNeutralSurvivors
-AllowCombatAIActivation (legacy field name; displayed as the combat movement toggle)
 ```
 
-The combat movement toggle enables/disables AI combat movement against both enemy survivors and zombies. When disabled, survivors may still aim and shoot according to their weapon/fire mode, but they do not reposition for cover, range, or close-zombie retreat. Non-combat movement from player orders, investigation, pickup collection, recruiting, and assigned-area patrol remains separate.
-
-The roster also needs one non-boolean combat mode control:
+The retreat behavior adds another enum-valued cycling control:
 
 ```text
+No Retreat / 25% / 50% / 75%
+```
+
+Starting player survivors default to `No Retreat`. Newly recruited survivors inherit the recruiter's current retreat mode.
+
+Unlike the ordinary optional-behavior toggles, changing retreat may immediately change an assignment:
+
+- Selecting a percentage immediately sends an eligible low-health unpossessed survivor outside the home base to patrol the home base.
+- Changing it on the possessed survivor stores the setting without scheduling an unpossess check.
+- Selecting `No Retreat` cancels only a retreat-created assignment and gives that survivor a persistent move/guard order at its current position.
+- It does not cancel a manually issued patrol, even if the patrol matches the home-base circle.
+
+See `Docs/SurvivorRetreatAI.md`.
+
+The roster uses a non-boolean combat behavior control:
+
+```text
+Combat behavior: Normal / Aggressive / Defensive / None
 Weapon/fire mode: Automatic / Prefer Strong Weapons / Prefer Pistol / Hold Fire
 ```
 
-This is a four-state segmented or cycling control on every survivor card and in the bulk settings row. It must use an enum-valued authoritative request rather than the existing boolean `ESurvivorAISetting` path. See `Docs/SurvivorWeaponPreferenceAI.md`.
+Both are four-state segmented or cycling controls on every survivor card and in the bulk settings row. They must use enum-valued authoritative requests rather than the boolean `ESurvivorAISetting` path. See `Docs/SurvivorCombatBehaviorAI.md` and `Docs/SurvivorWeaponPreferenceAI.md`.
+
+Combat behavior `None` replaces the old disabled combat-movement toggle. It allows target selection, turning, and shooting, but prevents cover, range, advance, ally-spacing, and close-zombie retreat movement. Non-combat movement and the separate home-base retreat toggle remain independent.
+
+### Authored Control Setup
+
+The three cycling controls are standalone Unity components:
+
+```text
+SurvivorWeaponPreferenceControl
+SurvivorCombatBehaviorControl
+SurvivorRetreatModeControl
+```
+
+For each bulk control, create a child under `BulkToggleBar` with:
+
+```text
+RectTransform
+Image
+Button
+LayoutElement
+the matching control component
+```
+
+Assign those components on `SurvivorRosterController`:
+
+```text
+BulkWeaponPreferenceControl
+BulkCombatBehaviorControl
+BulkRetreatModeControl
+```
+
+Use the same components on the survivor-card prefab and assign them to the matching fields on `SurvivorRosterEntry`.
+
+The control component can create its own `Label` child and resolve the local `Image` and `Button` during `Awake`, so those three references may be left empty. Authoring and assigning them explicitly is still useful when tuning typography or colors.
+
+When a control reference is empty and runtime UI creation is enabled, `SurvivorRosterController` or `SurvivorRosterEntry` creates the missing control automatically.
 
 The old broad keyboard setting shortcuts (`I`, `O`, `K`, `L`) have been removed. AI behavior settings are controlled through the roster's individual and bulk toggles. The roster uses the finer-grained request path:
 
@@ -278,14 +329,13 @@ public enum ESurvivorAISetting
     CollectVisiblePickups,
     InvestigateSuspiciousStimuli,
     RecruitNeutralSurvivors,
-    AllowCombatAIActivation,
 }
 
 Gameplay.RequestMapAISetting(CharacterMask128 mask, ESurvivorAISetting setting, bool enabled)
 SurvivorAICommandService.ApplySelectedTeamAISetting(PlayerRef owner, CharacterMask128 mask, ESurvivorAISetting setting, bool enabled)
 ```
 
-This request path is now implemented. The UI still sends a local `CharacterMask128`, and state authority validates ownership, alive state, and the setting enum before applying the change. Unlike movement/follow/defend orders, individual AI setting toggles are allowed to include the currently possessed survivor.
+This boolean request path handles the three non-combat toggles. Retreat mode, combat behavior, and weapon preference use their own enum-valued authoritative requests. The UI sends a local `CharacterMask128`, and state authority validates ownership, alive state, and the setting or mode enum before applying the change. Unlike movement/follow/defend orders, individual AI settings and modes may include the currently possessed survivor.
 
 State authority must validate the same things current map setting requests validate:
 

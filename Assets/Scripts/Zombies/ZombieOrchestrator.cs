@@ -59,6 +59,7 @@ namespace SimpleFPS
 		private int _filteredSpawnPointCount;
 		private bool _hasSpawnBounds;
 		private bool _isOvertime;
+		private float _overtimeStartTime;
 		private bool _isStarted;
 		private bool _hasRunInitialPopulation;
 		private bool _hasMatchStartReroll;
@@ -347,6 +348,7 @@ namespace SimpleFPS
 				return;
 
 			_isOvertime = true;
+			_overtimeStartTime = Time.timeSinceLevelLoad;
 			ZombieStats stats = GetOvertimeStats();
 			for (int i = ZombieCharacter.ActiveZombies.Count - 1; i >= 0; i--)
 			{
@@ -435,7 +437,7 @@ namespace SimpleFPS
 
 		private void SpawnZombie(NetworkRunner runner, SpawnCandidate candidate)
 		{
-			ZombieStats stats = _isOvertime ? GetOvertimeStats() : GetCurrentStats();
+			ZombieStats stats = _isOvertime ? GetOvertimeSpawnStats() : GetCurrentStats();
 			runner.SpawnAsync(Settings.ZombiePrefab, candidate.Position, candidate.Rotation, null, null, default,
 				spawn =>
 				{
@@ -741,6 +743,19 @@ namespace SimpleFPS
 				AttackRange = prefabStats.AttackRange > 0f ? prefabStats.AttackRange : 1.2f,
 				AttackCooldown = prefabStats.AttackCooldown > 0f ? prefabStats.AttackCooldown : 1.1f,
 			};
+		}
+
+		private ZombieStats GetOvertimeSpawnStats()
+		{
+			ZombieStats stats = GetOvertimeStats();
+			float increasePerStep = Mathf.Max(0f, Settings.OvertimeNewZombieHealthIncreasePer10Seconds);
+			if (increasePerStep <= 0f)
+				return stats;
+
+			float elapsed = Mathf.Max(0f, Time.timeSinceLevelLoad - _overtimeStartTime);
+			int completedSteps = Mathf.FloorToInt(elapsed / 10f);
+			stats.MaxHealth += completedSteps * increasePerStep;
+			return stats;
 		}
 
 		private float GetProgress01()

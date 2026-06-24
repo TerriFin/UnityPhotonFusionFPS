@@ -17,14 +17,12 @@ namespace SimpleFPS
 		public bool CollectVisiblePickups;
 		public bool InvestigateSuspiciousStimuli;
 		public bool RecruitNeutralSurvivors;
-		public bool AllowCombatAIActivation;
 
 		public static SurvivorNonCombatAISettings Default => new SurvivorNonCombatAISettings
 		{
 			CollectVisiblePickups = true,
 			InvestigateSuspiciousStimuli = true,
 			RecruitNeutralSurvivors = true,
-			AllowCombatAIActivation = true,
 		};
 
 		public static SurvivorNonCombatAISettings Passive => new SurvivorNonCombatAISettings
@@ -32,7 +30,6 @@ namespace SimpleFPS
 			CollectVisiblePickups = false,
 			InvestigateSuspiciousStimuli = false,
 			RecruitNeutralSurvivors = false,
-			AllowCombatAIActivation = false,
 		};
 	}
 
@@ -91,6 +88,7 @@ namespace SimpleFPS
 		public ENonCombatAssignment Assignment => _assignment;
 		public Survivor FollowTarget => _followTarget;
 		public Vector3 AnchorPosition => _anchorPosition;
+		public float AssignmentRadius => _assignmentRadius;
 
 		public static SurvivorNonCombatAI HoldPosition(Survivor survivor, SurvivorNonCombatAISettings settings)
 		{
@@ -306,13 +304,9 @@ namespace SimpleFPS
 
 		public void SetSettings(SurvivorNonCombatAISettings settings)
 		{
-			bool combatWasEnabled = _settings.AllowCombatAIActivation;
 			_settings = settings;
 
 			EnsureBehaviorComponents();
-			if (combatWasEnabled && _settings.AllowCombatAIActivation == false)
-				_combat?.ClearMovementTask();
-
 			if (_settings.CollectVisiblePickups == false && (_looting != null && (_looting.HasTask || _looting.IsReturning)))
 				_looting.ClearTask(true, _anchorPosition, _survivor != null ? _survivor.Navigator : null);
 			// A recruitment hand-off investigation is governed by the recruit setting, a stimulus investigation by the
@@ -1128,7 +1122,6 @@ namespace SimpleFPS
 			if (_combat.TryGetDirectTarget(out var enemy, out bool hasLineOfFire))
 			{
 				TryAlertAlliesAboutDirectEnemy(enemy);
-				bool combatMovementEnabled = _settings.AllowCombatAIActivation;
 				bool allowLostInvestigationForTarget = allowLostCombatInvestigation && IsLostCombatInvestigationTarget(enemy);
 
 				if (hasLineOfFire)
@@ -1142,8 +1135,7 @@ namespace SimpleFPS
 						    hasLineOfFire,
 						    out input,
 						    isMoving,
-						    allowCombatMovement,
-						    combatMovementEnabled))
+						    allowCombatMovement))
 						return true;
 				}
 

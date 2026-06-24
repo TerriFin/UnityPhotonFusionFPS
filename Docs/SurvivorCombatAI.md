@@ -54,6 +54,12 @@ The first concrete behavior component is:
 - `SurvivorCombatMovementAI`: owns survivor-vs-survivor combat movement, including dynamic cover scoring, spreading away from allies, and preferred weapon range movement.
 - `SurvivorWeaponPreferenceAI`: owns the four-state Automatic / Prefer Strong Weapons / Prefer Pistol / Hold Fire weapon-fire choice. See `Docs/SurvivorWeaponPreferenceAI.md`.
 
+Planned player-facing combat controls are documented separately:
+
+- `Docs/SurvivorCombatBehaviorAI.md`: Normal / Aggressive / Defensive / None target-priority and tactical-movement profiles.
+- `Docs/SurvivorRetreatAI.md`: independent percentage-based retreat-to-home-base mode.
+- `Docs/HomeBaseSystem.md`: per-player map area used by retreat and future base features.
+
 ## Combat Activation
 
 Combat AI becomes active when the survivor has a valid combat target.
@@ -132,11 +138,10 @@ EnemyPriority: Smart
 LostEnemyBehavior: StopWhenLost
 ```
 
-First implementation state:
+Current implementation:
 
-- The roster exposes one combat movement toggle through `SurvivorNonCombatAISettings.AllowCombatAIActivation`.
-- When enabled, the survivor may use tactical combat movement.
-- When disabled, the survivor does not use tactical movement against enemy survivors or close-zombie retreat movement.
+- The four-state combat behavior replaces the old combat-movement boolean: `None` is the disabled state, while `Normal`, `Aggressive`, and `Defensive` enable their respective tactical movement.
+- `None` does not use tactical movement against enemy survivors or close-zombie retreat movement.
 - Shooting is controlled by the independent weapon/fire mode.
 - Weapon preference remains an independent four-state control.
 - Like non-combat settings, combat settings are stored separately from the current assignment. Orders do not reset combat settings.
@@ -180,18 +185,18 @@ Combat movement should be layered on top of ordinary `NetworkedInput`.
 
 Zombie combat uses a simpler first-pass branch than enemy-survivor combat.
 
-Regardless of the combat movement toggle, survivors:
+Regardless of combat behavior, survivors:
 
 - Do not use cover sampling, ally spacing, or preferred weapon range movement against zombies.
 - Do not move toward a zombie just because it is far away.
 - Can aim and shoot from their current position when their weapon/fire mode allows it.
 
-While the combat movement toggle is enabled, survivors also:
+While combat behavior is `Normal`, `Aggressive`, or `Defensive`, survivors also:
 
 - Back away only if the zombie enters `SurvivorCombatAI.ZombieRetreatDistance`.
 - Keep aiming/firing while backing away when line of fire, weapon/fire mode, and weapon timing allow it.
 
-If the combat movement toggle is disabled, the survivor does not retreat from zombies for combat reasons, but can still turn toward and shoot them when its weapon/fire mode allows it.
+If combat behavior is `None`, the survivor does not retreat from zombies for combat reasons, but can still turn toward and shoot them when its weapon/fire mode allows it.
 
 ### Enemy Survivors
 
@@ -210,7 +215,7 @@ If the combat movement toggle is disabled, the survivor does not retreat from zo
 - Find nearby cover and move there.
 - Peek/shoot behavior can come later.
 
-When the combat movement toggle is disabled, none of these tactical movement modes run against enemy survivors. The survivor remains in place unless a player/non-combat order moves it and may turn/shoot according to its weapon/fire mode.
+When combat behavior is `None`, none of these tactical movement modes run against enemy survivors. The survivor remains in place unless a player/non-combat order or home-base retreat moves it and may turn/shoot according to its weapon/fire mode.
 
 The first version uses dynamic cover detection instead of requiring explicit cover markers. `SurvivorCombatMovementAI` samples a small number of reachable NavMesh points around the survivor and scores them. The best point balances:
 

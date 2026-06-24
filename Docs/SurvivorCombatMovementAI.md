@@ -14,7 +14,7 @@ The intended combat structure is:
 SurvivorCombatAI
 -> chooses enemy target
 -> checks SurvivorCombatAISettings
--> asks SurvivorCombatMovementAI for movement when the single combat behavior toggle is enabled
+-> asks SurvivorCombatMovementAI for movement when combat behavior is Normal, Aggressive, or Defensive
 -> asks SurvivorAIShooting for aim/fire
 -> merges movement and shooting into normal NetworkedInput
 ```
@@ -108,8 +108,9 @@ Current implementation state:
 - Candidate search state is local to state authority and is not networked.
 - Reevaluations are staggered per survivor so large groups do not all run cover searches on the same simulation tick.
 - Nearby ally positions are cached once per reevaluation and reused for all candidate scores, instead of scanning every active survivor for every candidate.
-- The roster has one combat behavior toggle. When disabled, survivor-vs-survivor tactical movement and shooting both stop.
-- Zombie retreat is a lightweight safety behavior owned by `SurvivorCombatAI`; it remains available while the combat toggle is disabled and does not use this component.
+- The current roster has one legacy combat-movement toggle. The planned replacement is the four-state None / Normal / Aggressive / Defensive combat behavior.
+- `None` stops survivor-vs-survivor tactical movement but does not stop target selection, turning, or shooting.
+- Zombie retreat is a lightweight safety behavior owned by `SurvivorCombatAI`; it is disabled by `None` and does not use this component.
 - Candidates that fully block the survivor's own shot are rejected by default.
 - If a chosen combat destination appears to cause the survivor to lose its target, that destination is temporarily blacklisted. Lost-target investigation still starts immediately, but when combat resumes the movement AI avoids picking the same bad cover point again.
 - Combat movement is suppressed while a player movement order is still being fulfilled. Follow movement, unreached move orders, and first-time travel into an assigned defend area keep their ordered movement direction. Combat aim/fire may still merge into that movement, but tactical cover/range/spacing movement resumes only after the move destination is reached or the assigned area has been entered once.
@@ -146,7 +147,7 @@ Combat movement emits only movement intent.
 - Movement comes from `SurvivorCombatMovementAI`.
 - Look/fire/buttons come from `SurvivorAIShooting`.
 - If both want look rotation, shooting aim wins while there is a direct line-of-fire target.
-- If the combat behavior toggle is disabled, this component emits no movement. `SurvivorCombatAI` may still turn the survivor toward an enemy, and may retreat from a dangerously close zombie.
+- If combat behavior is `None`, this component emits no movement. `SurvivorCombatAI` may still turn the survivor toward an enemy and shoot, but it does not retreat from zombies for combat reasons.
 
 ## Network Model
 

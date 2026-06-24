@@ -37,6 +37,10 @@ namespace SimpleFPS
 		public float PreferredRangeWeight = 2f;
 		public float MoveCostWeight = 0.35f;
 		public float AllySpacingRadius = 4f;
+		public float AggressiveRangeWeight = 4f;
+		public float AggressiveCoverWeightMultiplier = 0.25f;
+		public float DefensiveRangeWeight = 4f;
+		public float DefensiveCoverWeightMultiplier = 1.25f;
 
 		[Header("Weapon Ranges")]
 		public float PistolPreferredRangeMin = 6f;
@@ -84,7 +88,11 @@ namespace SimpleFPS
 			BlacklistDestination(_destination, now, survivor != null ? survivor.Navigator : null);
 		}
 
-		public bool TryGetMoveDirection(Survivor survivor, KnownEnemyInfo enemy, out Vector3 moveDirection)
+		public bool TryGetMoveDirection(
+			Survivor survivor,
+			KnownEnemyInfo enemy,
+			ESurvivorCombatBehavior behavior,
+			out Vector3 moveDirection)
 		{
 			moveDirection = default;
 			if (survivor == null || survivor.Navigator == null)
@@ -101,7 +109,7 @@ namespace SimpleFPS
 
 			if (_hasDestination == false || now >= _nextReevaluateTime)
 			{
-				EvaluateDestination(survivor, enemy);
+				EvaluateDestination(survivor, enemy, behavior);
 				_nextReevaluateTime = now + GetNextReevaluationDelay();
 			}
 
@@ -140,7 +148,7 @@ namespace SimpleFPS
 			_candidateAngleOffset = Random.Range(0f, Mathf.PI * 2f);
 		}
 
-		private void EvaluateDestination(Survivor survivor, KnownEnemyInfo enemy)
+		private void EvaluateDestination(Survivor survivor, KnownEnemyInfo enemy, ESurvivorCombatBehavior behavior)
 		{
 			var navigator = survivor.Navigator;
 			if (navigator == null)
@@ -166,7 +174,7 @@ namespace SimpleFPS
 			WeaponRange range = GetPreferredRange(survivor);
 			CacheNearbyAllies(survivor, currentPosition);
 
-			float currentScore = ScorePoint(survivor, currentPosition, currentPosition, enemyPosition, range);
+			float currentScore = ScorePoint(survivor, currentPosition, currentPosition, enemyPosition, range, behavior);
 			float bestScore = currentScore;
 			Vector3 bestPoint = currentPosition;
 
@@ -187,7 +195,7 @@ namespace SimpleFPS
 				if (RequireCandidateLineOfFire && HasLineOfFireFromPoint(survivor, reachablePoint, enemyPosition) == false)
 					continue;
 
-				float score = ScorePoint(survivor, currentPosition, reachablePoint, enemyPosition, range);
+				float score = ScorePoint(survivor, currentPosition, reachablePoint, enemyPosition, range, behavior);
 				if (score <= bestScore)
 					continue;
 
@@ -264,11 +272,30 @@ namespace SimpleFPS
 			return true;
 		}
 
-		private float ScorePoint(Survivor survivor, Vector3 currentPosition, Vector3 point, Vector3 enemyPosition, WeaponRange range)
+		private float ScorePoint(
+			Survivor survivor,
+			Vector3 currentPosition,
+			Vector3 point,
+			Vector3 enemyPosition,
+			WeaponRange range,
+			ESurvivorCombatBehavior behavior)
 		{
+			float coverMultiplier = behavior switch
+			{
+				ESurvivorCombatBehavior.Aggressive => Mathf.Max(0f, AggressiveCoverWeightMultiplier),
+				ESurvivorCombatBehavior.Defensive => Mathf.Max(0f, DefensiveCoverWeightMultiplier),
+				_ => 1f,
+			};
+			float rangeWeight = behavior switch
+			{
+				ESurvivorCombatBehavior.Aggressive => Mathf.Max(0f, AggressiveRangeWeight),
+				ESurvivorCombatBehavior.Defensive => Mathf.Max(0f, DefensiveRangeWeight),
+				_ => Mathf.Max(0f, PreferredRangeWeight),
+			};
+
 			float score = 0f;
-			score += GetCoverScore(survivor, point, enemyPosition) * Mathf.Max(0f, CoverWeight);
-			score += GetPreferredRangeScore(point, enemyPosition, range) * Mathf.Max(0f, PreferredRangeWeight);
+			score += GetCoverScore(survivor, point, enemyPosition) * Mathf.Max(0f, CoverWeight) * coverMultiplier;
+			score += GetPreferredRangeScore(point, enemyPosition, range, behavior) * rangeWeight;
 			score -= GetAllySpacingPenalty(point) * Mathf.Max(0f, AllySpacingWeight);
 			score -= GetMoveCost(currentPosition, point) * Mathf.Max(0f, MoveCostWeight);
 			return score;
@@ -318,17 +345,30 @@ namespace SimpleFPS
 			return Physics.Linecast(enemyEye, pointEye, sensor.VisionBlockers, QueryTriggerInteraction.Ignore);
 		}
 
-		private float GetPreferredRangeScore(Vector3 point, Vector3 enemyPosition, WeaponRange range)
+		private float GetPreferredRangeScore(
+			Vector3 point,
+			Vector3 enemyPosition,
+			WeaponRange range,
+			ESurvivorCombatBehavior behavior)
 		{
 			float distance = FlatDistance(point, enemyPosition);
 			float min = Mathf.Max(0f, range.Min);
 			float max = Mathf.Max(min + 0.01f, range.Max);
+			float falloffDistance = Mathf.Max(1f, SearchRadius);
+
+			if (behavior == ESurvivorCombatBehavior.Aggressive)
+				return -Mathf.Min(Mathf.Abs(distance - min) / falloffDistance, 4f);
+
+			if (behavior == ESurvivorCombatBehavior.Defensive)
+			{
+				float desiredDistance = Mathf.Max(min, max - StoppingDistance);
+				return -Mathf.Min(Mathf.Abs(distance - desiredDistance) / falloffDistance, 4f);
+			}
 
 			if (distance >= min && distance <= max)
 				return 1f;
 
 			float miss = distance < min ? min - distance : distance - max;
-			float falloffDistance = Mathf.Max(1f, SearchRadius);
 			return -Mathf.Min(miss / falloffDistance, 4f);
 		}
 

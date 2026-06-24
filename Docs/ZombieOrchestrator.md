@@ -98,6 +98,7 @@ ZombieOrchestratorSettings
 	float OvertimeSpawnRatePerMinute; // per connected player
 
 	float OvertimeHealth;
+	float OvertimeNewZombieHealthIncreasePer10Seconds;
 	float OvertimeDamage;
 	float OvertimeMoveSpeed;
 
@@ -119,6 +120,7 @@ StartSpawnRatePerMinute: 12   (per connected player)
 EndSpawnRatePerMinute: 60     (per connected player)
 SpawnPulseInterval: 5s
 OvertimeSpawnRatePerMinute: 60 (per connected player)
+OvertimeNewZombieHealthIncreasePer10Seconds: 10
 SpawnNavMeshSampleDistance: 1.5
 MinimumSpawnConnectedNavMeshRadius: 8
 UnderpopulatedRegionBias: 0.65
@@ -201,7 +203,16 @@ When `matchElapsed >= MatchDurationSeconds`:
 - The per-player spawn rate switches to `OvertimeSpawnRatePerMinute`, independent of the normal spawn-rate curve.
 - All alive zombies immediately receive overtime stats.
 - Existing zombies preserve their current health percentage when their max health changes. For example, a zombie at `50%` health becomes `50%` of `OvertimeHealth`, not fully healed.
-- Newly spawned zombies receive overtime stats.
+- Newly spawned zombies receive overtime stats plus an unbounded stepwise max-health bonus:
+
+```text
+completedSteps = floor(overtimeElapsedSeconds / 10)
+newZombieHealth = OvertimeHealth
+                + completedSteps * OvertimeNewZombieHealthIncreasePer10Seconds
+```
+
+- Existing zombies are not repeatedly rescaled by this bonus. Their health changes only during the initial overtime transition.
+- Setting `OvertimeNewZombieHealthIncreasePer10Seconds` to `0` disables progressive overtime health.
 - Zombie AI switches to hunting behavior.
 - Zombies do not need normal sensory discovery or alerting to find a target. Each hunting zombie picks a random player that still has at least one alive survivor, then targets that player's closest survivor. Neutral survivors are excluded from this global pick so pressure is balanced per player, but a hunting zombie that directly senses any survivor — neutral included — attacks it instead. Hunting target selection is documented in `Docs/ZombieAI.md`.
 
@@ -413,6 +424,7 @@ Recommended first implementation path:
 6. Linearly scale current cap, spawn rate, and spawn-time stats by match progress.
 7. Spawn zombies through Fusion.
 8. Add overtime stat application and hunting activation.
+9. Increase newly spawned overtime zombie health after each completed 10-second overtime interval.
 
 ## Resolved Decisions
 

@@ -46,6 +46,10 @@ namespace SimpleFPS
 		public int CharacterIndex { get; set; }
 		[Networked, HideInInspector]
 		public ESurvivorWeaponPreference WeaponPreference { get; private set; }
+		[Networked, HideInInspector]
+		public ESurvivorCombatBehavior CombatBehavior { get; private set; }
+		[Networked, HideInInspector]
+		public ESurvivorRetreatMode RetreatMode { get; private set; }
 
 		[Networked]
 		private NetworkButtons _previousButtons { get; set; }
@@ -68,6 +72,7 @@ namespace SimpleFPS
 		private ICharacterInputSource _aiController;
 		private SurvivorNonCombatAISettings _nonCombatAISettings = SurvivorNonCombatAISettings.Default;
 		private SurvivorCombatAISettings _combatAISettings = SurvivorCombatAISettings.Default;
+		private bool _retreatAssignmentActive;
 
 		public CharacterSensor Sensor { get; private set; }
 		public SurvivorAIShooting AIShooting { get; private set; }
@@ -76,14 +81,19 @@ namespace SimpleFPS
 		public SurvivorNonCombatAI NonCombatAI { get; private set; }
 		public SurvivorCombatAI CombatAI { get; private set; }
 		public SurvivorWeaponPreferenceAI WeaponPreferenceAI { get; private set; }
+		public SurvivorRetreatAI RetreatAI { get; private set; }
 		public SurvivorNonCombatAISettings NonCombatAISettings => _nonCombatAISettings;
+		public bool HasRetreatAssignment => _retreatAssignmentActive;
 		public SurvivorCombatAISettings CombatAISettings
 		{
 			get
 			{
 				SurvivorCombatAISettings settings = _combatAISettings;
 				if (Object != null && Object.IsValid)
+				{
 					settings.WeaponPreference = WeaponPreference;
+					settings.CombatBehavior = CombatBehavior;
+				}
 				return settings;
 			}
 		}
@@ -94,8 +104,10 @@ namespace SimpleFPS
 			Animator.SetTrigger("Fire");
 		}
 
-		public void SetAI(ICharacterInputSource aiController)
+		public void SetAI(ICharacterInputSource aiController, bool retreatAssignment = false)
 		{
+			_retreatAssignmentActive = retreatAssignment;
+
 			if (aiController is SurvivorNonCombatAI nonCombatAI)
 			{
 				EnsureNonCombatAI();
@@ -134,9 +146,31 @@ namespace SimpleFPS
 		{
 			_combatAISettings = settings;
 			if (HasStateAuthority && Object != null && Object.IsValid)
+			{
 				WeaponPreference = settings.WeaponPreference;
+				CombatBehavior = settings.CombatBehavior;
+			}
 			EnsureCombatAI();
 			CombatAI.SetSettings(settings);
+		}
+
+		public void SetRetreatMode(ESurvivorRetreatMode mode)
+		{
+			if (HasStateAuthority == false)
+				return;
+
+			RetreatMode = mode;
+			EnsureRetreatAI();
+			RetreatAI.SetMode(mode);
+		}
+
+		public void NotifyDamageTaken()
+		{
+			if (HasStateAuthority == false)
+				return;
+
+			EnsureRetreatAI();
+			RetreatAI.HandleDamageTaken();
 		}
 
 		public void ReceiveInvestigationAlert(Vector3 target, int stimulusTick, bool lookOnly = false)
@@ -207,7 +241,11 @@ namespace SimpleFPS
 
 			EnsureWeaponPreferenceAI();
 			if (HasStateAuthority)
+			{
 				WeaponPreference = _combatAISettings.WeaponPreference;
+				CombatBehavior = _combatAISettings.CombatBehavior;
+				RetreatMode = ESurvivorRetreatMode.NoRetreat;
+			}
 
 			EnsureCombatAI();
 			CombatAI.Activate(this);
@@ -228,6 +266,7 @@ namespace SimpleFPS
 
 			EnsureNonCombatAI();
 			NonCombatAI.Activate(this);
+			EnsureRetreatAI();
 
 			if (_sceneObjects != null && _sceneObjects.Gameplay != null)
 			{
@@ -290,6 +329,17 @@ namespace SimpleFPS
 			if (WeaponPreferenceAI == null)
 				WeaponPreferenceAI = gameObject.AddComponent<SurvivorWeaponPreferenceAI>();
 			WeaponPreferenceAI.Activate(this);
+		}
+
+		private void EnsureRetreatAI()
+		{
+			if (RetreatAI != null)
+				return;
+
+			RetreatAI = GetComponent<SurvivorRetreatAI>();
+			if (RetreatAI == null)
+				RetreatAI = gameObject.AddComponent<SurvivorRetreatAI>();
+			RetreatAI.Activate(this);
 		}
 
 		public override void Despawned(NetworkRunner runner, bool hasState)

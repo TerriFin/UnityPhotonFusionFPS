@@ -362,7 +362,7 @@ Trajectory evaluation is three multiplications and one subtraction per bullet pe
 ### Buffer overflow
 The 16-slot circular buffers mean that if a weapon fires more than 16 bullets before any are resolved, the oldest spawn data gets silently overwritten (oldest visual is orphaned; gameplay result on the server is already determined). In practice this cannot happen at normal fire rates and bullet speeds — at 900 RPM and a 0.25 s bullet flight time, at most ~4 bullets are ever in flight from one weapon simultaneously.
 
-**Why 16, not more:** Fusion syncs the full allocated capacity of every `NetworkArray` to all clients, regardless of how many slots are actually in use. With 5 characters per player each carrying 3 weapons, 15 weapons × 2 arrays × capacity = 30 arrays of networked state. Keeping capacity at 16 (≈944 bytes per weapon) rather than 64 (≈3 776 bytes) reduces per-player weapon state by 75% and prevents client ping spikes on join. Do not raise this capacity without profiling the effect on clients first.
+**Why 16, not more:** Fusion reserves the full allocated capacity of every `NetworkArray` in snapshot state regardless of how many slots are currently in use. The current expanded hit data makes one weaved `Weapon` 279 words / 1,116 bytes. With each survivor carrying three weapon behaviours, buffer capacity has a large effect on fixed state, spawning, and late joining. Do not raise this capacity without profiling first. See `Docs/NetworkOptimizationAudit.md` for the current measured breakdown and recommended replacement architecture.
 
 ---
 

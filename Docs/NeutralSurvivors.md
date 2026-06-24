@@ -69,6 +69,7 @@ On recruitment:
    - if the recruiter is AI-controlled and had a player move order, inherit the same persistent move/guard anchor,
    - if the recruiter is AI-controlled and had an assigned patrol/defend area, inherit the same area,
    - otherwise inherit the closest equivalent current non-combat assignment.
+   - copy the recruiter's non-combat toggles, weapon preference, combat behavior, and retreat mode.
 
 Current team masks support up to 128 characters per player.
 

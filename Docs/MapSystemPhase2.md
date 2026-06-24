@@ -324,6 +324,18 @@ Rules:
 - State authority validates the radius again before assigning the order.
 - The dragged center does not need to be on NavMesh. State authority resolves one shared reachable patrol-point set inside the circle for the selected group. If center/cardinal/diagonal probes find no reachable terrain, the selected survivors keep their previous assignments. If reachable terrain exists, each survivor receives the same point set and picks its own entry/patrol target.
 
+### Home Base Area
+
+When no selectable survivors are selected, the same right-click gesture edits the local player's home base instead of issuing a survivor order:
+
+- A right click creates the minimum-radius home-base area.
+- A right-drag creates a larger home-base area using the same min/max radius and drag rules.
+- The persistent home-base circle is light green and remains visible regardless of selection.
+- Moving the marker does not issue a general team order, but it immediately redirects injured unpossessed survivors that have retreat enabled and are below their retreat threshold.
+- Retreating survivors receive a normal assigned-area patrol using the current home-base center and radius.
+
+See `Docs/HomeBaseSystem.md`.
+
 ## Relation To Existing Command System
 
 Current hotkeys:

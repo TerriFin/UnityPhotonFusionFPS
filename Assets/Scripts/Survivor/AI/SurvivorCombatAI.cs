@@ -3,13 +3,31 @@ using UnityEngine;
 
 namespace SimpleFPS
 {
+	public enum ESurvivorCombatBehavior
+	{
+		Normal = 0,
+		Aggressive = 1,
+		Defensive = 2,
+		None = 3,
+	}
+
+	public enum ESurvivorRetreatMode
+	{
+		NoRetreat = 0,
+		RetreatAt25Percent = 1,
+		RetreatAt50Percent = 2,
+		RetreatAt75Percent = 3,
+	}
+
 	public struct SurvivorCombatAISettings
 	{
 		public ESurvivorWeaponPreference WeaponPreference;
+		public ESurvivorCombatBehavior CombatBehavior;
 
 		public static SurvivorCombatAISettings Default => new SurvivorCombatAISettings
 		{
 			WeaponPreference = ESurvivorWeaponPreference.Automatic,
+			CombatBehavior = ESurvivorCombatBehavior.Normal,
 		};
 	}
 
@@ -21,6 +39,10 @@ namespace SimpleFPS
 
 		[Header("Zombie Combat")]
 		public float ZombieRetreatDistance = 3.5f;
+		public float NoneZombiePriorityDistanceMultiplier = 1.5f;
+		public float NormalZombiePriorityDistanceMultiplier = 1.5f;
+		public float AggressiveZombiePriorityDistanceMultiplier = 1.25f;
+		public float DefensiveZombiePriorityDistanceMultiplier = 1.75f;
 
 		private Survivor _survivor;
 		private SurvivorCombatMovementAI _movement;
@@ -38,8 +60,24 @@ namespace SimpleFPS
 
 		public void SetSettings(SurvivorCombatAISettings settings)
 		{
+			bool movementWasEnabled = _settings.CombatBehavior != ESurvivorCombatBehavior.None;
 			_settings = settings;
 			EnsureBehaviorComponents();
+			if (movementWasEnabled && settings.CombatBehavior == ESurvivorCombatBehavior.None)
+				ClearMovementTask();
+		}
+
+		public float GetEmergencyZombieDistance()
+		{
+			float multiplier = _settings.CombatBehavior switch
+			{
+				ESurvivorCombatBehavior.Aggressive => AggressiveZombiePriorityDistanceMultiplier,
+				ESurvivorCombatBehavior.Defensive => DefensiveZombiePriorityDistanceMultiplier,
+				ESurvivorCombatBehavior.None => NoneZombiePriorityDistanceMultiplier,
+				_ => NormalZombiePriorityDistanceMultiplier,
+			};
+
+			return Mathf.Max(0f, ZombieRetreatDistance) * Mathf.Max(0f, multiplier);
 		}
 
 		public void ClearMovementTask()
@@ -73,8 +111,7 @@ namespace SimpleFPS
 			bool hasLineOfFire,
 			out NetworkedInput input,
 			bool isAlreadyMoving = false,
-			bool allowMovement = true,
-			bool combatMovementEnabled = true)
+			bool allowMovement = true)
 		{
 			input = default;
 			EnsureSurvivor();
@@ -84,13 +121,13 @@ namespace SimpleFPS
 				return false;
 
 			if (IsZombieTarget(enemy))
-				return TryGetZombieInput(enemy, hasLineOfFire, out input, isAlreadyMoving, allowMovement, combatMovementEnabled);
+				return TryGetZombieInput(enemy, hasLineOfFire, out input, isAlreadyMoving, allowMovement);
 
 			Vector3 moveDirection = default;
-			bool hasMovement = combatMovementEnabled &&
+			bool hasMovement = _settings.CombatBehavior != ESurvivorCombatBehavior.None &&
 			                   allowMovement &&
 			                   _movement != null &&
-			                   _movement.TryGetMoveDirection(_survivor, enemy, out moveDirection);
+			                   _movement.TryGetMoveDirection(_survivor, enemy, _settings.CombatBehavior, out moveDirection);
 
 			NetworkedInput shootingInput = default;
 			bool hasShooting = hasLineOfFire &&
@@ -123,13 +160,12 @@ namespace SimpleFPS
 			bool hasLineOfFire,
 			out NetworkedInput input,
 			bool isAlreadyMoving,
-			bool allowMovement,
-			bool combatMovementEnabled)
+			bool allowMovement)
 		{
 			input = default;
 
 			Vector3 moveDirection = default;
-			bool hasMovement = combatMovementEnabled &&
+			bool hasMovement = _settings.CombatBehavior != ESurvivorCombatBehavior.None &&
 			                   allowMovement &&
 			                   TryGetZombieRetreatDirection(enemy, out moveDirection);
 
@@ -250,6 +286,131 @@ namespace SimpleFPS
 			Vector3 localDirection = Quaternion.Inverse(Quaternion.Euler(0f, lookYaw, 0f)) * worldDirection;
 			var moveDirection = new Vector2(localDirection.x, localDirection.z);
 			return moveDirection.sqrMagnitude > 1f ? moveDirection.normalized : moveDirection;
+		}
+	}
+}
+
+namespace SimpleFPS
+{
+	[DisallowMultipleComponent]
+	public sealed class SurvivorRetreatAI : MonoBehaviour
+	{
+		private Survivor _survivor;
+		private Gameplay _gameplay;
+
+		public void Activate(Survivor survivor)
+		{
+			_survivor = survivor != null ? survivor : GetComponent<Survivor>();
+			ResolveGameplay();
+		}
+
+		public void SetMode(ESurvivorRetreatMode mode)
+		{
+			if (_survivor == null || _survivor.HasStateAuthority == false)
+				return;
+
+			if (mode != ESurvivorRetreatMode.NoRetreat)
+			{
+				TryStartRetreat();
+				return;
+			}
+
+			if (_survivor.HasRetreatAssignment)
+			{
+				_survivor.SetAI(SurvivorNonCombatAI.MoveTo(
+					_survivor,
+					_survivor.transform.position,
+					_survivor.NonCombatAISettings));
+			}
+		}
+
+		public void HandleDamageTaken()
+		{
+			if (_survivor == null || _survivor.RetreatMode == ESurvivorRetreatMode.NoRetreat)
+				return;
+
+			TryStartRetreat();
+		}
+
+		public void HandleHomeBaseChanged()
+		{
+			if (_survivor == null || _survivor.RetreatMode == ESurvivorRetreatMode.NoRetreat)
+				return;
+
+			TryStartRetreat();
+		}
+
+		public bool TryStartRetreat()
+		{
+			if (IsEligible() == false)
+				return false;
+			if (_gameplay.TryGetHomeBase(_survivor.OwnerRef, out Vector3 center, out float radius) == false)
+				return false;
+			if (IsInsideHomeBase(center, radius))
+				return false;
+			if (_survivor.HasRetreatAssignment &&
+			    _survivor.NonCombatAI != null &&
+			    _survivor.NonCombatAI.Assignment == ENonCombatAssignment.AssignedArea &&
+			    FlatDistanceSqr(_survivor.NonCombatAI.AnchorPosition, center) <= 0.01f &&
+			    Mathf.Abs(_survivor.NonCombatAI.AssignmentRadius - radius) <= 0.01f)
+			{
+				return false;
+			}
+
+			return _gameplay.SurvivorAICommands.TryApplyRetreatAssignedArea(_survivor, center, radius);
+		}
+
+		private bool IsEligible()
+		{
+			ResolveGameplay();
+			return _survivor != null &&
+			       _gameplay != null &&
+			       _survivor.HasStateAuthority &&
+			       CharacterFactionUtility.IsPlayerOwnedSurvivor(_survivor) &&
+			       _survivor.Health != null &&
+			       _survivor.Health.IsAlive &&
+			       IsBelowRetreatThreshold() &&
+			       _survivor.IsActiveCharacter() == false;
+		}
+
+		private bool IsBelowRetreatThreshold()
+		{
+			if (_survivor.Health == null || _survivor.Health.MaxHealth <= 0f)
+				return false;
+
+			float threshold = _survivor.RetreatMode switch
+			{
+				ESurvivorRetreatMode.RetreatAt25Percent => 0.25f,
+				ESurvivorRetreatMode.RetreatAt50Percent => 0.5f,
+				ESurvivorRetreatMode.RetreatAt75Percent => 0.75f,
+				_ => 0f,
+			};
+
+			return threshold > 0f && _survivor.Health.CurrentHealth / _survivor.Health.MaxHealth < threshold;
+		}
+
+		private bool IsInsideHomeBase(Vector3 center, float radius)
+		{
+			SurvivorAssignedAreaAI assignedArea = _survivor.GetComponent<SurvivorAssignedAreaAI>();
+			return assignedArea != null
+				? assignedArea.IsInsideArea(_survivor, center, radius)
+				: FlatDistanceSqr(_survivor.transform.position, center) <= radius * radius;
+		}
+
+		private void ResolveGameplay()
+		{
+			if (_gameplay != null || _survivor == null || _survivor.Runner == null)
+				return;
+
+			SceneObjects sceneObjects = _survivor.Runner.GetSingleton<SceneObjects>();
+			_gameplay = sceneObjects != null ? sceneObjects.Gameplay : null;
+		}
+
+		private static float FlatDistanceSqr(Vector3 a, Vector3 b)
+		{
+			a.y = 0f;
+			b.y = 0f;
+			return (a - b).sqrMagnitude;
 		}
 	}
 }
