@@ -88,6 +88,24 @@ namespace SimpleFPS
 	{
 		public const int NeutralTeamColorIndex = -1;
 
+		private readonly struct TeamSpawnLocation
+		{
+			public readonly Vector3 Position;
+			public readonly Quaternion Rotation;
+
+			public TeamSpawnLocation(Vector3 position, Quaternion rotation)
+			{
+				Position = position;
+				Rotation = rotation;
+			}
+
+			public TeamSpawnLocation(Transform transform)
+			{
+				Position = transform != null ? transform.position : Vector3.zero;
+				Rotation = transform != null ? transform.rotation : Quaternion.identity;
+			}
+		}
+
 		public GameUI GameUI;
 		[FormerlySerializedAs("PlayerPrefab")]
 		public Survivor SurvivorPrefab;
@@ -150,7 +168,9 @@ namespace SimpleFPS
 		private RoadGridGenerator _roadGridGenerator;
 		private BuildingPlacementGenerator _buildingPlacementGenerator;
 		private ZombieOrchestrator _zombieOrchestrator;
+		private NeutralSurvivorOrchestrator _neutralSurvivorOrchestrator;
 		private bool _loggedWaitingForWorldGeneration;
+		private bool _loggedMissingRaidHostNeutralSpawn;
 
 		private const int SwitchCooldownTicks = 10;
 
@@ -315,8 +335,10 @@ namespace SimpleFPS
 		/// <summary>
 		/// True when <paramref name="position"/> is within <paramref name="flatDistance"/> (height ignored) of any
 		/// player spawn point currently assigned to a connected player. Used by the neutral survivor orchestrator to
-		/// keep neutral spawns away from in-use player spawns. Spawn assignments are local state-authority data (not
-		/// networked), so this is only meaningful on the scene/state authority peer that owns the spawn placement.
+		/// keep neutral spawns away from in-use player spawns. The raid host's center neutral-marker spawn is
+		/// intentionally not tracked here, so it does not suppress nearby neutral survivor spawns. Spawn assignments
+		/// are local state-authority data (not networked), so this is only meaningful on the scene/state authority
+		/// peer that owns the spawn placement.
 		/// </summary>
 		public bool IsWithinActivePlayerSpawn(Vector3 position, float flatDistance)
 		{
@@ -807,16 +829,16 @@ namespace SimpleFPS
 		private void SpawnTeam(PlayerRef playerRef)
 		{
 			int count = GetStartingCharacterCount(playerRef);
-			var spawnPoint = GetSpawnPoint(playerRef);
+			var spawnLocation = GetTeamSpawnLocation(playerRef);
 			TryPopulateInitialZombiesBeforeSpawn();
 			var offsets = GetClusterOffsets(count, SpawnClusterRadius);
 
 			for (int i = 0; i < count; i++)
 			{
 				int capturedIndex = i;
-				Vector3 position = spawnPoint.position + offsets[i];
+				Vector3 position = spawnLocation.Position + offsets[i];
 
-				Survivor spawnedSurvivor = Runner.Spawn(SurvivorPrefab, position, spawnPoint.rotation, playerRef,
+				Survivor spawnedSurvivor = Runner.Spawn(SurvivorPrefab, position, spawnLocation.Rotation, playerRef,
 					(runner, obj) =>
 					{
 						var character = obj.GetComponent<Survivor>();
@@ -842,24 +864,24 @@ namespace SimpleFPS
 			playerData.IsAlive              = true;
 			float minHomeRadius = AICommandSettings != null ? Mathf.Max(0.1f, AICommandSettings.AssignedAreaMinRadius) : 3f;
 			float maxHomeRadius = AICommandSettings != null ? Mathf.Max(minHomeRadius, AICommandSettings.AssignedAreaMaxRadius) : 3f;
-			playerData.HomeBaseCenter       = SnapAssignedAreaCenterToHeightMap(spawnPoint.position);
+			playerData.HomeBaseCenter       = SnapAssignedAreaCenterToHeightMap(spawnLocation.Position);
 			playerData.HomeBaseRadius       = Mathf.Clamp(3f, minHomeRadius, maxHomeRadius);
 			playerData.HomeBaseInitialized  = true;
 			PlayerData.Set(playerRef, playerData);
 
 			UpdatePlayerObject(playerRef, playerData);
-			ClearZombiesNearSpawn(spawnPoint);
+			ClearZombiesNearSpawn(spawnLocation.Position);
 		}
 
-		private void ClearZombiesNearSpawn(Transform spawnPoint)
+		private void ClearZombiesNearSpawn(Vector3 spawnPosition)
 		{
-			if (spawnPoint == null || ZombieSpawnClearRadius <= 0f)
+			if (ZombieSpawnClearRadius <= 0f)
 				return;
 
 			if (ZombieOrchestrator == null)
 				ZombieOrchestrator = FindObjectOfType<ZombieOrchestrator>();
 
-			ZombieOrchestrator?.ClearZombiesNear(spawnPoint.position, ZombieSpawnClearRadius);
+			ZombieOrchestrator?.ClearZombiesNear(spawnPosition, ZombieSpawnClearRadius);
 		}
 
 		private void TryPopulateInitialZombiesBeforeSpawn()
@@ -1062,6 +1084,39 @@ namespace SimpleFPS
 			Transform spawnPoint = ChooseSpreadSpawnPoint(spawnPoints);
 			_spawnPointsByPlayer[playerRef] = spawnPoint;
 			return spawnPoint;
+		}
+
+		private TeamSpawnLocation GetTeamSpawnLocation(PlayerRef playerRef)
+		{
+			if (TryGetRaidHostSpawnLocation(playerRef, out TeamSpawnLocation raidSpawn))
+				return raidSpawn;
+
+			return new TeamSpawnLocation(GetSpawnPoint(playerRef));
+		}
+
+		private bool TryGetRaidHostSpawnLocation(PlayerRef playerRef, out TeamSpawnLocation spawnLocation)
+		{
+			spawnLocation = default;
+			if (RaidModeRules.IsRaidControlledPlayer(this, playerRef) == false)
+				return false;
+
+			if (_neutralSurvivorOrchestrator == null)
+				_neutralSurvivorOrchestrator = FindObjectOfType<NeutralSurvivorOrchestrator>();
+
+			if (_neutralSurvivorOrchestrator != null &&
+			    _neutralSurvivorOrchestrator.TryReserveClosestSpawnToMapCenter(out Vector3 position, out Quaternion rotation))
+			{
+				_loggedMissingRaidHostNeutralSpawn = false;
+				spawnLocation = new TeamSpawnLocation(position, rotation);
+				return true;
+			}
+
+			if (_loggedMissingRaidHostNeutralSpawn == false)
+			{
+				Debug.LogWarning("Raid host could not find a valid neutral survivor spawn near the map center; falling back to a normal player spawn point.", this);
+				_loggedMissingRaidHostNeutralSpawn = true;
+			}
+			return false;
 		}
 
 		private Transform ChooseSpreadSpawnPoint(SpawnPoint[] spawnPoints)

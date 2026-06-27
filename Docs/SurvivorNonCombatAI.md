@@ -139,7 +139,7 @@ Rules:
 - If combat interrupts an assignment, the assignment remains stored.
 - After combat, the survivor resumes the stored assignment unless it became invalid.
 - If looting, investigation, or combat movement starts after a survivor has entered an assigned area once, assigned-area patrol pauses until that temporary behavior finishes and returns control.
-- Player orders have a one-time completion gate before AI movement behaviors may override them. A move order is completed when the survivor reaches the destination but remains stored as a guard point. An assigned-area order is completed when the survivor enters the circle at least once. Follow remains continuous player intent and does not unlock looting, investigation, or combat movement.
+- Player orders have a one-time completion gate before AI movement behaviors may override them. A move order is completed when the survivor reaches the destination but remains stored as a guard point. An assigned-area order is completed when the survivor enters the circle at least once. Follow remains continuous player intent for optional non-combat behaviors, but non-`None` survivor-vs-survivor combat movement may temporarily override it when the follower directly perceives an enemy survivor.
 - While a player order still requires travel, the survivor keeps moving toward that player-given target. Combat aim and fire may still merge into that movement so the survivor can strafe and shoot, but combat movement, looting, investigation, and lost-enemy pursuit cannot replace the ordered movement.
 - While a player movement order still requires travel, combat aim/fire must not record a delayed lost-enemy investigation target. If the survivor sees or shoots at an enemy during that journey and then reaches the ordered destination after the enemy is gone, it should not walk back across the map to investigate the old last-known position.
 - After a move order completes, temporary AI behaviors may pull the survivor away, but the move point remains stored as the fallback guard point. After an assigned-area order completes once, temporary AI behaviors may pull the survivor outside the circle. The assigned area remains stored as the fallback order, but the survivor does not need to return to the circle between every AI detour.
@@ -248,12 +248,12 @@ Handoff rules:
 - If an enemy survivor is alive but breaks line of fire, non-combat AI can investigate the last known enemy survivor position before returning to the previous assignment.
 - Zombies do not create lost-combat investigation tasks. Survivors may alert allies when they directly notice a zombie, but after the zombie is gone or dead they return to their previous assignment instead of walking to the zombie's last known position.
 - Lost-combat investigation is treated as a combat handoff. It may start even if combat pulled the survivor outside an assigned area, as long as investigation is enabled and the enemy is not confirmed dead.
-- Lost-combat investigation does not override an unreached player movement order. If the survivor is still following, moving to a clicked point, or travelling into an assigned defend area for the first time, that order remains the movement priority.
+- Lost-combat investigation does not override an unreached player movement order. If the survivor is moving to a clicked point, travelling into an assigned defend area for the first time, or following after direct enemy-survivor perception is lost, that order remains the movement priority.
 - Player movement orders also clear any remembered lost-combat target from before the order was issued. This prevents a survivor from obeying a new move/assigned-area command and then resuming an old investigation after arrival.
 - Unreached player movement still allows combat aim/fire to merge into the ordered movement. This lets survivors strafe and shoot while continuing toward the ordered destination, without letting combat cover movement or lost-target pursuit pull them away.
 - If no assignment remains valid, set `HoldPosition` at the current survivor position.
 
-This means a follower can be attacked, fight, then continue following afterward. A moving survivor can return fire, finish the fight, then continue toward the ordered destination.
+This means a follower with non-`None` combat behavior can break formation to fight a directly perceived enemy survivor, then continue following afterward. Against zombies, and with combat behavior `None`, it keeps following while returning fire as before. A moving survivor can return fire, finish the fight, then continue toward the ordered destination.
 
 ## Network Model
 

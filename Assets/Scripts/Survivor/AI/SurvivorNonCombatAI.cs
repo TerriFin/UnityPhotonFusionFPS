@@ -496,6 +496,9 @@ namespace SimpleFPS
 
 			_anchorPosition = _followTarget.transform.position;
 
+			if (TryGetFollowCombatOverrideInput(out NetworkedInput combatInput))
+				return combatInput;
+
 			Vector3 toTarget = _followTarget.transform.position - _survivor.transform.position;
 			toTarget.y = 0f;
 
@@ -1106,6 +1109,33 @@ namespace SimpleFPS
 				return reactiveLookInput;
 
 			return GetIdleLookAroundInput();
+		}
+
+		private bool TryGetFollowCombatOverrideInput(out NetworkedInput input)
+		{
+			input = default;
+			if (_survivor == null ||
+			    _survivor.CombatAISettings.CombatBehavior == ESurvivorCombatBehavior.None ||
+			    _combat == null)
+			{
+				return false;
+			}
+
+			if (_combat.TryGetDirectTarget(out KnownEnemyInfo enemy, out bool hasLineOfFire) == false ||
+			    enemy.Object == null ||
+			    enemy.Object.GetComponent<Survivor>() == null)
+			{
+				return false;
+			}
+
+			TryAlertAlliesAboutDirectEnemy(enemy);
+			if (hasLineOfFire && TryGetReactiveLookInput(enemy, out input))
+				return true;
+
+			// A follow order remains stored, but enemy-survivor combat owns movement until direct perception is lost.
+			// Calling combat movement even without a firing line lets it spread out and search for a viable firing point.
+			_combat.TryGetInput(enemy, hasLineOfFire, out input, false, true);
+			return true;
 		}
 
 		private bool TryGetCombatInput(

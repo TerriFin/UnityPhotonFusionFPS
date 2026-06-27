@@ -257,6 +257,13 @@ Roam dwell timing lives on the `NeutralSurvivor` component (`RoamDwellTimeMin`/`
 
 Only player spawns that are actually in use are considered. Unused spawn points never block neutral spawns. The distance, like the inter-marker spacing, adds the marker's `PatrolRadius` so the neutral patrol area — not just its center — stays clear of the player spawn.
 
+Raid mode is a special case: the host team spawns at the valid neutral survivor marker closest to the generated
+map center, but that center marker is not registered as an active player spawn for this neutral-spawn distance
+check. Instead, the chosen marker itself is reserved: it is skipped by neutral spawning, and already-spawned
+neutral survivors from that exact marker are despawned. Zombies are still cleared around the host's actual center
+spawn, while nearby different neutral markers remain allowed so the commander starts from the middle without
+hollowing out the broader central neutral layout.
+
 `MatchStartSeedOffset` is added to the world seed for the match-start re-roll (see Spawn Timing), so the layout the real match begins with differs from the skirmish preview.
 
 `DesiredNeutralSurvivorCount` is the total number of neutral survivors the orchestrator tries to place across the map. It selects spaced markers and accumulates each marker's rolled `MinSpawnCount..MaxSpawnCount` count until the desired total is reached. This gives the host precise control over the headcount instead of an abstract marker ratio.

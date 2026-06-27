@@ -67,7 +67,7 @@ Combat AI becomes active when the survivor has a valid combat target.
 Valid first-pass targets:
 
 - Directly visible enemy from `CharacterSensor`.
-- Very close enemy from proximity awareness.
+- Very close enemy from proximity awareness, but only when the survivor sensor has an unobstructed line to that enemy. This makes proximity all-around rather than through-wall.
 
 Noise, bullet impacts, and approximate shooter positions are not direct combat targets by themselves. They belong to non-combat investigation unless the survivor turns and actually sees an enemy.
 
@@ -262,9 +262,11 @@ Example move order flow:
 4. Enemy is gone.
 5. Non-combat AI resumes moving to the original point or starts lost-enemy investigation when that behavior is allowed.
 
-Player movement orders have priority over combat movement, but not over basic self-defense. While a survivor is following a target, moving to a clicked point, or travelling into a newly assigned defend area for the first time, the survivor keeps the ordered movement vector. Combat AI may still provide aim and fire so the survivor can strafe and shoot while obeying the order. Combat cover movement, lost-enemy pursuit, looting, and investigation wait until the player movement gate is satisfied.
+Player movement orders normally have priority over combat movement, but not over basic self-defense. While a survivor is moving to a clicked point or travelling into a newly assigned defend area for the first time, the survivor keeps the ordered movement vector. Combat AI may still provide aim and fire so the survivor can strafe and shoot while obeying the order. Combat cover movement, lost-enemy pursuit, looting, and investigation wait until the player movement gate is satisfied.
 
-A move order satisfies the gate when the destination is reached. An assigned-area order satisfies it when the survivor enters the circle once. After that, combat movement and lost-enemy investigation may temporarily pull the survivor outside the area, and the assigned area remains the fallback order. Follow remains continuous player intent, so combat movement does not replace it.
+A move order satisfies the gate when the destination is reached. An assigned-area order satisfies it when the survivor enters the circle once. After that, combat movement and lost-enemy investigation may temporarily pull the survivor outside the area, and the assigned area remains the fallback order.
+
+Follow has one deliberate exception. If combat behavior is `Normal`, `Aggressive`, or `Defensive` and the follower directly perceives an enemy survivor as its selected combat target, survivor-vs-survivor combat movement temporarily replaces follow movement. This lets followers spread out, seek useful firing positions, and use their selected range behavior instead of staying bunched around the leader. The follow assignment remains stored and resumes when the enemy survivor is no longer directly perceived. `None` keeps following, and zombies retain the previous follow behavior: followers may aim and fire at them while continuing to follow, without zombie combat movement replacing the order.
 
 ## Interaction With Shooting Component
 

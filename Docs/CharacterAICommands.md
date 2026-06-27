@@ -75,6 +75,8 @@ Follow assignment:
 - Emits a clamped yaw delta in `LookRotationDelta`.
 - Emits forward movement while outside stopping distance.
 - Can layer `SurvivorAIShooting` look/fire input on top of movement when a direct enemy has line of fire.
+- Temporarily yields movement to survivor-vs-survivor combat AI when combat behavior is `Normal`, `Aggressive`, or `Defensive` and an enemy survivor is the directly perceived selected target. The stored follow assignment resumes afterward.
+- Does not yield follow movement for combat behavior `None` or for zombie targets; those retain the existing aim/fire-while-following behavior.
 - Uses `CharacterSensor` investigation look input when it has reached stopping distance and can safely look around without walking away from the follow target.
 - Does not directly move transforms.
 

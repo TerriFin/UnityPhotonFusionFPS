@@ -8,6 +8,8 @@ The broader CPU, AI, and movement scaling guidance remains in `Docs/FutureScaleO
 
 Audit date: June 24, 2026.
 
+Runtime performance follow-up: June 27, 2026.
+
 ## Executive Summary
 
 The survivor weapon system is the clearest current replication inefficiency.
@@ -25,6 +27,228 @@ Measured from Fusion's weaved network state:
 These are fixed snapshot-state sizes, not bytes resent every tick. Fusion delta-compresses changed state. The sizes still affect snapshot history, object spawning, late joining, serialization work, and the amount of data that can become dirty.
 
 The recommended first real optimization experiment is enabling Simple KCC position compression. The recommended first substantial architecture change is consolidating weapon projectile events into one survivor-level stream, preferably encoded once per shot rather than once per pellet.
+
+The June 27 runtime audit found that the reported overtime and unreachable-follow hitches are most likely authority-side CPU problems first, with network traffic and rendering acting as multipliers. Overtime turns every zombie into a continuously moving, pathfinding actor. Several NavMesh and climb-rescue checks are more frequent than their Inspector intervals suggest, and overtime spawn budgets are created in same-frame bursts. Followers use the same general navigator against an exact target position, so a leader on a disconnected prop island makes every follower repeatedly solve the same impossible route.
+
+These conclusions are based on source inspection and current prefab/settings values. They should be confirmed with the Unity CPU Profiler and Fusion statistics before behavior is changed.
+
+## Overtime Runtime Performance Audit
+
+### Reproduction Scale
+
+The current world-generation zombie settings use:
+
+```text
+EndMaxZombies: 120
+SpawnPulseInterval: 7 seconds
+OvertimeSpawnRatePerMinute: 100 per connected player
+OvertimeMoveSpeed: 7.25
+```
+
+With two connected players, one overtime pulse can request:
+
+```text
+100 * 2 * 7 / 60 = 23.33 zombies
+```
+
+The budget is therefore about 23 zombies in one pulse until the alive cap is reached. With 25 survivors per player, the authority can be simulating roughly 170 living characters, plus corpses waiting for despawn and any neutral survivors.
+
+### Primary Finding: Dynamic Hunt Paths Recalculate Too Often
+
+**Confidence:** High
+**Expected impact:** Very high
+
+Every hunting zombie calls `BuildExplicitGoalMoveInput` every Fusion tick. That method gives the target's live position to `CharacterNavigator.SetDestination`.
+
+`CharacterNavigator` has a configured `RepathInterval`, but `SetDestination` resets `_nextRepathTime` to zero whenever the destination moves farther than `DestinationChangeRepathDistance`. The zombie prefab uses:
+
+```text
+RepathInterval: 0.4 seconds
+DestinationChangeRepathDistance: 0.33 metres
+```
+
+A survivor moving at about 6 metres per second crosses that threshold roughly 18 times per second. Each crossing can therefore force every pursuing zombie to calculate a new NavMesh path immediately, bypassing the intended 0.4-second cap. Even a stationary target can cause about 300 path calculations per second across 120 zombies; a moving target can raise that into the low thousands.
+
+Recommended first fix:
+
+- Add a dynamic-target destination path that updates the desired final goal without invalidating the current path immediately.
+- Repath dynamic targets only on the configured interval, when the current path becomes unusable, or when target displacement exceeds a larger emergency threshold.
+- Stagger initial/periodic repaths so zombies sharing a target do not all calculate on the same tick.
+
+### Primary Finding: Small-Island Recovery Is NavMesh-Heavy
+
+**Confidence:** High
+**Expected impact:** Very high
+
+`IsStuckElevatedCached` runs every `StuckCheckInterval` (`0.5` seconds on the zombie prefab). A normal zombie standing on broad NavMesh still falls through to `IsOnSmallElevatedNavMeshIsland`.
+
+The common successful probe can perform approximately:
+
+- 29 `NavMesh.SamplePosition` calls,
+- one `NavMesh.CalculatePath`,
+- support-collider probing if the NavMesh checks do not settle the result.
+
+At 120 zombies and two checks per second, this alone can approach 7,000 NavMesh samples and 240 path calculations per second.
+
+There is a worse close-combat path. `TryBuildVisibleStuckTargetInput` calls `IsElevatedOffNavMesh` and `IsOnSmallElevatedNavMeshIsland` without using the cache. A directly sensed zombie on a non-road tile can execute that chain every 64 Hz simulation tick. A group reaching survivors inside buildings or on ledge tiles can therefore produce a sudden NavMesh-query spike.
+
+Recommended first fix:
+
+- Use one cached stuck/topology result everywhere.
+- Do not test island connectivity for ordinary grounded actors unless there is evidence of failure: no path, no steering corner, a support prop underfoot, or insufficient movement progress.
+- Split cheap support/off-mesh detection from expensive island-connectivity verification.
+- Give expensive verification a slower, jittered interval.
+
+### Primary Finding: Climb Candidate Refresh Is Movement-Driven
+
+**Confidence:** High
+**Expected impact:** High
+
+`ExplicitGoalClimbRefreshInterval` is `0.2` seconds, but the cache also refreshes whenever the zombie or goal moves `0.75` metres. At the current overtime speed of `7.25`, a zombie crosses that distance roughly ten times per second.
+
+Each refresh may scan every generated terrain climb surface and every registered component surface. With 120 hunting zombies, this can produce roughly 1,000 or more full surface-registry scans per second. The cost grows with both zombie count and ledge/prop surface count.
+
+Recommended fix:
+
+- Spatially index climb surfaces by world-grid cell or coarse region.
+- Query only surfaces intersecting the direct route or nearby rescue radius.
+- Let the refresh interval remain authoritative instead of allowing ordinary movement to refresh twice as fast.
+- Skip rescue searches while a complete ordinary path is making progress.
+
+### Primary Finding: Overtime Spawns Arrive As One-Frame Bursts
+
+**Confidence:** High
+**Expected impact:** High periodic hitch; medium sustained cost
+
+`RunSpawnPulse` submits the entire budget in one update. Before spawning, `BuildSpawnCandidates` revalidates every marker's connected NavMesh, with up to 12 path probes per marker. Regional scoring is then recomputed repeatedly while choosing individual candidates.
+
+Spawning a batch also has secondary costs:
+
+- Fusion creates and replicates many NetworkObjects together.
+- Every new `CharacterSeparation` refreshes collision pairs against the existing registry.
+- Physics collision-ignore pairs grow approximately with the number of existing zombies.
+- New KCC, sensor, navigator, animator, and hitbox components all activate together.
+
+The pulse timer is not reset when overtime starts, so the first overtime pulse may happen immediately or several seconds later. This matches a game that initially survives overtime and then becomes much worse around the first pulse.
+
+Recommended fix:
+
+- Spread a pulse budget across multiple simulation ticks with a small maximum spawns-per-tick value.
+- Cache static spawn-marker NavMesh validation after generation.
+- Revalidate only markers affected by an actual NavMesh regeneration.
+- Compute regional counts once per pulse, reuse the arrays, and update counts incrementally as candidates are selected.
+
+### Secondary Scaling Costs
+
+#### Global Character Sensor Scans
+
+`CharacterSensor.ScanCharacters` scans `CharacterSensor.ActiveSensors` for every enabled sensor. At 50 survivors and 120 zombies with the current prefab intervals, the rough upper workload is about 85,000 character-candidate checks per second before line-of-sight tests:
+
+```text
+50 survivors * 170 actors * 4 scans/second
++ 120 zombies * 170 actors * 2.5 scans/second
+```
+
+Survivor sensors also scan every active weapon and health pickup. A spatial grid for characters and pickups is the durable fix. Overtime zombies still need local sensing for nearby-target overrides, but they do not need a global all-actor scan.
+
+#### Global Separation Scans
+
+`CharacterSeparation` refreshes every `0.1` seconds and scans the global separator list until it finds enough neighbors. At 170 living actors, the uncapped comparison shape is roughly 289,000 registry checks per second; at 450 actors it exceeds two million. A coarse spatial hash would make this depend on nearby actors rather than total actors.
+
+#### KCC, Animation, Corpses, And Replication
+
+- Every living zombie runs AI and `KCC.Move` at 64 Hz.
+- Dead zombies continue KCC gravity/movement until `DespawnAfterDeath` expires after 8 seconds.
+- The orchestrator replaces dead zombies based on the alive count, so a high kill rate can temporarily produce the alive cap plus several seconds of corpses.
+- Every zombie animator updates every rendered frame.
+- All zombie NetworkObjects currently have global interest, and moving KCC state is sent at 32 Hz.
+
+These costs are expected, but they become important after the avoidable NavMesh work is removed. KCC position compression, interest management, corpse simplification, animator culling, and movement LOD should be evaluated afterward.
+
+#### Per-Frame Road Snapshot Allocation
+
+`ZombieOrchestrator.Update` calls `RefreshClimbSurfaces` every rendered frame. `RefreshRoadGridSnapshot` calls `RoadGridGenerator.TryGetWorldGridSnapshot`, which allocates and fills a new two-dimensional `WorldGridCell` array on every call.
+
+This is not overtime-specific, but it creates continuous garbage and scales with map area. Cache the immutable road snapshot once after generation and refresh it only when the world is regenerated.
+
+#### Mass Survivor Fire
+
+When the horde reaches 50 survivors, many survivors can begin firing in the same window. The existing per-weapon projectile event arrays, especially one event per shotgun pellet, then become dirty together. This is a likely bandwidth/serialization multiplier, but it does not explain the pathfinding hitch before combat. The shared per-shot weapon event work described later in this document remains important.
+
+## Unreachable Follow-Island Audit
+
+### Observed Flow
+
+A follow assignment sends the followed survivor's exact live position to each follower's `CharacterNavigator`. A car or crate can have a small NavMesh island that is not connected to the street NavMesh.
+
+When the leader stands on that island:
+
+1. Every follower independently sets the same unreachable elevated destination.
+2. Each navigator rejects partial paths and retries a complete path on its repath interval.
+3. If the target is more than `UnreachableDistance` away, the generic midpoint fallback may try up to two bisections with nine surrounding probes each on the survivor prefab. That is up to 19 path calculations for one failed repath.
+4. Followers near the foot of the prop can be horizontally within `DestinationReachDistance` and vertically within `VerticalReachDistance`.
+5. In that state, `UpdateReached` calls two NavMesh samples and a NavMesh raycast every Fusion tick to prove the close destination is separated by the NavMesh boundary.
+6. Five or more followers perform these retries and close-range checks in sync until the leader returns to connected NavMesh.
+
+This explains why the hitch begins immediately on the isolated island and ends immediately after jumping down.
+
+### Recommended Fix
+
+**Ease:** Medium
+**Expected gain:** High for group follow; no intended behavior change
+
+Give dynamic follow targets a dedicated navigation policy:
+
+- Accept and follow the usable portion of a partial path, stopping at its final reachable corner near the leader.
+- Do not run the long-distance midpoint-chain fallback for a disconnected moving follow target.
+- Cache the disconnected-target result and retry at a slower, jittered interval.
+- Cache/throttle the close-destination NavMesh-segment test instead of performing it every simulation tick.
+- Keep the exact follow assignment stored so normal following resumes as soon as the leader returns to connected NavMesh.
+
+A later optimization can share one route/corridor among followers targeting the same leader, but that is not required to remove the current cliff.
+
+## Runtime Optimization Order
+
+Ordered by implementation ease first, then likely gain:
+
+1. Cache the road-grid snapshot instead of rebuilding it every rendered frame. **Easy, small-to-medium gain and removes garbage.**
+2. Reuse the cached stuck result in `TryBuildVisibleStuckTargetInput`; stop uncached island tests at 64 Hz. **Easy-to-medium, potentially very high gain in close overtime combat.**
+3. Gate expensive island checks behind actual path/progress/support failure. **Medium, very high sustained gain.**
+4. Add a partial-path/cooldown policy for dynamic follow targets and throttle the close segment-clear test. **Medium, high gain for follower island hitches.**
+5. Decouple moving hunt-target updates from immediate repaths and stagger navigator work. **Medium, very high overtime gain.**
+6. Spread overtime spawn pulses across ticks and cache marker validation/regional scoring. **Medium, high hitch reduction.**
+7. Spatially index climb surfaces. **Medium, high overtime gain on ledged maps.**
+8. Spatially partition sensors and separation. **Medium-to-hard, very high gain at the intended actor counts.**
+9. Add zombie AI/movement fidelity tiers, corpse simplification, animator culling, and interest management. **Hard, highest long-term scale ceiling.**
+
+## Required Profiling Pass
+
+Use a Development Build with Autoconnect Profiler and compare:
+
+1. 50 survivors, 120 zombies idle before overtime.
+2. The same actors immediately after overtime, before the next spawn pulse.
+3. The first overtime spawn pulse.
+4. The horde reaching survivors on road tiles.
+5. The horde reaching survivors inside a non-road building/ledge tile.
+6. One follower versus eight followers while the leader alternates between street NavMesh and a disconnected car island.
+
+Capture:
+
+- `ZombieCharacter.FixedUpdateNetwork`
+- `ZombieAI.UpdateHunting`
+- `CharacterNavigator.CalculatePath`
+- `NavMesh.CalculatePath`, `NavMesh.SamplePosition`, and `NavMesh.Raycast`
+- `ZombieClimbSurfaces.TryFindDirectClimb`
+- `CharacterSensor.FixedUpdate`
+- `CharacterSeparation.CalculateSeparationDirection`
+- `ZombieOrchestrator.RunSpawnPulse`
+- `NetworkRunner.SpawnAsync`
+- KCC simulation
+- Animator update
+- GC allocations
+- Fusion outgoing/incoming bytes, changed objects, culled objects, resimulation, and simulation catch-up
+
+There are currently no custom `ProfilerMarker`s in these scripts. Add narrow markers around the methods above for the measurement branch before changing behavior; remove them afterward or keep only low-overhead markers useful for future scale tests.
 
 ## Current Network Configuration
 
@@ -236,4 +460,3 @@ This should be designed together with AOI and the AI/movement tiers in `Docs/Fut
 - `Assets/Prefabs/BlockSurvivor.prefab`
 - `Assets/Prefabs/BlockZombie.prefab`
 - `Assets/Photon/Fusion/Resources/NetworkProjectConfig.fusion`
-

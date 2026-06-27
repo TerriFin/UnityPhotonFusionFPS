@@ -98,9 +98,9 @@ public void RecordBulletImpact(Vector3 impactPosition, Vector3 approximateShoote
 
 ### Proximity Awareness
 
-The character notices all enemies inside `ProximityAwarenessRadius`, even if they are behind it.
+The character notices enemies inside `ProximityAwarenessRadius` even if they are behind it, but survivor sensors still require an unobstructed line from their eye point to the target's eye point. This keeps enemy survivors or zombies behind walls from becoming direct combat targets just because they are close.
 
-Use this for close personal awareness: footsteps, movement, breathing room, and "someone is right next to me" behavior.
+Zombies keep permissive close-range survivor detection. They may still detect nearby survivors through proximity without the survivor-style line-of-sight gate.
 
 ### Noise Awareness
 
@@ -138,16 +138,18 @@ Detection order should be cheap-to-expensive:
 
 Survivors should generally have longer forward vision than zombies. Zombies can compensate with stronger noise response.
 
-### Pickup Vision
+### Pickup Detection
 
-The character also detects visible pickups with the same forward-vision rules used for enemies:
+Survivor sensors detect pickups through either forward vision or close proximity. Zombies do not scan pickups.
+
+Forward pickup vision uses the same forward-vision rules used for enemies:
 
 1. Check distance against `VisionDistance`.
 2. Check `VisionAngle`.
 3. Linecast against `VisionBlockers`.
 4. Remember only a capped number of pickups through `MaxKnownPickups`.
 
-Pickups do not use proximity awareness, noise, or bullet-impact memory. They are only found through vision. `WeaponPickup` and `HealthPickup` register themselves in static pickup lists, so sensors do not need per-tick physics overlap queries to discover them.
+Pickup proximity uses `ProximityAwarenessRadius` and ignores facing, but still requires a clear blocker line from the survivor sensor to the pickup. This means a survivor can notice a nearby pickup behind them in an open room, but not one hidden behind a wall. Pickups do not use noise or bullet-impact memory. `WeaponPickup` and `HealthPickup` register themselves in static pickup lists, so sensors do not need per-tick physics overlap queries to discover them.
 
 Detected pickups are exposed through:
 
@@ -282,7 +284,7 @@ At the current prototype scale, 2-20 players with a few survivors each is fine i
 - `WeaponPickup` and `HealthPickup` register themselves for lightweight pickup vision scans.
 - `SurvivorNonCombatAI` hold assignments use sensor look input while staying still when investigation is enabled.
 - `SurvivorNonCombatAI` receives `Noise` and `BulletImpact` events immediately from `CharacterSensor`; they are not stored in the normal known-enemy memory list.
-- Direct `Vision` and `Proximity` memories are not investigation destinations for the survivor that sees the enemy, but that survivor can send a one-hop investigation alert to nearby same-team survivors that do not currently have their own direct enemy target.
+- Direct `Vision` and `Proximity` memories are not investigation destinations for the survivor that sees the enemy, but that survivor can send a one-hop investigation alert to nearby same-team survivors that do not currently have their own direct enemy target. Receiving survivors do not need their own line of sight to react to an ally alert; the alert represents teammate communication, not personal detection.
 - If AI shooting had line of fire to a direct enemy and then loses it while the enemy is still alive, non-combat AI can investigate the last known enemy position as a fresh investigation target.
 - Movement AI can use direct combat aim/fire while moving, but should reserve sensor-only investigation look for stopped or safe moments so it does not accidentally walk away from the movement target.
 - Later, attach the same component to zombies with zombie-tuned values.

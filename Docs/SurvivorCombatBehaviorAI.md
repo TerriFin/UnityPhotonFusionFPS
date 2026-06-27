@@ -235,11 +235,13 @@ Priority:
 1. Directly possessed player input.
 2. A new explicit player movement order.
 3. An active retreat-to-home-base assigned-area order.
-4. An unreached persistent move order, assigned-area entry, or continuous follow order.
+4. An unreached persistent move order or assigned-area entry.
 5. Tactical movement from `Normal`, `Aggressive`, or `Defensive`.
 6. Optional non-combat detours.
 
 While a player movement order owns movement, combat behavior may still choose a target, weapon, look direction, and fire input. It must not replace the ordered movement vector.
+
+A follow order is the exception to this priority list. When combat behavior is not `None` and the follower directly perceives an enemy survivor as its selected combat target, tactical survivor-vs-survivor movement temporarily owns movement. The follow assignment resumes after direct perception is lost. `None` and zombie targets continue using follow movement while combat aim/fire is layered over it.
 
 Once a move destination is reached or an assigned area has been entered, the selected combat behavior may reposition the survivor and the stored assignment remains its fallback anchor.
 

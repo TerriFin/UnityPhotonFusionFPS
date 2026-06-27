@@ -39,6 +39,20 @@ When the host's whole team dies, or when every other team is eliminated, the mat
 and the standard win/lose screen appears. This reuses the existing team-elimination win condition — the host
 is just another team — so no separate raid end-game logic exists.
 
+## Host Spawn
+
+In raid mode, the host team does not use the ordinary side-of-map `SpawnPoint` selection. Instead, `Gameplay`
+asks `NeutralSurvivorOrchestrator` for the valid `NeutralSurvivorSpawnPoint` closest to the generated map
+center and spawns the host team there. This lets the RTS commander start near the center and spread outward in
+all directions, which is useful for mirrored maps where normal player spawns live on the map edges.
+
+The center marker is reserved for the host team: it is skipped by neutral-survivor spawning, and any already
+spawned neutral survivors from that exact marker are despawned so the host does not start by automatically
+recruiting extra survivors. The marker is still not registered as an active player spawn for broad
+neutral-survivor pruning, so nearby different neutral markers remain valid. Zombies are still cleared around the
+raid host's actual spawn position. If no valid neutral survivor marker exists, the host falls back to the normal
+spread `SpawnPoint` logic.
+
 ## Why `ActiveCharacterIndex = -1`
 
 `-1` is the established "no active character" sentinel used throughout `Gameplay`:

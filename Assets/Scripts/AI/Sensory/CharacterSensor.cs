@@ -220,6 +220,16 @@ namespace SimpleFPS
 			}
 		}
 
+		public bool HasLineOfSightTo(CharacterSensor other)
+		{
+			return other != null && HasLineOfSightToPosition(other.GetEyePosition());
+		}
+
+		public bool HasLineOfSightToPosition(Vector3 target)
+		{
+			return IsLineBlocked(target) == false;
+		}
+
 		private bool TryGetClosestKnownEnemy(out KnownEnemyInfo enemy, bool directOnly)
 		{
 			enemy = default;
@@ -388,8 +398,11 @@ namespace SimpleFPS
 
 				if (ProximityAwarenessRadius > 0f && distanceSqr <= ProximityAwarenessRadius * ProximityAwarenessRadius)
 				{
-					Remember(new KnownEnemyInfo(other.NetworkObject, otherPosition, otherPosition, ESensoryStimulus.Proximity, GetTick()));
-					continue;
+					if (CanUseProximityAwareness(other))
+					{
+						Remember(new KnownEnemyInfo(other.NetworkObject, otherPosition, otherPosition, ESensoryStimulus.Proximity, GetTick()));
+						continue;
+					}
 				}
 
 				if (CanSee(other, distanceSqr))
@@ -425,8 +438,9 @@ namespace SimpleFPS
 				Vector3 offset = position - transform.position;
 				offset.y = 0f;
 				float distanceSqr = offset.sqrMagnitude;
+				Vector3 sensorPosition = position + Vector3.up * 0.5f;
 
-				if (CanSeePosition(position + Vector3.up * 0.5f, distanceSqr))
+				if (CanSensePickupByProximity(sensorPosition, distanceSqr) || CanSeePosition(sensorPosition, distanceSqr))
 					Remember(new KnownPickupInfo(pickup, position, GetTick()));
 			}
 		}
@@ -448,8 +462,9 @@ namespace SimpleFPS
 				Vector3 offset = position - transform.position;
 				offset.y = 0f;
 				float distanceSqr = offset.sqrMagnitude;
+				Vector3 sensorPosition = position + Vector3.up * 0.5f;
 
-				if (CanSeePosition(position + Vector3.up * 0.5f, distanceSqr))
+				if (CanSensePickupByProximity(sensorPosition, distanceSqr) || CanSeePosition(sensorPosition, distanceSqr))
 					Remember(new KnownPickupInfo(pickup, position, GetTick()));
 			}
 		}
@@ -457,6 +472,23 @@ namespace SimpleFPS
 		private bool CanSee(CharacterSensor other, float distanceSqr)
 		{
 			return CanSeePosition(other.GetEyePosition(), distanceSqr);
+		}
+
+		private bool CanUseProximityAwareness(CharacterSensor other)
+		{
+			// Zombies keep their permissive close-range survivor detection. Survivors still get all-around
+			// proximity awareness, but only through an unobstructed line so walls do not create combat targets.
+			return _survivor == null || HasLineOfSightTo(other);
+		}
+
+		private bool CanSensePickupByProximity(Vector3 target, float distanceSqr)
+		{
+			if (_survivor == null || ProximityAwarenessRadius <= 0f)
+				return false;
+			if (distanceSqr > ProximityAwarenessRadius * ProximityAwarenessRadius)
+				return false;
+
+			return HasLineOfSightToPosition(target);
 		}
 
 		private bool CanSeePosition(Vector3 target, float distanceSqr)
@@ -482,10 +514,22 @@ namespace SimpleFPS
 			if (dot < minDot)
 				return false;
 
-			if (VisionBlockers.value != 0 && Physics.Linecast(origin, target, VisionBlockers, QueryTriggerInteraction.Ignore))
+			if (IsLineBlocked(target))
 				return false;
 
 			return true;
+		}
+
+		private bool IsLineBlocked(Vector3 target)
+		{
+			if (VisionBlockers.value == 0)
+				return false;
+
+			Vector3 origin = GetEyePosition();
+			if ((target - origin).sqrMagnitude < 0.001f)
+				return false;
+
+			return Physics.Linecast(origin, target, VisionBlockers, QueryTriggerInteraction.Ignore);
 		}
 
 		private bool IsEnemy(CharacterSensor other)

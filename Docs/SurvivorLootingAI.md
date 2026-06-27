@@ -2,7 +2,7 @@
 
 ## Goal
 
-`SurvivorLootingAI` is a non-combat behavior component that lets an unpossessed survivor collect useful visible pickups when its current non-combat assignment allows it.
+`SurvivorLootingAI` is a non-combat behavior component that lets an unpossessed survivor collect useful sensed pickups when its current non-combat assignment allows it.
 
 It is not a top-level AI mode. `SurvivorNonCombatAI` owns the survivor's base non-combat assignment and decides when looting is allowed to run. `SurvivorLootingAI` owns only the looting-specific target selection, movement target, and return state.
 
@@ -45,7 +45,7 @@ Looting may start only when:
 - The survivor is holding position or already free inside an assigned area.
 - The survivor is not still travelling to a player-issued move destination.
 - The survivor is not following another survivor.
-- A visible pickup is useful and active.
+- A sensed pickup is useful and active. The sensor finds pickups through forward vision or through close proximity with a clear blocker line.
 
 Follow orders and unreached move orders are treated as active player intent, so looting does not interrupt them.
 
@@ -63,14 +63,14 @@ Inactive pickups are ignored for movement decisions. They may still be shown dif
 
 ## Behavior Flow
 
-1. Ask `CharacterSensor` for visible pickups.
+1. Ask `CharacterSensor` for visible pickups. In code, "visible" includes forward vision and close line-of-sight proximity.
 2. Filter to active and useful pickups.
-3. Pick the closest useful visible pickup.
+3. Pick the closest useful sensed pickup.
 4. Move toward it using `CharacterNavigator`.
-5. If the pickup becomes unavailable or stops being useful, pick another useful visible pickup if one is already visible.
-6. If no useful visible pickup remains, return to the non-combat assignment anchor.
+5. If the pickup becomes unavailable or stops being useful, pick another useful sensed pickup if one is already known.
+6. If no useful sensed pickup remains, return to the non-combat assignment anchor.
 
-If another useful visible pickup is known when the current pickup is consumed, the survivor should chain directly into the next pickup instead of returning to its anchor first.
+If another useful sensed pickup is known when the current pickup is consumed, the survivor should chain directly into the next pickup instead of returning to its anchor first.
 
 ## Interruption Rules
 

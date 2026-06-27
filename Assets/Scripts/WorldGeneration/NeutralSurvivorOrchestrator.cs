@@ -46,6 +46,8 @@ namespace SimpleFPS
 		private readonly List<Survivor> _spawnedNeutralSurvivors = new();
 		private readonly List<Survivor> _recruitmentCandidates = new();
 		private readonly List<ReservedSpawnPosition> _reservedSpawnPositions = new();
+		private readonly List<NeutralSurvivorSpawnPoint> _raidHostReservedSpawnPoints = new();
+		private readonly Dictionary<Survivor, NeutralSurvivorSpawnPoint> _spawnPointBySurvivor = new();
 		private NavMeshPath _spawnValidationPath;
 		private System.Random _random;
 		private float _nextRecruitmentCheckTime;
@@ -62,6 +64,60 @@ namespace SimpleFPS
 		public void SetRuntimeDesiredNeutralSurvivorCount(int count)
 		{
 			_runtimeDesiredNeutralSurvivorCount = Mathf.Max(0, count);
+		}
+
+		public bool TryReserveClosestSpawnToMapCenter(out Vector3 position, out Quaternion rotation)
+		{
+			position = default;
+			rotation = Quaternion.identity;
+
+			if (_validMarkers.Count == 0)
+				CollectSpawnPoints();
+			if (_validMarkers.Count == 0)
+				return false;
+
+			Vector3 center = GetMapCenter();
+			SpawnMarker bestMarker = default;
+			float bestDistanceSqr = float.PositiveInfinity;
+			bool found = false;
+
+			for (int i = 0; i < _validMarkers.Count; i++)
+			{
+				SpawnMarker marker = _validMarkers[i];
+				if (CanMarkerSpawnAnySurvivors(marker.Point) == false)
+					continue;
+
+				float distanceSqr = FlatDistanceSqr(marker.Position, center);
+				if (distanceSqr >= bestDistanceSqr)
+					continue;
+
+				bestDistanceSqr = distanceSqr;
+				bestMarker = marker;
+				position = marker.Position;
+				rotation = marker.Point != null ? marker.Point.transform.rotation : Quaternion.identity;
+				found = true;
+			}
+
+			if (found && bestMarker.Point != null)
+				ReserveRaidHostSpawnPoint(bestMarker.Point);
+
+			return found;
+		}
+
+		private void ReserveRaidHostSpawnPoint(NeutralSurvivorSpawnPoint point)
+		{
+			if (point == null)
+				return;
+
+			PruneMissingRaidHostReservedSpawnPoints();
+			if (_raidHostReservedSpawnPoints.Contains(point) == false)
+				_raidHostReservedSpawnPoints.Add(point);
+
+			RemoveRoamDestinationForSpawnPoint(point);
+
+			NetworkRunner runner = GetRunner();
+			if (runner != null && runner.IsSceneAuthority)
+				ClearSpawnedNeutralSurvivorsFromSpawnPoint(point, runner);
 		}
 
 		private void Awake()
@@ -172,10 +228,13 @@ namespace SimpleFPS
 		private void BuildRoamDestinations()
 		{
 			_roamDestinations.Clear();
+			PruneMissingRaidHostReservedSpawnPoints();
 			for (int i = 0; i < _validMarkers.Count; i++)
 			{
 				var point = _validMarkers[i].Point;
 				if (point == null || point.DynamicSpawn == false)
+					continue;
+				if (IsRaidHostReservedSpawnPoint(point))
 					continue;
 
 				_roamDestinations.Add(new RoamDestination(_validMarkers[i].Position, Mathf.Max(0f, point.PatrolRadius)));
@@ -310,7 +369,7 @@ namespace SimpleFPS
 
 					survivor.OwnerRef = PlayerRef.None;
 					survivor.CharacterIndex = -1;
-					AddSpawnedNeutral(survivor);
+					AddSpawnedNeutral(survivor, marker.Point);
 					StartCoroutine(InitializeNeutralAfterSpawn(survivor, patrolCenter, patrolRadius, isDynamic));
 				});
 		}
@@ -395,13 +454,13 @@ namespace SimpleFPS
 				Survivor neutral = _recruitmentCandidates[i];
 				if (neutral == null || neutral.Object == null || neutral.Object.IsValid == false)
 				{
-					_spawnedNeutralSurvivors.Remove(neutral);
+					RemoveSpawnedNeutral(neutral);
 					continue;
 				}
 
 				if (neutral.Health == null || neutral.Health.IsAlive == false || neutral.IsNeutral == false)
 				{
-					_spawnedNeutralSurvivors.Remove(neutral);
+					RemoveSpawnedNeutral(neutral);
 					continue;
 				}
 
@@ -409,7 +468,7 @@ namespace SimpleFPS
 				    Gameplay.TryRecruitNeutralSurvivor(neutral, recruiter))
 				{
 					neutral.GetComponent<NeutralSurvivor>()?.RestoreOriginalStats();
-					_spawnedNeutralSurvivors.Remove(neutral);
+					RemoveSpawnedNeutral(neutral);
 				}
 			}
 
@@ -543,6 +602,8 @@ namespace SimpleFPS
 			{
 				SpawnMarker candidate = candidates[i];
 				if (CanMarkerSpawnAnySurvivors(candidate.Point) == false)
+					continue;
+				if (IsRaidHostReservedSpawnPoint(candidate.Point))
 					continue;
 				float candidateRadius = GetMarkerSpacingRadius(candidate.Point);
 				if (IsFarEnoughFromSelected(candidate.Position, candidateRadius, minDistance, reservedPositions) == false)
@@ -699,10 +760,21 @@ namespace SimpleFPS
 			return Settings != null ? Mathf.Max(0, Settings.DesiredNeutralSurvivorCount) : 0;
 		}
 
-		private void AddSpawnedNeutral(Survivor survivor)
+		private void AddSpawnedNeutral(Survivor survivor, NeutralSurvivorSpawnPoint spawnPoint)
 		{
 			if (survivor != null && _spawnedNeutralSurvivors.Contains(survivor) == false)
 				_spawnedNeutralSurvivors.Add(survivor);
+			if (survivor != null)
+				_spawnPointBySurvivor[survivor] = spawnPoint;
+		}
+
+		private void RemoveSpawnedNeutral(Survivor survivor)
+		{
+			if (survivor == null)
+				return;
+
+			_spawnedNeutralSurvivors.Remove(survivor);
+			_spawnPointBySurvivor.Remove(survivor);
 		}
 
 		private void ClearSpawnedNeutralSurvivors(NetworkRunner runner)
@@ -715,7 +787,70 @@ namespace SimpleFPS
 			}
 
 			_spawnedNeutralSurvivors.Clear();
+			_spawnPointBySurvivor.Clear();
 			_hasSpawned = false;
+		}
+
+		private void ClearSpawnedNeutralSurvivorsFromSpawnPoint(NeutralSurvivorSpawnPoint point, NetworkRunner runner)
+		{
+			if (point == null || runner == null)
+				return;
+
+			for (int i = _spawnedNeutralSurvivors.Count - 1; i >= 0; i--)
+			{
+				Survivor survivor = _spawnedNeutralSurvivors[i];
+				if (survivor == null)
+				{
+					_spawnedNeutralSurvivors.RemoveAt(i);
+					if (ReferenceEquals(survivor, null) == false)
+						_spawnPointBySurvivor.Remove(survivor);
+					continue;
+				}
+
+				if (_spawnPointBySurvivor.TryGetValue(survivor, out NeutralSurvivorSpawnPoint spawnPoint) == false || spawnPoint != point)
+					continue;
+
+				_spawnedNeutralSurvivors.RemoveAt(i);
+				_spawnPointBySurvivor.Remove(survivor);
+				if (survivor.Object != null && survivor.Object.IsValid)
+					runner.Despawn(survivor.Object);
+			}
+		}
+
+		private bool IsRaidHostReservedSpawnPoint(NeutralSurvivorSpawnPoint point)
+		{
+			return point != null && _raidHostReservedSpawnPoints.Contains(point);
+		}
+
+		private void PruneMissingRaidHostReservedSpawnPoints()
+		{
+			for (int i = _raidHostReservedSpawnPoints.Count - 1; i >= 0; i--)
+			{
+				if (_raidHostReservedSpawnPoints[i] == null)
+					_raidHostReservedSpawnPoints.RemoveAt(i);
+			}
+		}
+
+		private void RemoveRoamDestinationForSpawnPoint(NeutralSurvivorSpawnPoint point)
+		{
+			if (point == null)
+				return;
+
+			Vector3 pointPosition = point.transform.position;
+			for (int i = 0; i < _validMarkers.Count; i++)
+			{
+				if (_validMarkers[i].Point == point)
+				{
+					pointPosition = _validMarkers[i].Position;
+					break;
+				}
+			}
+
+			for (int i = _roamDestinations.Count - 1; i >= 0; i--)
+			{
+				if (FlatDistanceSqr(_roamDestinations[i].Center, pointPosition) <= 0.01f)
+					_roamDestinations.RemoveAt(i);
+			}
 		}
 
 		private IEnumerator WaitForGeneratedWorld()
@@ -749,6 +884,46 @@ namespace SimpleFPS
 		{
 			ResolveGenerators();
 			return RoadGenerator != null ? RoadGenerator.GeneratedRoot : null;
+		}
+
+		private Vector3 GetMapCenter()
+		{
+			ResolveGenerators();
+
+			if (RoadGenerator != null &&
+			    RoadGenerator.TryGetWorldGridSnapshot(out WorldGridSnapshot grid) &&
+			    grid.IsValid &&
+			    grid.Width > 0 &&
+			    grid.Height > 0)
+			{
+				return grid.CellToWorld(new Vector2((grid.Width - 1) * 0.5f, (grid.Height - 1) * 0.5f));
+			}
+
+			if (RoadGenerator != null &&
+			    RoadGenerator.HeightGenerator != null &&
+			    RoadGenerator.HeightGenerator.TryGetHeightSnapshot(out WorldHeightSnapshot height) &&
+			    height.IsValid &&
+			    height.Width > 0 &&
+			    height.Height > 0)
+			{
+				return height.Origin + new Vector3((height.Width - 1) * height.TileSize * 0.5f, 0f, (height.Height - 1) * height.TileSize * 0.5f);
+			}
+
+			if (_validMarkers.Count > 0)
+			{
+				Vector3 min = _validMarkers[0].Position;
+				Vector3 max = _validMarkers[0].Position;
+				for (int i = 1; i < _validMarkers.Count; i++)
+				{
+					Vector3 markerPosition = _validMarkers[i].Position;
+					min = Vector3.Min(min, markerPosition);
+					max = Vector3.Max(max, markerPosition);
+				}
+
+				return (min + max) * 0.5f;
+			}
+
+			return transform.position;
 		}
 
 		private NetworkRunner GetRunner()

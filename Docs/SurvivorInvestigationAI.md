@@ -102,7 +102,7 @@ Alert rules:
 - Possessed survivors do not receive investigation alerts.
 - Alerted survivors do not re-broadcast the alert.
 - Allies that already have their own line-of-fire combat target do not start movement investigation, but may briefly look toward the alert if it is much closer than their current target.
-- Allies with only vague or proximity knowledge can still be alerted.
+- Allies can react to ally alerts even when they do not personally see the target. Personal combat detection still requires the survivor's own sensor, but alert reaction represents teammate communication.
 - Alerts are one-hop only to prevent alert chains from crossing the whole map.
 - Alert range is controlled by `SurvivorInvestigationAI.AllyAlertRadius`.
 - Direct enemy alerts may carry the observed enemy object. If that enemy dies before or during the investigation, the investigation is cancelled and the survivor returns to its saved assignment instead of walking to the corpse.
