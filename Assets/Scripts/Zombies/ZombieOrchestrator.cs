@@ -18,6 +18,16 @@ namespace SimpleFPS
 			public int Remaining;
 		}
 
+		// A collected spawn marker plus its cached NavMesh-validated position and region. Marker positions and the
+		// baked NavMesh are static after generation, so this validation (NavMesh.SamplePosition plus up to 12
+		// connectivity path probes per marker) is computed once at collection time instead of every spawn pulse.
+		private struct SpawnPointEntry
+		{
+			public ZombieSpawnPoint Point;
+			public Vector3 Position;
+			public int Region;
+		}
+
 		[Header("Setup")]
 		public BuildingPlacementGenerator BuildingGenerator;
 		public HeightMapGenerator HeightGenerator;
@@ -47,15 +57,22 @@ namespace SimpleFPS
 		[Tooltip("How far onto the landing side a generated terrain ledge mantle ends. Lower this if zombies hoist too far inward.")]
 		public float TerrainClimbLandingInset = 0.75f;
 
-		private readonly List<ZombieSpawnPoint> _spawnPoints = new();
+		private readonly List<SpawnPointEntry> _spawnPoints = new();
 		private readonly List<SpawnCandidate> _candidates = new();
 		private readonly List<int> _bestRegions = new();
 		private readonly List<NetworkObject> _spawnedZombies = new();
+		private int[] _regionZombieCounts;
+		private int[] _regionSpawnCounts;
 		private NavMeshPath _spawnValidationPath;
 		private Bounds _spawnBounds;
 		private System.Random _random;
 		private float _nextPulseTime;
 		private float _spawnRemainder;
+		// A spawn pulse's whole budget is drained a few zombies per simulation tick (Settings.MaxSpawnsPerTick)
+		// instead of in one frame, so a large overtime budget no longer instantiates dozens of NetworkObjects in a
+		// single Update. The pulse fully drains long before the next pulse interval, so pulses never overlap.
+		private int _pulseSpawnsRemaining;
+		private int _pulseSpawnedCount;
 		private int _filteredSpawnPointCount;
 		private bool _hasSpawnBounds;
 		private bool _isOvertime;
@@ -189,11 +206,20 @@ namespace SimpleFPS
 			if (ShouldRunSpawner() == false)
 				return;
 
+			// Finish draining an in-progress pulse a few spawns per tick before considering a new one. A pulse always
+			// fully drains within a handful of frames, well before the next pulse interval, so pulses never overlap.
+			if (_pulseSpawnsRemaining > 0)
+			{
+				DrainSpawnPulse(runner);
+				return;
+			}
+
 			if (Time.timeSinceLevelLoad < _nextPulseTime)
 				return;
 
 			_nextPulseTime = Time.timeSinceLevelLoad + GetPulseInterval();
-			RunSpawnPulse(runner);
+			BeginSpawnPulse(runner);
+			DrainSpawnPulse(runner);
 		}
 
 		[ContextMenu("Collect Zombie Spawn Points")]
@@ -206,6 +232,10 @@ namespace SimpleFPS
 			var seen = new HashSet<ZombieSpawnPoint>();
 			CollectSpawnPointsFromRoot(GetGeneratedBuildingRoot(), seen);
 			CollectSpawnPointsFromRoot(GetGeneratedHeightRoot(), seen);
+
+			// Spawn bounds are final now, so each marker's region (static, derived from position + bounds) can be
+			// cached. This removes the per-candidate GetRegion call from every spawn pulse.
+			CacheSpawnPointRegions();
 
 			_random = new System.Random(GetSeed());
 
@@ -233,8 +263,18 @@ namespace SimpleFPS
 					continue;
 				}
 
-				_spawnPoints.Add(marker);
+				_spawnPoints.Add(new SpawnPointEntry { Point = marker, Position = navMeshPosition, Region = 0 });
 				EncapsulateSpawnPoint(navMeshPosition);
+			}
+		}
+
+		private void CacheSpawnPointRegions()
+		{
+			for (int i = 0; i < _spawnPoints.Count; i++)
+			{
+				SpawnPointEntry entry = _spawnPoints[i];
+				entry.Region = entry.Point != null ? GetRegion(entry.Point.transform.position) : 0;
+				_spawnPoints[i] = entry;
 			}
 		}
 
@@ -314,6 +354,7 @@ namespace SimpleFPS
 			_random = new System.Random(GetSeed() + (Settings != null ? Settings.MatchStartSeedOffset : 0));
 			_hasRunInitialPopulation = false;
 			_spawnRemainder = 0f;
+			_pulseSpawnsRemaining = 0; // drop any in-progress pulse so it cannot keep draining after the reroll wipe
 			_nextPulseTime = Time.timeSinceLevelLoad + GetPulseInterval();
 
 			RunInitialPopulation(runner);
@@ -349,6 +390,10 @@ namespace SimpleFPS
 
 			_isOvertime = true;
 			_overtimeStartTime = Time.timeSinceLevelLoad;
+			// Re-arm the pulse cadence so the first overtime pulse lands one interval after overtime begins, rather
+			// than immediately (timer already elapsed) or several seconds late (timer mid-interval). See the audit's
+			// "Overtime Spawns Arrive As One-Frame Bursts" finding.
+			_nextPulseTime = Time.timeSinceLevelLoad + GetPulseInterval();
 			ZombieStats stats = GetOvertimeStats();
 			for (int i = ZombieCharacter.ActiveZombies.Count - 1; i >= 0; i--)
 			{
@@ -365,7 +410,9 @@ namespace SimpleFPS
 			}
 		}
 
-		private void RunSpawnPulse(NetworkRunner runner)
+		// Compute this pulse's budget and candidate set once, then hand the budget to DrainSpawnPulse to spend across
+		// ticks. Candidates (and their cached NavMesh-validated positions/regions) are built a single time per pulse.
+		private void BeginSpawnPulse(NetworkRunner runner)
 		{
 			int aliveZombies = CountAliveZombies();
 			int currentMaxZombies = GetCurrentMaxZombies();
@@ -380,8 +427,22 @@ namespace SimpleFPS
 			if (_candidates.Count == 0)
 				return;
 
-			int spawnedThisPulse = 0;
-			for (int i = 0; i < spawnBudget && _candidates.Count > 0; i++)
+			_pulseSpawnsRemaining = spawnBudget;
+			_pulseSpawnedCount = 0;
+		}
+
+		// Spend up to Settings.MaxSpawnsPerTick of the current pulse's budget this tick. Called every Update until the
+		// pulse drains, spreading the instantiation work (and its Fusion replication / CharacterSeparation / physics
+		// ignore-pair costs) across frames instead of one same-frame burst.
+		private void DrainSpawnPulse(NetworkRunner runner)
+		{
+			if (_pulseSpawnsRemaining <= 0)
+				return;
+
+			int maxPerTick = Settings != null ? Mathf.Max(1, Settings.MaxSpawnsPerTick) : 4;
+			int spawnedThisTick = 0;
+
+			while (spawnedThisTick < maxPerTick && _pulseSpawnsRemaining > 0 && _candidates.Count > 0)
 			{
 				int candidateIndex = ChooseCandidateIndex();
 				if (candidateIndex < 0 || candidateIndex >= _candidates.Count)
@@ -389,7 +450,9 @@ namespace SimpleFPS
 
 				SpawnCandidate candidate = _candidates[candidateIndex];
 				SpawnZombie(runner, candidate);
-				spawnedThisPulse++;
+				spawnedThisTick++;
+				_pulseSpawnsRemaining--;
+				_pulseSpawnedCount++;
 
 				candidate.Remaining--;
 				if (candidate.Remaining <= 0)
@@ -398,8 +461,15 @@ namespace SimpleFPS
 					_candidates[candidateIndex] = candidate;
 			}
 
-			if (spawnedThisPulse == 0)
-				_spawnRemainder = 0f;
+			// The pulse is finished when the budget is spent, candidates run out, or no candidate could be chosen this
+			// tick. Preserve the original remainder-reset: if a whole pulse spawned nothing (every marker blocked),
+			// drop the fractional spawn accumulator so blocked pulses cannot build a pent-up burst.
+			if (_pulseSpawnsRemaining <= 0 || _candidates.Count == 0 || spawnedThisTick == 0)
+			{
+				if (_pulseSpawnedCount == 0)
+					_spawnRemainder = 0f;
+				_pulseSpawnsRemaining = 0;
+			}
 		}
 
 		private void RunInitialPopulation(NetworkRunner runner)
@@ -460,20 +530,21 @@ namespace SimpleFPS
 
 			for (int i = 0; i < _spawnPoints.Count; i++)
 			{
-				var point = _spawnPoints[i];
+				SpawnPointEntry entry = _spawnPoints[i];
+				var point = entry.Point;
 				if (point == null)
 					continue;
+				// Survivor-proximity blocking is dynamic and must stay per pulse. The NavMesh position/region are
+				// static and cached at collection, so they are reused instead of re-validated every pulse.
 				if (IsSpawnPointBlocked(point))
-					continue;
-				if (TryGetUsableSpawnPointPosition(point, out var spawnPosition) == false)
 					continue;
 
 				_candidates.Add(new SpawnCandidate
 				{
 					Point = point,
-					Position = spawnPosition,
+					Position = entry.Position,
 					Rotation = point.transform.rotation,
-					Region = GetRegion(point.transform.position),
+					Region = entry.Region,
 					Remaining = Mathf.Max(1, point.MaxSpawnCountPerPulse),
 				});
 			}
@@ -558,8 +629,18 @@ namespace SimpleFPS
 			if (regionCount <= 0)
 				return;
 
-			int[] zombieCounts = new int[regionCount];
-			int[] spawnCounts = new int[regionCount];
+			// Reuse the count buffers across calls (this runs per-candidate during a pulse) instead of allocating two
+			// int[] every time. Resized only when the region grid changes; cleared each computation.
+			if (_regionZombieCounts == null || _regionZombieCounts.Length != regionCount)
+			{
+				_regionZombieCounts = new int[regionCount];
+				_regionSpawnCounts = new int[regionCount];
+			}
+			System.Array.Clear(_regionZombieCounts, 0, regionCount);
+			System.Array.Clear(_regionSpawnCounts, 0, regionCount);
+
+			int[] zombieCounts = _regionZombieCounts;
+			int[] spawnCounts = _regionSpawnCounts;
 
 			for (int i = 0; i < ZombieCharacter.ActiveZombies.Count; i++)
 			{

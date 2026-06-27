@@ -40,6 +40,12 @@ namespace SimpleFPS
 		private Vector3 _lastOrigin;
 		private float _lastTileSize;
 		private float _lastHeightLevelWorldUnits;
+		// Cached immutable world-grid snapshot. The grid only changes when Generate() swaps in a new _lastGrid, so
+		// the snapshot (and its WorldGridCell[,] backing array) can be reused until then instead of reallocated on
+		// every TryGetWorldGridSnapshot call. ZombieOrchestrator polls this every rendered frame.
+		private WorldGridSnapshot _cachedWorldGridSnapshot;
+		private RoadCell[,] _cachedSnapshotGrid;
+		private bool _hasCachedWorldGridSnapshot;
 		private int _actualExitCount;
 		private int _failedPathAttempts;
 		private int _lastAppliedNetworkedSeed;
@@ -167,6 +173,15 @@ namespace SimpleFPS
 				return false;
 			}
 
+			// _lastGrid is a distinct array instance per Generate(); reuse the cached snapshot while it is unchanged
+			// (ApplyHeightSnapshotRunValues sets tile size/origin before _lastGrid is swapped, so the cached values
+			// stay consistent). This avoids allocating a fresh WorldGridCell[,] on every poll.
+			if (_hasCachedWorldGridSnapshot && ReferenceEquals(_cachedSnapshotGrid, _lastGrid))
+			{
+				snapshot = _cachedWorldGridSnapshot;
+				return true;
+			}
+
 			int width = _lastGrid.GetLength(0);
 			int height = _lastGrid.GetLength(1);
 			var cells = new WorldGridCell[width, height];
@@ -181,6 +196,9 @@ namespace SimpleFPS
 			}
 
 			snapshot = new WorldGridSnapshot(cells, _lastTileSize > 0f ? _lastTileSize : TileSize, _lastHeightLevelWorldUnits, _lastOrigin);
+			_cachedWorldGridSnapshot = snapshot;
+			_cachedSnapshotGrid = _lastGrid;
+			_hasCachedWorldGridSnapshot = true;
 			return true;
 		}
 

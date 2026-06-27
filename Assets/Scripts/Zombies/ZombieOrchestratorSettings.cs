@@ -23,6 +23,9 @@ namespace SimpleFPS
 		[Tooltip("Zombies spawned per minute for each connected player at full match progress. The effective spawn rate is this value multiplied by the number of connected players.")]
 		public float EndSpawnRatePerMinute = 60f;
 		public float SpawnPulseInterval = 5f;
+		[Min(1)]
+		[Tooltip("Maximum zombies instantiated per simulation tick when draining a spawn pulse. A pulse's whole budget is spread across consecutive ticks at this rate instead of spawning dozens of NetworkObjects in one frame, which avoids the periodic overtime hitch. The pulse still fully drains before the next pulse interval.")]
+		public int MaxSpawnsPerTick = 4;
 
 		[Header("Spawn Validity")]
 		public float SpawnNavMeshSampleDistance = 1.5f;
@@ -67,6 +70,7 @@ namespace SimpleFPS
 			StartSpawnRatePerMinute = Mathf.Max(0f, StartSpawnRatePerMinute);
 			EndSpawnRatePerMinute = Mathf.Max(0f, EndSpawnRatePerMinute);
 			SpawnPulseInterval = Mathf.Max(0.25f, SpawnPulseInterval);
+			MaxSpawnsPerTick = Mathf.Max(1, MaxSpawnsPerTick);
 			OvertimeSpawnRatePerMinute = Mathf.Max(0f, OvertimeSpawnRatePerMinute);
 			SpawnNavMeshSampleDistance = Mathf.Max(0.1f, SpawnNavMeshSampleDistance);
 			MinimumSpawnConnectedNavMeshRadius = Mathf.Max(0f, MinimumSpawnConnectedNavMeshRadius);

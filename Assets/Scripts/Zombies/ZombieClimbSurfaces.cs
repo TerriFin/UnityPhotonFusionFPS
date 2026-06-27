@@ -119,6 +119,17 @@ namespace SimpleFPS
 		private static WorldGridSnapshot _roadGrid;
 		private static bool _hasRoadGrid;
 
+		// Spatial index over the generated terrain surfaces (the large, static, per-ledge-tile set spread across the
+		// whole map). TryFindDirectClimb only needs surfaces near the origin→goal route, so instead of scanning every
+		// terrain surface per query (~10 queries/second × up to thousands of surfaces × 120 hunting zombies) it walks
+		// the cells the route passes through and evaluates only those buckets. Runtime component registrations stay a
+		// linear scan: they are authored rescue faces on props, bounded and far fewer than per-tile terrain faces.
+		private static readonly Dictionary<long, List<int>> _terrainGrid = new();
+		private static readonly HashSet<long> _queryCells = new();
+		private static float _terrainGridCellSize = 1f;
+		private static float _terrainMaxHalfLength;
+		private static bool _hasTerrainGrid;
+
 		public static int TerrainSurfaceCount => _terrainSurfaces.Count;
 		public static int ComponentRegistrationCount => _registrations.Count;
 
@@ -205,14 +216,63 @@ namespace SimpleFPS
 			_builtShortcutMinPathSavings = shortcutMinPathSavings;
 			_hasBuiltTerrain = true;
 
+			BuildTerrainGrid(snapshot.TileSize);
+
 			Debug.Log($"{nameof(ZombieClimbSurfaces)}: registered {_terrainSurfaces.Count} generated terrain climb surface(s).");
 		}
 
 		public static void ClearTerrain()
 		{
 			_terrainSurfaces.Clear();
+			_terrainGrid.Clear();
+			_hasTerrainGrid = false;
+			_terrainMaxHalfLength = 0f;
 			_hasBuiltTerrain = false;
 			_builtTerrainSeed = 0;
+		}
+
+		// Bucket each terrain surface into the world-grid cell containing its center. Cell size tracks the terrain
+		// tile size so a route query touches few cells; one bucket per surface means a deduped cell sweep visits each
+		// surface at most once.
+		private static void BuildTerrainGrid(float tileSize)
+		{
+			_terrainGrid.Clear();
+			_terrainMaxHalfLength = 0f;
+			_terrainGridCellSize = Mathf.Max(1f, tileSize);
+
+			if (_terrainSurfaces.Count == 0)
+			{
+				_hasTerrainGrid = false;
+				return;
+			}
+
+			for (int i = 0; i < _terrainSurfaces.Count; i++)
+			{
+				ZombieClimbSurface surface = _terrainSurfaces[i];
+				_terrainMaxHalfLength = Mathf.Max(_terrainMaxHalfLength, surface.HalfLength);
+
+				long key = CellKey(surface.Center);
+				if (_terrainGrid.TryGetValue(key, out List<int> bucket) == false)
+				{
+					bucket = new List<int>(4);
+					_terrainGrid[key] = bucket;
+				}
+				bucket.Add(i);
+			}
+
+			_hasTerrainGrid = true;
+		}
+
+		private static long CellKey(Vector3 worldPosition)
+		{
+			int cellX = Mathf.FloorToInt(worldPosition.x / _terrainGridCellSize);
+			int cellZ = Mathf.FloorToInt(worldPosition.z / _terrainGridCellSize);
+			return PackCell(cellX, cellZ);
+		}
+
+		private static long PackCell(int cellX, int cellZ)
+		{
+			return ((long)cellX << 32) ^ (uint)cellZ;
 		}
 
 		public static void SetRoadGrid(WorldGridSnapshot snapshot)
@@ -306,9 +366,18 @@ namespace SimpleFPS
 			float bestScore = float.MaxValue;
 			bool found = false;
 
-			FindBestInList(_terrainSurfaces, origin, goal, routeDirection, directDistance, allowShortcut, allowRescue,
-				pathSavings, maxShortcutDistance, maxRescueDistance, tolerance, minRise, heightTolerance, flatTolerance,
-				ref candidate, ref bestScore, ref found);
+			if (_hasTerrainGrid)
+			{
+				FindBestInTerrainGrid(origin, routeDirection, goal, directDistance, allowShortcut, allowRescue,
+					pathSavings, maxShortcutDistance, maxRescueDistance, tolerance, minRise, heightTolerance, flatTolerance,
+					ref candidate, ref bestScore, ref found);
+			}
+			else
+			{
+				FindBestInList(_terrainSurfaces, origin, goal, routeDirection, directDistance, allowShortcut, allowRescue,
+					pathSavings, maxShortcutDistance, maxRescueDistance, tolerance, minRise, heightTolerance, flatTolerance,
+					ref candidate, ref bestScore, ref found);
+			}
 
 			for (int i = _registrations.Count - 1; i >= 0; i--)
 			{
@@ -359,6 +428,69 @@ namespace SimpleFPS
 					pathSavings, maxShortcutDistance, maxRescueDistance, sideTolerance, minClimbHeight,
 					rescueLandingHeightTolerance, rescueLandingFlatTolerance,
 					ref bestCandidate, ref bestScore, ref found);
+			}
+		}
+
+		// Spatially-indexed equivalent of FindBestInList over the terrain surfaces. Walks the cells along the route
+		// (up to where a crossing can still be accepted) plus a margin wide enough that no surface the linear scan
+		// would accept is missed: an accepted surface center is always within (HalfLength + sideTolerance) of the
+		// route, so every cell within that radius of the swept segment is visited.
+		private static void FindBestInTerrainGrid(
+			Vector3 origin,
+			Vector3 routeDirection,
+			Vector3 goal,
+			float directDistance,
+			bool allowShortcut,
+			bool allowRescue,
+			float pathSavings,
+			float maxShortcutDistance,
+			float maxRescueDistance,
+			float sideTolerance,
+			float minClimbHeight,
+			float rescueLandingHeightTolerance,
+			float rescueLandingFlatTolerance,
+			ref ZombieClimbCandidate bestCandidate,
+			ref float bestScore,
+			ref bool found)
+		{
+			_queryCells.Clear();
+
+			float cellSize = Mathf.Max(0.01f, _terrainGridCellSize);
+			float margin = _terrainMaxHalfLength + Mathf.Max(0f, sideTolerance);
+			int marginCells = Mathf.CeilToInt(margin / cellSize) + 1;
+
+			// A crossing farther along the route than this is always rejected (distanceToFace > maxDistance or
+			// > directDistance + sideTolerance), so there is no need to sweep beyond it — a far goal does not pull in
+			// the whole map.
+			float maxAlong = Mathf.Min(directDistance + sideTolerance, Mathf.Max(maxShortcutDistance, maxRescueDistance));
+			float walkLength = Mathf.Max(0f, maxAlong);
+			int steps = Mathf.Max(1, Mathf.CeilToInt(walkLength / cellSize));
+
+			for (int step = 0; step <= steps; step++)
+			{
+				Vector3 point = origin + routeDirection * Mathf.Min(walkLength, step * cellSize);
+				int baseX = Mathf.FloorToInt(point.x / cellSize);
+				int baseZ = Mathf.FloorToInt(point.z / cellSize);
+
+				for (int dx = -marginCells; dx <= marginCells; dx++)
+				{
+					for (int dz = -marginCells; dz <= marginCells; dz++)
+					{
+						long key = PackCell(baseX + dx, baseZ + dz);
+						if (_queryCells.Add(key) == false)
+							continue;
+						if (_terrainGrid.TryGetValue(key, out List<int> bucket) == false)
+							continue;
+
+						for (int b = 0; b < bucket.Count; b++)
+						{
+							TryEvaluateSurface(_terrainSurfaces[bucket[b]], origin, goal, routeDirection, directDistance,
+								allowShortcut, allowRescue, pathSavings, maxShortcutDistance, maxRescueDistance,
+								sideTolerance, minClimbHeight, rescueLandingHeightTolerance, rescueLandingFlatTolerance,
+								ref bestCandidate, ref bestScore, ref found);
+						}
+					}
+				}
 			}
 		}
 

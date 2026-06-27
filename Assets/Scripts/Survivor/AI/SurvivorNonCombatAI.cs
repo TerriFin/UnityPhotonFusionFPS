@@ -509,7 +509,10 @@ namespace SimpleFPS
 			{
 				if (_usePathfinding && _survivor.Navigator != null)
 				{
-					_survivor.Navigator.SetDestination(_followTarget.transform.position);
+					// Follow policy: when the leader stands on a disconnected NavMesh island (a car/crate roof) the
+					// follower walks the usable partial path and parks instead of every follower hammering the
+					// midpoint-chain fallback and the close-segment "reached" test until the leader jumps down.
+					_survivor.Navigator.SetFollowDestination(_followTarget.transform.position);
 					_survivor.Navigator.Tick(_survivor.transform.position);
 					if (_survivor.Navigator.TryGetSteeringTarget(_survivor.transform.position, out var steeringTarget))
 						return CreatePlayerOrderMoveInput(steeringTarget, false, _followStoppingDistance);

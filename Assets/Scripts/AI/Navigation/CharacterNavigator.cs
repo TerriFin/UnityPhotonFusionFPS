@@ -15,6 +15,25 @@ namespace SimpleFPS
 		// Keep below a building floor's height so stacked floors are distinguished, but above pivot/step variance.
 		public float VerticalReachDistance = 2f;
 		public float DestinationChangeRepathDistance = 0.5f;
+		// Dynamic (hunt/follow) targets move continuously. SetDestination wipes the path and forces an immediate
+		// repath whenever the goal drifts past DestinationChangeRepathDistance — for a survivor running at ~6 m/s
+		// that fires ~18x/second, bypassing RepathInterval and making every pursuer recalc on the same ticks.
+		// SetDynamicDestination instead updates the goal in place and lets Tick repath on the RepathInterval cap.
+		// A jump larger than this emergency distance (teleport, large vertical change, target on a fresh ledge)
+		// still forces an immediate repath so the pursuer does not chase a badly stale path.
+		public float DynamicDestinationEmergencyRepathDistance = 3f;
+		// Per-repath jitter fraction applied to dynamic-target repaths so a horde sharing one target does not all
+		// recalculate on the same simulation tick. 0.2 = ±20%.
+		public float DynamicRepathJitter = 0.2f;
+		// Follow-policy targets (SetFollowDestination) whose leader is on a disconnected NavMesh island re-check on
+		// this slower interval (jittered by DynamicRepathJitter) instead of every RepathInterval. A large leader
+		// displacement still forces an immediate repath, so following resumes promptly when the leader returns.
+		public float FollowUnreachableRetryInterval = 1f;
+		// Follow-policy "reached" close-segment NavMesh test (two samples + a raycast) is throttled to this interval
+		// (or sooner if the follower moves past CloseSegmentRecheckDistance), instead of running every tick while a
+		// follower idles at the foot of the leader's prop.
+		public float CloseSegmentCheckInterval = 0.3f;
+		public float CloseSegmentRecheckDistance = 0.75f;
 		public float SampleMaxDistance = 2f;
 		public float ReachablePointSampleMaxDistance = 8f;
 		public int AreaMask = NavMesh.AllAreas;
@@ -60,6 +79,15 @@ namespace SimpleFPS
 		private Vector3 _destination;
 		private Vector3 _sampledDestination;
 		private float _nextRepathTime;
+		private bool _dynamicTarget;
+		// Follow-policy: a continuously moving follow target that, when its leader is on a disconnected NavMesh island,
+		// follows the usable partial path and parks (instead of running the midpoint chain), re-checks on a slow
+		// interval, and throttles the close "reached" segment test. Distinct from a hunt dynamic target, which keeps
+		// the unreachable/midpoint fallback its climb/rescue logic depends on.
+		private bool _followPolicy;
+		private bool _cachedCloseSegmentClear;
+		private float _nextCloseSegmentCheckTime;
+		private Vector3 _closeSegmentCheckPosition;
 		private int _cornerIndex;
 		private bool _hasDestination;
 		private bool _hasPath;
@@ -95,6 +123,8 @@ namespace SimpleFPS
 			_destination = destination;
 			_sampledDestination = destination;
 			_hasDestination = true;
+			_dynamicTarget = false;
+			_followPolicy = false;
 			_hasPath = false;
 			_hasCompletePathToDestination = false;
 			_currentPathLength = 0f;
@@ -105,9 +135,57 @@ namespace SimpleFPS
 			_nextRepathTime = 0f;
 		}
 
+		// Move order for a continuously moving target (hunt/follow). The first call seeds a normal path; later calls
+		// update the goal in place without wiping the path or forcing an immediate repath, so Tick recalculates only
+		// on the RepathInterval cap (jittered) instead of every time the target drifts past
+		// DestinationChangeRepathDistance. A jump beyond DynamicDestinationEmergencyRepathDistance repaths now.
+		public void SetDynamicDestination(Vector3 destination)
+		{
+			SetDynamicDestinationInternal(destination, followPolicy: false);
+		}
+
+		// Like SetDynamicDestination, but additionally enables the follow policy: when the leader sits on a
+		// disconnected NavMesh island the follower walks the usable partial path and parks (no midpoint chain), the
+		// disconnected result is re-checked on a slow jittered interval, and the close "reached" segment test is
+		// throttled. Use for follow-the-leader orders; hunt targets use SetDynamicDestination.
+		public void SetFollowDestination(Vector3 destination)
+		{
+			SetDynamicDestinationInternal(destination, followPolicy: true);
+		}
+
+		private void SetDynamicDestinationInternal(Vector3 destination, bool followPolicy)
+		{
+			if (_hasDestination == false)
+			{
+				SetDestination(destination);
+				_dynamicTarget = true;
+				_followPolicy = followPolicy;
+				return;
+			}
+
+			_dynamicTarget = true;
+			_followPolicy = followPolicy;
+
+			float moveSqr = (_destination - destination).sqrMagnitude;
+			if (moveSqr <= DestinationChangeRepathDistance * DestinationChangeRepathDistance)
+				return;
+
+			// Track the live goal so the next scheduled CalculatePath retargets it; keep following the current path
+			// until then. Clearing "reached" lets the pursuer resume if the target moved off a point it had arrived
+			// at. "Unreachable" is intentionally left for Tick's next repath to re-evaluate rather than thrashing.
+			_destination = destination;
+			_isDestinationReached = false;
+
+			float emergency = Mathf.Max(DestinationChangeRepathDistance, DynamicDestinationEmergencyRepathDistance);
+			if (moveSqr > emergency * emergency)
+				_nextRepathTime = 0f;
+		}
+
 		public void ClearDestination()
 		{
 			_hasDestination = false;
+			_dynamicTarget = false;
+			_followPolicy = false;
 			_hasPath = false;
 			_hasCompletePathToDestination = false;
 			_currentPathLength = 0f;
@@ -150,9 +228,20 @@ namespace SimpleFPS
 			if (Time.timeSinceLevelLoad < _nextRepathTime)
 				return;
 
-			_nextRepathTime = Time.timeSinceLevelLoad + Mathf.Max(0.02f, RepathInterval);
+			_nextRepathTime = Time.timeSinceLevelLoad + GetNextRepathDelay();
 			CalculatePath(currentPosition);
 			AdvanceCorner(currentPosition);
+		}
+
+		private float GetNextRepathDelay()
+		{
+			float interval = Mathf.Max(0.02f, RepathInterval);
+			if (_dynamicTarget == false)
+				return interval;
+
+			// Spread a horde's periodic repaths across ticks so zombies sharing a target do not all recalc together.
+			float jitter = Mathf.Clamp01(DynamicRepathJitter);
+			return interval * (1f + UnityEngine.Random.Range(-jitter, jitter));
 		}
 
 		public bool TryGetSteeringTarget(Vector3 currentPosition, out Vector3 steeringTarget)
@@ -299,8 +388,10 @@ namespace SimpleFPS
 				return;
 
 			Vector3 goal = _destination;
+			bool sampledGoal = false;
 			if (NavMesh.SamplePosition(_destination, out var endHit, sampleDistance, AreaMask))
 			{
+				sampledGoal = true;
 				goal = endHit.position;
 				_sampledDestination = endHit.position;
 				UpdateReached(currentPosition);
@@ -322,6 +413,21 @@ namespace SimpleFPS
 				}
 			}
 
+			// Follow policy: the leader has no complete path (standing on a disconnected island such as a car roof).
+			// Follow the usable partial path to the nearest reachable point and park, instead of running the
+			// expensive midpoint chain that a far follow target would otherwise trigger up to 19 path calculations
+			// for. Re-check on a slow jittered interval; the saved follow destination is kept and a large leader jump
+			// forces an immediate repath (SetFollowDestination), so normal following resumes the moment the leader
+			// returns to connected NavMesh.
+			if (_followPolicy)
+			{
+				if (sampledGoal == false || TryAcceptPartialPathToward(goal) == false)
+					_isDestinationUnreachable = true;
+
+				_nextRepathTime = Time.timeSinceLevelLoad + GetFollowUnreachableRetryDelay();
+				return;
+			}
+
 			// No complete direct route. If the saved order is already within UnreachableDistance yet still has no
 			// path, the last stretch is genuinely blocked (target inside a building / on a disconnected ledge):
 			// report it unreachable so the order issuer abandons it instead of waiting on a path that can't exist.
@@ -337,6 +443,35 @@ namespace SimpleFPS
 			// advancing position re-tries the saved original order and chains the survivor the whole way across the
 			// map instead of standing still. If even that finds nothing the survivor holds and retries next repath.
 			TryBuildMidpointChainPath(startHit.position, goal);
+		}
+
+		// Follow policy only: accept the reachable (partial) portion of the just-attempted CalculatePath. When the
+		// goal is on a disconnected island NavMesh.CalculatePath returns PathPartial, and its last corner is the
+		// closest reachable point toward the leader — exactly where the follower should walk and wait. Requires real
+		// progress over standing still; otherwise the caller marks the destination unreachable.
+		private bool TryAcceptPartialPathToward(Vector3 goal)
+		{
+			if (_path == null || _path.corners == null || _path.corners.Length < 2)
+				return false;
+			if (_path.status != NavMeshPathStatus.PathPartial)
+				return false;
+
+			Vector3 lastCorner = _path.corners[_path.corners.Length - 1];
+			if (FlatDistanceSqr(lastCorner, goal) >= FlatDistanceSqr(_path.corners[0], goal))
+				return false; // partial path makes no progress toward the leader — treat as unreachable
+
+			_corners = _path.corners;
+			_hasPath = true;
+			_hasCompletePathToDestination = false;
+			_currentPathLength = GetPathLength(_path);
+			return true;
+		}
+
+		private float GetFollowUnreachableRetryDelay()
+		{
+			float interval = Mathf.Max(Mathf.Max(0.02f, RepathInterval), FollowUnreachableRetryInterval);
+			float jitter = Mathf.Clamp01(DynamicRepathJitter);
+			return interval * (1f + UnityEngine.Random.Range(-jitter, jitter));
 		}
 
 		// Bisect toward the origin: try the midpoint between us and the goal, then (if that is unreachable) halfway
@@ -418,7 +553,33 @@ namespace SimpleFPS
 			Vector3 target = _sampledDestination;
 			bool horizontalReached = FlatDistanceSqr(currentPosition, target) <= DestinationReachDistance * DestinationReachDistance;
 			bool verticalReached = Mathf.Abs(currentPosition.y - target.y) <= Mathf.Max(0.01f, VerticalReachDistance);
-			_isDestinationReached = horizontalReached && verticalReached && IsCloseDestinationNavMeshSegmentClear(currentPosition, target);
+			if (horizontalReached == false || verticalReached == false)
+			{
+				_isDestinationReached = false;
+				return;
+			}
+
+			// The close-segment test (two NavMesh samples + a raycast) only runs when already within reach. For a
+			// follow target that means a follower idling at the foot of the leader's prop would run it every tick;
+			// throttle it there. Static/hunt orders keep the exact per-call test.
+			_isDestinationReached = _followPolicy
+				? IsCloseDestinationNavMeshSegmentClearThrottled(currentPosition, target)
+				: IsCloseDestinationNavMeshSegmentClear(currentPosition, target);
+		}
+
+		private bool IsCloseDestinationNavMeshSegmentClearThrottled(Vector3 currentPosition, Vector3 target)
+		{
+			float now = Time.timeSinceLevelLoad;
+			float recheckDistance = Mathf.Max(0.05f, CloseSegmentRecheckDistance);
+			if (now >= _nextCloseSegmentCheckTime ||
+			    (currentPosition - _closeSegmentCheckPosition).sqrMagnitude > recheckDistance * recheckDistance)
+			{
+				_nextCloseSegmentCheckTime = now + Mathf.Max(0.05f, CloseSegmentCheckInterval);
+				_closeSegmentCheckPosition = currentPosition;
+				_cachedCloseSegmentClear = IsCloseDestinationNavMeshSegmentClear(currentPosition, target);
+			}
+
+			return _cachedCloseSegmentClear;
 		}
 
 		private bool IsCloseDestinationNavMeshSegmentClear(Vector3 currentPosition, Vector3 target)

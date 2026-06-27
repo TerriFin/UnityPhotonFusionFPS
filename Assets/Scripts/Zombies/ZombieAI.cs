@@ -108,6 +108,12 @@ namespace SimpleFPS
 		public float StuckSampleRadius = 0.6f;
 		public float StuckMinHeightAboveNavMesh = 0.6f;
 		public float StuckCheckInterval = 0.5f;
+		// Expensive island-connectivity verification (IsOnSmallElevatedNavMeshIsland: ~29 NavMesh.SamplePosition
+		// calls plus a CalculatePath) is split from the cheap off-mesh/prop checks. It runs only when the cheap
+		// checks are inconclusive AND the navigator shows evidence of failure (no usable path / unreachable / no
+		// active route), and then no more often than this jittered interval. Grounded zombies with a working path
+		// never pay for it. Keep this >= StuckCheckInterval.
+		public float ElevatedIslandCheckInterval = 1.5f;
 		public float StuckRandomWanderDurationMin = 1f;
 		public float StuckRandomWanderDurationMax = 2.5f;
 
@@ -137,6 +143,8 @@ namespace SimpleFPS
 		private float _climbCooldownUntil;
 		private float _nextStuckCheckTime;
 		private bool _isStuckElevated;
+		private float _nextElevatedIslandCheckTime;
+		private bool _islandStuckResult;
 		private Vector3 _stuckWanderDirection;
 		private float _stuckWanderEndTime;
 		private NavMeshPath _scratchNavMeshPath;
@@ -154,8 +162,13 @@ namespace SimpleFPS
 		// Smallest rise that still counts as a mantle (floors the snap height so Mathf.Max never returns 0).
 		private const float MantleMinRise = 0.08f;
 		private const float ClimbStopRise = 0.5f;
-		private const float ClimbCandidateGoalRefreshDistance = 0.75f;
-		private const float ClimbCandidatePositionRefreshDistance = 0.75f;
+		// Emergency-only displacement thresholds for the climb-candidate cache. ExplicitGoalClimbRefreshInterval is
+		// authoritative: at overtime speed a zombie travels well over 0.75 m within one refresh interval, so the old
+		// 0.75 m thresholds forced an extra movement-driven refresh between every interval (roughly doubling refresh
+		// frequency to ~10/sec). These are now large enough that ordinary hunting movement never triggers an early
+		// refresh; only a discontinuous jump (target teleport, large reposition) does.
+		private const float ClimbCandidateGoalRefreshDistance = 3f;
+		private const float ClimbCandidatePositionRefreshDistance = 3f;
 		private const float ShortcutBlockerProbeHeight = 0.8f;
 		private const float RoadDirectLineOfSightHeight = 1.5f;
 		private const float RoadDirectObstacleProbeHeight = 0.55f;
@@ -343,7 +356,7 @@ namespace SimpleFPS
 			if (shouldPrioritizeClimb == false && ShouldHoldMeleePosition(_target, targetPosition))
 				return BuildLookInput(targetPosition);
 
-			return BuildExplicitGoalMoveInput(targetPosition, ExplicitGoalStoppingDistance);
+			return BuildExplicitGoalMoveInput(targetPosition, ExplicitGoalStoppingDistance, dynamicTarget: true);
 		}
 
 		private NetworkedInput UpdateHunting()
@@ -377,7 +390,7 @@ namespace SimpleFPS
 			if (shouldPrioritizeClimb == false && ShouldHoldMeleePosition(_target, targetPosition))
 				return BuildLookInput(targetPosition);
 
-			return BuildExplicitGoalMoveInput(targetPosition, ExplicitGoalStoppingDistance);
+			return BuildExplicitGoalMoveInput(targetPosition, ExplicitGoalStoppingDistance, dynamicTarget: true);
 		}
 
 		// A hunting zombie commits to one player and keeps hunting that player's team until the team is wiped
@@ -462,7 +475,7 @@ namespace SimpleFPS
 				AlertNearbyZombies(target, stimulusTick);
 		}
 
-		private NetworkedInput BuildExplicitGoalMoveInput(Vector3 goal, float stoppingDistance)
+		private NetworkedInput BuildExplicitGoalMoveInput(Vector3 goal, float stoppingDistance, bool dynamicTarget = false)
 		{
 			var navigator = _zombie.Navigator;
 			if (navigator == null)
@@ -480,7 +493,13 @@ namespace SimpleFPS
 			if (TryBuildRoadDirectTargetInput(goal, false, out NetworkedInput roadInput))
 				return roadInput;
 
-			navigator.SetDestination(goal);
+			// A live hunt/attack target moves every tick; SetDynamicDestination updates the goal in place and lets
+			// the navigator repath on its interval instead of recalculating the instant the target drifts. A fixed
+			// investigation point uses the normal SetDestination.
+			if (dynamicTarget)
+				navigator.SetDynamicDestination(goal);
+			else
+				navigator.SetDestination(goal);
 			navigator.Tick(transform.position);
 
 			if (TryContinueActiveClimb(out NetworkedInput climbInput))
@@ -587,7 +606,14 @@ namespace SimpleFPS
 			input = default;
 			if (targetDirectlySensed == false && HasRoadDirectLineOfSight(targetPosition) == false)
 				return false;
-			if (IsElevatedOffNavMesh() == false && IsOnSmallElevatedNavMeshIsland() == false)
+			// Use the throttled stuck cache instead of probing IsElevatedOffNavMesh + IsOnSmallElevatedNavMeshIsland
+			// fresh here. This method is hit every 64 Hz tick while attacking/hunting a directly sensed target on a
+			// non-road tile, and the island probe alone is ~29 NavMesh.SamplePosition calls plus a CalculatePath. The
+			// cache answers the same "stuck on an elevated island?" question and refreshes on StuckCheckInterval. The
+			// HasCompleteNavMeshPathToGoalHeight gate below still prevents going direct when a real path exists, so the
+			// cache's slightly broader trigger (it also includes IsOnSmallPropSupport) cannot cause an incorrect
+			// straight-line move while the zombie can still navigate normally.
+			if (IsStuckElevatedCached() == false)
 				return false;
 			if (HasCompleteNavMeshPathToGoalHeight(
 				    transform.position,
@@ -1391,12 +1417,56 @@ namespace SimpleFPS
 			if (now >= _nextStuckCheckTime)
 			{
 				_nextStuckCheckTime = now + Mathf.Max(0.1f, StuckCheckInterval);
-				_isStuckElevated = IsElevatedOffNavMesh() ||
-				                   IsOnSmallElevatedNavMeshIsland() ||
-				                   IsOnSmallPropSupport();
+
+				// Cheap, conclusive detection first: completely off the NavMesh, or perched on a small prop. Either
+				// is decisive on its own and short-circuits before the expensive island-connectivity probe.
+				if (IsElevatedOffNavMesh() || IsOnSmallPropSupport())
+				{
+					_isStuckElevated = true;
+					_islandStuckResult = false;        // cheap signal owns the verdict; drop any stale island result
+					_nextElevatedIslandCheckTime = 0f; // re-verify island promptly once the cheap signal clears
+				}
+				else if (ShouldVerifyElevatedIsland() == false)
+				{
+					// Evidence of progress (a usable navigator path to a destination): the zombie is on connected
+					// NavMesh, so skip the ~29-sample island probe entirely. This is the common grounded-zombie case.
+					_isStuckElevated = false;
+					_islandStuckResult = false;
+					_nextElevatedIslandCheckTime = 0f;
+				}
+				else
+				{
+					// Inconclusive cheap checks plus evidence of failure (no usable path / unreachable / no active
+					// route). Verify island connectivity, but no more often than the slower jittered interval; reuse
+					// the previous verdict in between so a stranded zombie is still detected without re-probing 64 Hz.
+					if (now >= _nextElevatedIslandCheckTime)
+					{
+						float interval = Mathf.Max(Mathf.Max(0.1f, StuckCheckInterval), ElevatedIslandCheckInterval);
+						_nextElevatedIslandCheckTime = now + interval * Random.Range(0.85f, 1.15f);
+						_islandStuckResult = IsOnSmallElevatedNavMeshIsland();
+					}
+
+					_isStuckElevated = _islandStuckResult;
+				}
 			}
 
 			return _isStuckElevated;
+		}
+
+		// Cheap gate for the expensive island-connectivity probe. A zombie genuinely stranded on a small disconnected
+		// island has no complete NavMesh path off it, so the navigator reports no usable path or an unreachable
+		// destination. A grounded zombie with a working path (or one that has arrived on connected mesh) is not
+		// stranded and must not pay for the probe. With no active route there is nothing to disprove, so verify.
+		private bool ShouldVerifyElevatedIsland()
+		{
+			var navigator = _zombie != null ? _zombie.Navigator : null;
+			if (navigator == null || navigator.HasDestination == false)
+				return true;
+			if (navigator.IsDestinationReached)
+				return false;
+			if (navigator.IsDestinationUnreachable)
+				return true;
+			return navigator.HasPath == false;
 		}
 
 		private NetworkedInput BuildStuckRandomMoveInput()
