@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using Fusion;
 using UnityEngine;
 using UnityEngine.Serialization;
@@ -14,9 +13,13 @@ namespace SimpleFPS
 	}
 
 	/// <summary>
-	/// Main script that handles all the shooting. Weapon fires simulated projectiles that travel at
-	/// a configurable speed with optional gravity drop. Spawn data is synchronized over the network;
-	/// positions are never synced — every peer reconstructs the trajectory from initial conditions.
+	/// Per-weapon fire control, ammo, and visuals. Each survivor carries one of these per weapon type.
+	///
+	/// The actual projectile event streams (fire/hit) and the deterministic bullet simulation live on the
+	/// survivor-level <see cref="Weapons"/> manager, shared by all weapons — only one weapon fires at a time, so
+	/// every weapon does not need its own replicated event history. A successful Fire() registers a single shot with
+	/// the manager via <see cref="Weapons.RegisterShot"/>; the manager expands pellets, detects hits, applies damage,
+	/// and drives visuals. See Docs/ProjectileSystem.md and Docs/NetworkOptimizationImplementation.md.
 	/// </summary>
 	public class Weapon : NetworkBehaviour
 	{
@@ -81,25 +84,13 @@ namespace SimpleFPS
 		public int RemainingAmmo { get; set; }
 
 		[Networked]
-		private int _fireCount { get; set; }
-		[Networked]
-		private int _hitCount { get; set; }
-		[Networked]
 		private TickTimer _fireCooldown { get; set; }
-		[Networked, Capacity(16)]
-		private NetworkArray<ProjectileSpawnData> _spawnData { get; }
-		[Networked, Capacity(16)]
-		private NetworkArray<ProjectileHitData> _hitData { get; }
 
 		private int _fireTicks;
-		private int _visibleFireCount;
-		private int _visibleHitCount;
 		private bool _reloadingVisible;
 		private GameObject _muzzleEffectInstance;
-		private SceneObjects _sceneObjects;
 		private Survivor _ownerSurvivor;
-		private readonly List<ActiveProjectile> _activeProjectiles = new List<ActiveProjectile>();
-		private readonly ProjectileVisual[] _activeVisuals = new ProjectileVisual[64];
+		private Weapons _weapons;
 
 		public bool Fire(Vector3 firePosition, Vector3 fireDirection, bool justPressed)
 		{
@@ -118,23 +109,15 @@ namespace SimpleFPS
 				return false;
 			}
 
-			// Random needs to be initialized with same seed on both input and
-			// state authority to ensure the projectiles are fired in the same direction on both.
-			Random.InitState(Runner.Tick * unchecked((int)Object.Id.Raw));
+			// Register one shot on the survivor-level shared stream. The manager expands ProjectilesPerShot pellets
+			// deterministically (same seed on every peer), so a shotgun blast costs one networked fire event instead
+			// of one per pellet. The manager owns hit detection, damage, and visuals.
+			if (_weapons == null)
+				_weapons = GetComponentInParent<Weapons>();
+			if (_weapons == null)
+				return false;
 
-			for (int i = 0; i < ProjectilesPerShot; i++)
-			{
-				var projectileDirection = fireDirection;
-
-				if (Dispersion > 0f)
-				{
-					// We use unit sphere on purpose -> non-uniform distribution (more projectiles in the center).
-					var dispersionRotation = Quaternion.Euler(Random.insideUnitSphere * Dispersion);
-					projectileDirection = dispersionRotation * fireDirection;
-				}
-
-				FireProjectile(firePosition, projectileDirection);
-			}
+			_weapons.RegisterShot(this, firePosition, fireDirection);
 
 			if (HasStateAuthority && Runner.IsForward)
 			{
@@ -195,18 +178,14 @@ namespace SimpleFPS
 				RemainingAmmo = StartAmmo - ClipAmmo;
 			}
 
-			_visibleFireCount = _fireCount;
-			_visibleHitCount = _hitCount;
-			_activeProjectiles.Clear();
-
 			float fireTime = 60f / FireRate;
 			_fireTicks = Mathf.CeilToInt(fireTime / Runner.DeltaTime);
 
 			_muzzleEffectInstance = Instantiate(MuzzleEffectPrefab, MuzzleTransform);
 			_muzzleEffectInstance.SetActive(false);
 
-			_sceneObjects = Runner.GetSingleton<SceneObjects>();
 			_ownerSurvivor = GetComponentInParent<Survivor>();
+			_weapons = GetComponentInParent<Weapons>();
 		}
 
 		public override void FixedUpdateNetwork()
@@ -234,124 +213,12 @@ namespace SimpleFPS
 				// Add small prepare time after reload.
 				_fireCooldown = TickTimer.CreateFromSeconds(Runner, 0.25f);
 			}
-
-			// Advance in-flight bullets and resolve hits. Only runs on the state authority's forward
-			// tick — skipping resimulation avoids double-applying damage on replayed ticks, and
-			// skipping input authority avoids the non-networked _activeProjectiles list getting
-			// out of sync with the authoritative simulation.
-			if (HasStateAuthority && Runner.IsForward)
-			{
-				float dt = Runner.DeltaTime;
-				float maxLifetime = MaxHitDistance / BulletSpeed;
-				var hitOptions = HitOptions.IncludePhysX | HitOptions.IgnoreInputAuthority;
-
-				for (int i = _activeProjectiles.Count - 1; i >= 0; i--)
-				{
-					var proj = _activeProjectiles[i];
-
-					// Skip the spawn tick. Survivor runs FixedUpdateNetwork before Weapon, so the
-					// just-fired projectile would otherwise be stepped with tPrev = -dt, which makes
-					// prevPos lie behind the muzzle and the first lag-compensated raycast scan
-					// geometry the bullet never actually crossed — typically a wall behind the shooter.
-					if (Runner.Tick <= proj.SpawnTick)
-						continue;
-
-					float tPrev = (Runner.Tick - 1 - proj.SpawnTick) * dt;
-					float tCurr = (Runner.Tick     - proj.SpawnTick) * dt;
-
-					if (tCurr >= maxLifetime)
-					{
-						_activeProjectiles.RemoveAt(i);
-						continue;
-					}
-
-					Vector3 prevPos = EvaluateTrajectory(proj.Origin, proj.Direction, tPrev);
-					Vector3 currPos = EvaluateTrajectory(proj.Origin, proj.Direction, tCurr);
-					Vector3 delta   = currPos - prevPos;
-					float   stepLen = delta.magnitude;
-
-					if (stepLen < 0.001f)
-						continue;
-
-					if (Runner.LagCompensation.Raycast(prevPos, delta / stepLen, stepLen,
-						    Object.InputAuthority, out var hit, HitMask, hitOptions))
-					{
-						bool isKill = false;
-						bool isCrit = false;
-
-						if (hit.Hitbox != null)
-							ApplyDamage(hit.Hitbox, hit.Point, proj.Direction, out isKill, out isCrit);
-
-						// Store hit sequentially so the hit counter indexes directly into _hitData.
-						int hitSlot = _hitCount % _hitData.Length;
-						_hitData.Set(hitSlot, new ProjectileHitData
-						{
-							HitPosition   = hit.Point,
-							HitNormal     = hit.Normal,
-							ShowEffect    = hit.Hitbox == null,
-							FireSlot      = proj.SlotIndex,
-							IsKill        = isKill,
-							IsCriticalHit = isCrit
-						});
-						_hitCount++;
-
-						CharacterSensorEvents.ReportBulletImpact(hit.Point, proj.Origin, Object);
-
-						_activeProjectiles.RemoveAt(i);
-					}
-				}
-			}
 		}
 
 		public override void Render()
 		{
-			if (_visibleFireCount < _fireCount)
-			{
-				PlayFireEffect();
-			}
-
-			// Spawn visuals for newly fired projectiles.
-			while (_visibleFireCount < _fireCount)
-			{
-				int slot = _visibleFireCount % _spawnData.Length;
-				var spawnData = _spawnData[slot];
-
-				float spawnNetTime   = spawnData.SpawnTick * Runner.DeltaTime;
-				float alreadyElapsed = (float)(Runner.LocalRenderTime - spawnNetTime);
-				float maxLifetime    = MaxHitDistance / BulletSpeed;
-
-				if (alreadyElapsed < maxLifetime)
-				{
-					var visual = Instantiate(ProjectileVisualPrefab, MuzzleTransform.position, MuzzleTransform.rotation);
-					visual.Initialize(spawnData.Origin, spawnData.Direction, slot,
-						BulletSpeed, GravityScale, alreadyElapsed, maxLifetime);
-					_activeVisuals[slot] = visual;
-				}
-
-				_visibleFireCount++;
-			}
-
-			// Terminate visuals for confirmed hits and show crosshair feedback for the local player.
-			while (_visibleHitCount < _hitCount)
-			{
-				int hitSlot = _visibleHitCount % _hitData.Length;
-				var hitData = _hitData[hitSlot];
-
-				int fireSlot = hitData.FireSlot;
-				if (_activeVisuals[fireSlot] != null)
-				{
-					_activeVisuals[fireSlot].Terminate(hitData.HitPosition, hitData.HitNormal, hitData.ShowEffect);
-					_activeVisuals[fireSlot] = null;
-				}
-
-				if (IsHeldByActiveLocalSurvivor() && hitData.ShowEffect == false)
-				{
-					_sceneObjects.GameUI.PlayerView.Crosshair.ShowHit(hitData.IsKill, hitData.IsCriticalHit);
-				}
-
-				_visibleHitCount++;
-			}
-
+			// Reload animation/sound is per-weapon and driven by the networked IsReloading state. Fire visuals
+			// (muzzle, tracers, impacts) are driven centrally by the Weapons manager from the shared event streams.
 			if (_reloadingVisible != IsReloading)
 			{
 				if (IsReloading)
@@ -364,34 +231,8 @@ namespace SimpleFPS
 			}
 		}
 
-		private void FireProjectile(Vector3 firePosition, Vector3 fireDirection)
-		{
-			int slot = _fireCount % _spawnData.Length;
-
-			_spawnData.Set(slot, new ProjectileSpawnData
-			{
-				Origin    = firePosition,
-				Direction = fireDirection,
-				SpawnTick = Runner.Tick
-			});
-
-			// Only the state authority tracks active projectiles for hit detection.
-			// Guarded by IsForward so resimulation doesn't add duplicates to the local list.
-			if (HasStateAuthority && Runner.IsForward)
-			{
-				_activeProjectiles.Add(new ActiveProjectile
-				{
-					Origin    = firePosition,
-					Direction = fireDirection,
-					SpawnTick = Runner.Tick,
-					SlotIndex = slot
-				});
-			}
-
-			_fireCount++;
-		}
-
-		private void PlayFireEffect()
+		// Called by the Weapons manager when it renders a new shot fired by this weapon.
+		public void PlayFireEffect()
 		{
 			if (FireSound != null)
 			{
@@ -404,33 +245,9 @@ namespace SimpleFPS
 
 			WeaponAnimator.SetTrigger("Fire");
 
-			GetComponentInParent<Survivor>().PlayFireEffect();
-		}
-
-		private void ApplyDamage(Hitbox enemyHitbox, Vector3 position, Vector3 direction, out bool isKill, out bool isCriticalHit)
-		{
-			isKill = false;
-			isCriticalHit = false;
-
-			var enemyHealth = enemyHitbox.Root.GetComponent<Health>();
-			if (enemyHealth == null || enemyHealth.IsAlive == false)
-				return;
-			if (CharacterFactionUtility.CanSurvivorWeaponDamage(_ownerSurvivor, enemyHealth) == false)
-				return;
-
-			float damageMultiplier = enemyHitbox is BodyHitbox bodyHitbox ? bodyHitbox.DamageMultiplier : 1f;
-			isCriticalHit = damageMultiplier > 1f;
-
-			float damage = Damage * damageMultiplier;
-			if (_sceneObjects.Gameplay.DoubleDamageActive)
-			{
-				damage *= 2f;
-			}
-
-			if (enemyHealth.ApplyDamage(Object.InputAuthority, damage, position, direction, Type, isCriticalHit) == false)
-				return;
-
-			isKill = enemyHealth.IsAlive == false;
+			if (_ownerSurvivor == null)
+				_ownerSurvivor = GetComponentInParent<Survivor>();
+			_ownerSurvivor?.PlayFireEffect();
 		}
 
 		private void PlayEmptyClipSound(bool fireJustPressed)
@@ -453,38 +270,6 @@ namespace SimpleFPS
 		private bool IsHeldByActiveLocalSurvivor()
 		{
 			return HasInputAuthority && _ownerSurvivor != null && _ownerSurvivor.IsActiveCharacter();
-		}
-
-		private Vector3 EvaluateTrajectory(Vector3 origin, Vector3 direction, float elapsed)
-		{
-			Vector3 pos = origin + direction * BulletSpeed * elapsed;
-			pos.y -= 0.5f * GravityScale * 9.81f * elapsed * elapsed;
-			return pos;
-		}
-
-		private struct ActiveProjectile
-		{
-			public Vector3 Origin;
-			public Vector3 Direction;
-			public int     SpawnTick;
-			public int     SlotIndex;
-		}
-
-		private struct ProjectileSpawnData : INetworkStruct
-		{
-			public Vector3 Origin;
-			public Vector3 Direction;
-			public int     SpawnTick;
-		}
-
-		private struct ProjectileHitData : INetworkStruct
-		{
-			public Vector3     HitPosition;
-			public Vector3     HitNormal;
-			public NetworkBool ShowEffect;
-			public int         FireSlot;
-			public NetworkBool IsKill;
-			public NetworkBool IsCriticalHit;
 		}
 	}
 }

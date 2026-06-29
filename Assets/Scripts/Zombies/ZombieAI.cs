@@ -45,6 +45,14 @@ namespace SimpleFPS
 		[FormerlySerializedAs("AttackMoveStoppingDistance")]
 		public float ExplicitGoalStoppingDistance = 0.2f;
 		public float ExplicitGoalHeightTolerance = 0.75f;
+		// When the navmesh can get the zombie no closer to its goal (it "reached" the nearest navigable point, or
+		// there is no complete path) but the goal is still this close and in direct line of sight, the zombie steps
+		// straight toward it to close the final gap instead of staring. Recovers targets standing on the thin
+		// navmesh strip against a wall, where the path cannot quite reach them. Line of sight keeps it from walking
+		// into geometry; keep this modest so it only bridges genuine navmesh-edge gaps, not real detours. (It only
+		// fires when there is no usable navmesh route at all — if the zombie could path around, it would, and this
+		// never runs — so the line-of-sight gate is the real safety, not the distance.)
+		public float CloseGapDirectMaxDistance = 4f;
 
 		[Header("Climbing")]
 		// Zombies steer directly toward explicit goals, but may only climb broad registered climb surfaces: generated
@@ -537,9 +545,6 @@ namespace SimpleFPS
 			if (TryGetCachedDirectClimbCandidate(goal, navigator, out ZombieClimbCandidate climbCandidate))
 				return BuildClimbCandidateMoveInput(goal, climbCandidate);
 
-			if (navigator.IsDestinationReached)
-				return BuildLookInput(goal);
-
 			if (navigator.TryGetSteeringTarget(transform.position, out Vector3 steer))
 			{
 				float steerStoppingDistance = GetPathSteeringStoppingDistance(navigator, stoppingDistance);
@@ -552,7 +557,36 @@ namespace SimpleFPS
 				return BuildMoveInputFromDirection(steerDirection);
 			}
 
+			// No usable navmesh steering toward the goal: the navigator reached the closest navigable point short of
+			// the real target, or found no complete path. If the goal is close and in clear line of sight, close the
+			// final gap on foot instead of staring (target on a thin navmesh strip against a wall).
+			if (TryBuildCloseGapDirectInput(goal, stoppingDistance, out NetworkedInput gapInput))
+				return gapInput;
+
 			return BuildLookInput(goal);
+		}
+
+		// Last-resort approach for a directly visible, nearby goal the navmesh cannot route to. Only fires when the
+		// goal is within CloseGapDirectMaxDistance and in clear line of sight (so the straight line is unobstructed
+		// and stepping off the navmesh edge will not walk the zombie into geometry), and only while it has not yet
+		// reached the goal. Without this a hunting zombie just stares when its target stands on a thin navmesh strip
+		// against a wall that NavMesh.CalculatePath cannot quite reach.
+		private bool TryBuildCloseGapDirectInput(Vector3 goal, float stoppingDistance, out NetworkedInput input)
+		{
+			input = default;
+			if (HasReachedExplicitGoal(goal, stoppingDistance))
+				return false;
+
+			float maxDistance = Mathf.Max(0f, CloseGapDirectMaxDistance);
+			if (maxDistance <= 0f)
+				return false;
+			if (FlatDistanceSqr(transform.position, goal) > maxDistance * maxDistance)
+				return false;
+			if (HasRoadDirectLineOfSight(goal) == false)
+				return false;
+
+			input = BuildDirectGoalMoveInput(goal);
+			return input.MoveDirection != Vector2.zero;
 		}
 
 		private bool TryBuildRoadDirectTargetInput(Vector3 targetPosition, bool targetDirectlySensed, out NetworkedInput input)
@@ -1455,15 +1489,19 @@ namespace SimpleFPS
 
 		// Cheap gate for the expensive island-connectivity probe. A zombie genuinely stranded on a small disconnected
 		// island has no complete NavMesh path off it, so the navigator reports no usable path or an unreachable
-		// destination. A grounded zombie with a working path (or one that has arrived on connected mesh) is not
-		// stranded and must not pay for the probe. With no active route there is nothing to disprove, so verify.
+		// destination. A grounded zombie that is actively steering along a complete path is not stranded and must
+		// not pay for the probe.
+		//
+		// Note: we intentionally do NOT skip on IsDestinationReached. "Reached" only means the zombie is within the
+		// navigator's DestinationReachDistance of the sampled destination, which for a wall-hugging target on a thin
+		// navmesh strip can be ~1.35 m short of the real target. Skipping the stuck probe there left the zombie
+		// staring instead of closing the final gap. When reached, the navigator also clears its path, so HasPath is
+		// false and this returns true (verify) — the correct behaviour.
 		private bool ShouldVerifyElevatedIsland()
 		{
 			var navigator = _zombie != null ? _zombie.Navigator : null;
 			if (navigator == null || navigator.HasDestination == false)
 				return true;
-			if (navigator.IsDestinationReached)
-				return false;
 			if (navigator.IsDestinationUnreachable)
 				return true;
 			return navigator.HasPath == false;

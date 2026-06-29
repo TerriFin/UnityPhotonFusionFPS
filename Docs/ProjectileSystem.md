@@ -1,5 +1,17 @@
 # Networked Simulated Projectile System
 
+> **Architecture update (weapon rework).** The projectile event streams now live **once on the survivor-level
+> `Weapons` manager**, not on each `Weapon`. Only one weapon fires at a time, so one shared per-shot fire stream
+> (`[Networked, Capacity(8)] NetworkArray<ProjectileSpawnData>`) and one shared per-pellet-hit stream
+> (`[Networked, Capacity(16)] NetworkArray<ProjectileHitData>`) replace the six per-weapon arrays that previously
+> dominated a survivor's snapshot. A multi-pellet shot writes **one** fire event tagged with its `WeaponType`;
+> every peer reconstructs the identical pellet spread deterministically from the shot's seed
+> (`SpawnTick * survivorId`). `Weapon.Fire()` still performs ammo/cooldown checks and then calls
+> `Weapons.RegisterShot(...)`; the manager owns hit detection, damage, and visuals. The core trajectory math,
+> determinism, and the prediction/resimulation rules below are unchanged — read the sections below for those, but
+> treat "the streams/sim live on `Weapon`" as historical. See `Docs/NetworkOptimizationImplementation.md` §8 for
+> the rework rationale and the exact networked layout.
+
 ## Context
 
 The FPS template ships with hitscan shooting: bullets travel instantaneously via `Runner.LagCompensation.Raycast()` and hit their target the same tick they are fired. This works cleanly for networking but does not match the game's vision — a chaotic arena where machine guns spray streams of visible, physical-feeling bullets and players can read the battlefield from tracer fire.
@@ -332,9 +344,15 @@ Suggested starting values:
 - Each frame, compute and apply position using `EvaluateTrajectory`.
 - Expose a `SlotIndex` property for the weapon's `DestroyBulletVisual(slot)` lookup.
 
+> **Superseded by the weapon rework:** the per-weapon split above (streams + simulation in `Weapon.cs`) is
+> historical. The streams, `FireProjectile`/`RegisterShot`, the bullet stepping, `ApplyDamage`, `EvaluateTrajectory`,
+> and the visual spawn/terminate loops now live in `Assets/Scripts/Weapons/Weapons.cs` as one shared per-shot
+> system; `Weapon.cs` retains only ammo/cooldown state, config, and the per-weapon reload/fire visual hooks.
+
 ### Files unchanged
 
-- `Assets/Scripts/Weapons/Weapons.cs` â€” weapon manager, no changes needed.
+- `Assets/Scripts/Weapons/Weapons.cs` — **now the owner** of the shared projectile streams, bullet simulation, and
+  visuals (was previously a thin manager). `RegisterShot()` is the entry point weapons call on a successful fire.
 - `Assets/Scripts/Survivor/Survivor.cs` — calls `Weapons.Fire()` identically.
 - `Assets/Scripts/Survivor/SurvivorInput.cs` — input flow unchanged.
 - `Assets/Scripts/Survivor/Health.cs` — `ApplyDamage()` signature unchanged.

@@ -21,6 +21,7 @@ MonoBehaviour:
   StartSpawnRatePerMinute: 16
   EndSpawnRatePerMinute: 32
   SpawnPulseInterval: 7
+  MaxSpawnsPerTick: 4
   SpawnNavMeshSampleDistance: 1
   MinimumSpawnConnectedNavMeshRadius: 24
   StartHealth: 55
@@ -32,7 +33,8 @@ MonoBehaviour:
   StartAlertRadius: 8
   EndAlertRadius: 24
   OvertimeSpawnRatePerMinute: 100
-  OvertimeHealth: 20
+  OvertimeHealth: 200
+  OvertimeNewZombieHealthIncreasePer10Seconds: 10
   OvertimeDamage: 16
   OvertimeMoveSpeed: 7.25
   UnderpopulatedRegionBias: 0.6

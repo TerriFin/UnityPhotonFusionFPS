@@ -1102,7 +1102,7 @@ MonoBehaviour:
     MaxPenetrationSteps: 8
     CCDRadiusMultiplier: 0.75
     AntiJitterDistance: {x: 0.025, y: 0.01}
-    CompressNetworkPosition: 0
+    CompressNetworkPosition: 1
     ForcePredictedLookRotation: 0
     StepHeight: 0.5
     StepDepth: 0.2
@@ -1225,6 +1225,9 @@ MonoBehaviour:
   IdleWanderRadius: 20
   IdleWanderAvoidZombieRadius: 16
   IdleWanderCandidateCount: 3
+  IdleWanderNavMeshSampleDistance: 8
+  IdleWanderStuckTimeout: 3
+  IdleWanderStuckMinProgress: 0.25
   AttackRetargetInterval: 1
   HuntingRetargetInterval: 6
   HuntingRetargetIntervalJitter: 2
@@ -1235,6 +1238,7 @@ MonoBehaviour:
   ReachablePointSampleDistance: 8
   ExplicitGoalStoppingDistance: 0.66
   ExplicitGoalHeightTolerance: 0.75
+  CloseGapDirectMaxDistance: 4
   UseClimbSurfaces: 1
   UseTerrainShortcutClimbs: 1
   UseRescueClimbs: 1
@@ -1262,12 +1266,15 @@ MonoBehaviour:
   RoadDirectClimbMaxHeight: 2.25
   RoadDirectClimbLandingInset: 0.75
   RoadDirectClimbMinSurfaceNormalY: 0.45
+  RoadDirectWalkableLandingSampleDistance: 1
+  RoadDirectWalkableLandingPathTolerance: 0.75
   StuckSmallIslandRadius: 4
   MaxAlertRecipients: 16
   AlertCooldown: 2
   StuckSampleRadius: 0.6
   StuckMinHeightAboveNavMesh: 0.6
   StuckCheckInterval: 0.5
+  ElevatedIslandCheckInterval: 1.5
   StuckRandomWanderDurationMin: 1
   StuckRandomWanderDurationMax: 2.5
 --- !u!114 &3991566580172985026
@@ -1313,6 +1320,11 @@ MonoBehaviour:
   DestinationReachDistance: 0.66
   VerticalReachDistance: 2
   DestinationChangeRepathDistance: 0.33
+  DynamicDestinationEmergencyRepathDistance: 3
+  DynamicRepathJitter: 0.2
+  FollowUnreachableRetryInterval: 1
+  CloseSegmentCheckInterval: 0.3
+  CloseSegmentRecheckDistance: 0.75
   SampleMaxDistance: 2
   ReachablePointSampleMaxDistance: 8
   AreaMask: -1

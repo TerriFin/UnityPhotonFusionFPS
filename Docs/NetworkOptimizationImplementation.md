@@ -469,3 +469,144 @@ Removes the follower island hitch: ~19 path calculations per follower per failed
 calc on a 1 s jittered cadence, and the per-tick close-segment test → ~3/second. The leader jumping down resumes
 following immediately. New tunables on `CharacterNavigator`: `FollowUnreachableRetryInterval` (1 s),
 `CloseSegmentCheckInterval` (0.3 s), `CloseSegmentRecheckDistance` (0.75 m).
+
+---
+
+## 8. Consolidate Weapon Projectile Streams Into One Shared Per-Shot Stream
+
+**Audit finding:** "Opportunities, Easiest First → 5. Consolidate Weapon State and Projectile Buffers" + "6.
+Replicate One Event Per Shot, Not Per Pellet" / "Recommended Implementation Order" item 4.
+**Status:** Implemented (projectile streams). Ammo/collected/reload consolidation intentionally deferred — see
+"Scope" below.
+**Files:** `Assets/Scripts/Weapons/Weapon.cs`, `Assets/Scripts/Weapons/Weapons.cs`
+
+> ⚠️ This change alters `[Networked]` replication layout, prediction, and resimulation behavior. It needs a Unity
+> recompile (Fusion re-weaves the network state automatically) and should be validated in a live match — rifle
+> combat, shotgun combat, remote tracers/impacts, kill feed, and a late join.
+
+### The problem
+
+Every survivor carried three `Weapon` `NetworkBehaviour`s, and **each** weapon replicated its own runtime state
+plus two fixed-capacity projectile buffers — a capacity-16 `NetworkArray<ProjectileSpawnData>` and a capacity-16
+`NetworkArray<ProjectileHitData>` — even while the weapon was holstered and never firing. The audit measured the
+six arrays alone at **816 words / 3,264 bytes per survivor**, about 95% of a survivor's fixed weapon snapshot, even
+though only one weapon can fire at a time. On top of that, the shotgun wrote **one spawn event per pellet**, so a
+single 12-pellet blast dirtied 12 spawn entries.
+
+### The change
+
+The projectile event system was moved off the individual weapons and onto the survivor-level `Weapons` manager as
+a single shared stream, encoded **per shot** rather than per pellet.
+
+- **`Weapon.cs`** keeps all weapon configuration (damage, fire rate, dispersion, pellet count, bullet speed/gravity,
+  hit mask, visuals, sounds) and its small ammo state (`IsCollected`, `IsReloading`, `ClipAmmo`, `RemainingAmmo`,
+  `_fireCooldown`). It **lost** the four projectile-related `[Networked]` members (`_fireCount`, `_hitCount`,
+  `_spawnData`, `_hitData`) and the entire local simulation/visual machinery. `Fire()` keeps its ammo/cooldown
+  checks and, on success, calls `Weapons.RegisterShot(this, origin, direction)`.
+- **`Weapons.cs`** now owns one `[Networked, Capacity(8)] NetworkArray<ProjectileSpawnData>` (one slot per *shot*),
+  one `[Networked, Capacity(16)] NetworkArray<ProjectileHitData>` (one slot per *pellet hit*), and `_fireCount` /
+  `_hitCount`. It runs the authoritative bullet stepping (`StepActiveProjectiles`), applies damage, and drives all
+  tracer/muzzle/impact visuals and crosshair feedback (`RenderProjectiles`). A spawn event stores
+  `{ Origin, Direction, SpawnTick, WeaponType }`; the firing weapon's config (pellet count, dispersion, speed,
+  gravity, damage, hit mask) is looked up by `WeaponType`.
+- **Per-shot pellet reconstruction.** `ReconstructPelletDirections` seeds Unity `Random` with the shot's
+  `SpawnTick * survivorId` (the same seed the original used) and replays the identical dispersion draws, so the
+  state authority's hit-detection pellets and every peer's visual pellets are bit-identical from one networked
+  event. A shotgun blast now costs **one** spawn event instead of twelve. The global `Random` state is
+  saved/restored so reconstruction cannot perturb other systems.
+- Hit events carry `(ShotSlot, PelletIndex)` to terminate the correct tracer; visuals are tracked in a local
+  `ProjectileVisual[FireStreamCapacity * MaxPelletsPerShot]` indexed by `shotSlot * 20 + pelletIndex`, with
+  slot-reuse cleanup.
+
+### Why it is safe
+
+- **Determinism preserved.** The seed (`SpawnTick * Object.Id.Raw`, the survivor's id — identical for the manager
+  and the old weapon since both are behaviours on the survivor's NetworkObject) and the exact dispersion formula
+  (`Quaternion.Euler(Random.insideUnitSphere * Dispersion)`) are unchanged, so the spread pattern feels identical.
+- **Prediction/resimulation preserved.** Spawn data and `_fireCount`/`_hitCount` are written on every `Fire()` call
+  (predicted on input authority, authoritative on state authority); the local hit-detection list and damage run
+  only on `HasStateAuthority && Runner.IsForward`; the spawn-tick step skip is retained — all exactly as the
+  original `Weapon` did, just relocated.
+- **No external API churn.** `Weapons.CurrentWeapon` stays a `[Networked] Weapon`, and `Weapon.IsCollected`,
+  `ClipAmmo`, `RemainingAmmo`, `IsReloading`, `HasAmmo`, `GetReloadProgress()` are unchanged, so every consumer
+  (UI ammo readout, looting/weapon-preference AI, weapon pickup, reload animation) keeps working untouched.
+- **No prefab edits.** Every serialized field name on both components was kept, and neither component was
+  added/removed from the survivor NetworkObject, so prefab references and the behaviour list are intact; Fusion
+  re-weaves the state layout on compile.
+
+### Scope (what was deferred)
+
+The audit's item 5 also lists consolidating the collected-weapon bitmask, current/pending weapon *type*, and
+per-weapon ammo/cooldown onto the manager. That was deliberately **not** done: those members total only ~20 words
+per survivor (vs the 816-word arrays), and consolidating them would force rewriting every external consumer that
+reads `Weapon.IsCollected` / `ClipAmmo` / `RemainingAmmo` and `Weapons.CurrentWeapon` as a `Weapon` — high blast
+radius for negligible gain. The high-value 97% (the projectile buffers) is captured here. The "unreliable RPC for
+transient fire/hit effects" alternative from audit item 6 is also out of scope; the shared snapshot-backed stream
+is the safer first implementation.
+
+### Expected impact
+
+The six per-weapon arrays (816 words / 3,264 bytes) are replaced by two shared streams (~208 words / ~832 bytes),
+saving roughly **2.4 KB per survivor** of fixed snapshot state — the dominant contributor to a survivor's network
+footprint, spawn cost, and late-join cost. Shotgun spawn-event dirty data drops ~90% per trigger pull (12 → 1).
+New constants on `Weapons`: `FireStreamCapacity` (8), `HitStreamCapacity` (16), `MaxPelletsPerShot` (20).
+
+---
+
+## Follow-up: Hunting Zombies Stare at Wall-Hugging Survivors (regression fix)
+
+**Reported after shipping optimizations 1–7.** Symptom: during overtime, hunting zombies that clearly sense a
+survivor standing with its back to a wall stop a short distance away and just stare instead of closing in. It
+worsened when the survivor was on a small height step ("higher gaps").
+**Status:** Fixed.
+**Files:** `Assets/Scripts/Zombies/ZombieAI.cs`
+
+### Root cause
+
+A hunting zombie reaches its target through `BuildExplicitGoalMoveInput`. When the navigator reported
+`IsDestinationReached` — which only means the zombie is within `DestinationReachDistance` (~1.35 m) of the
+*NavMesh-sampled* destination — the method returned `BuildLookInput` (a stare). For a survivor pressed against a
+wall on a thin NavMesh strip, that sampled point can sit up to `SampleMaxDistance` (~2 m) off the real survivor and
+across a NavMesh seam the path can't cross, so the zombie "arrived" while still well outside attack range and had
+nothing left to do but look.
+
+This stare point is long-standing, but two of the overtime optimizations reduced the fallbacks that used to paper
+over it:
+
+- Optimization 2 routed `TryBuildVisibleStuckTargetInput` through the throttled stuck cache instead of fresh
+  probes, so the "go direct because I'm stranded" recovery became less responsive at the moment of arrival.
+- Optimization 3's `ShouldVerifyElevatedIsland()` gate returned `false` on `IsDestinationReached`, which **skipped
+  the stuck/island detection entirely** exactly when the zombie was navmesh-"reached" but short of the target.
+
+The user's own NavMesh tweak (shrinking the non-walkable margin next to walls) created more of these thin-strip
+seams, exposing the gap more often.
+
+### The fix
+
+1. **Removed the `IsDestinationReached` short-circuit from `ShouldVerifyElevatedIsland()`.** It was wrong: a
+   navmesh-"reached" zombie can still be ~1.35 m short of a wall-hugging target. When reached, the navigator clears
+   its path anyway, so the remaining `HasPath == false` check returns `true` (verify) — the correct behaviour. The
+   only cost is that a genuinely-arrived zombie now runs the throttled island probe, which is negligible.
+2. **Added `TryBuildCloseGapDirectInput` as the final fallback in `BuildExplicitGoalMoveInput`.** When there is no
+   usable navmesh steering toward the goal (reached the nearest navigable point, or no complete path) and the goal
+   is within `CloseGapDirectMaxDistance` (4 m) **and in clear line of sight**, the zombie steps straight toward it
+   to close the final gap instead of staring. The bare `IsDestinationReached → BuildLookInput` early-return was
+   removed so this path is reached.
+
+### Why it is safe
+
+- The close-gap step only runs when there is **no usable navmesh route at all** — if the zombie could path around
+  an obstacle, `TryGetSteeringTarget` returns that path and this never executes. So it cannot override legitimate
+  detours.
+- The line-of-sight gate (`HasRoadDirectLineOfSight`) means the straight line is unobstructed, so stepping off the
+  navmesh edge won't walk the zombie into geometry; that, not the distance cap, is the real safety. The distance
+  cap is kept modest so it only bridges genuine navmesh-edge gaps.
+- It does not clear the navigator, so the moment the zombie moves to a spot with a real path, normal path-following
+  resumes. Investigation/melee-hold behaviour is unaffected (`HasReachedExplicitGoal` and `ShouldHoldMeleePosition`
+  still gate those first).
+
+### Expected impact
+
+Hunting (and attacking) zombies now reliably close the last metre or two onto survivors standing on thin navmesh
+strips against walls and on low steps, instead of stalling. New tunable on `ZombieAI`:
+`CloseGapDirectMaxDistance` (4 m).
