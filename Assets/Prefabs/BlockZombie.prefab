@@ -1038,7 +1038,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   SortKey: 993533296
-  ObjectInterest: 1
+  ObjectInterest: 0
   Flags: 262145
   NestedObjects: []
   NetworkedBehaviours:
@@ -1316,7 +1316,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   RepathInterval: 0.4
-  CornerReachDistance: 0.66
+  CornerReachDistance: 0.5
   DestinationReachDistance: 0.66
   VerticalReachDistance: 2
   DestinationChangeRepathDistance: 0.33

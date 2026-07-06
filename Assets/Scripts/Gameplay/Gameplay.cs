@@ -127,6 +127,28 @@ namespace SimpleFPS
 		[Header("Survivor Commands")]
 		public SurvivorAICommandSettings AICommandSettings = new();
 
+		[Header("Network Interest (Area of Interest)")]
+		[Tooltip("Master switch for per-player Area of Interest. MUST stay enabled while survivor/zombie/pickup prefabs " +
+		         "use ObjectInterest = AreaOfInterest, otherwise those objects are culled for everyone and clients see " +
+		         "nothing. Server/Host only; clients ignore this.")]
+		public bool EnableAreaOfInterest = true;
+		[Tooltip("Interest radius (world units) around a player's POSSESSED survivor. Everything inside this sphere is " +
+		         "replicated to that player. Kept well above sensor range so 'last seen' map icons fade out naturally " +
+		         "before a sighted object is ever culled.")]
+		[Min(0f)]
+		public float PossessedInterestRadius = 150f;
+		[Tooltip("Interest radius (world units) around each of a player's NON-possessed (AI) survivors. Defaults to about " +
+		         "the survivor sensor range (~42). Because it equals sensor range, an enemy sensed by an AI squadmate right " +
+		         "at the edge can have its minimap icon vanish the instant it leaves interest instead of fading; raise this " +
+		         "~15 units if that matters.")]
+		[Min(0f)]
+		public float SquadmateInterestRadius = 42f;
+		[Tooltip("Optional override for the Fusion AOI grid cell size (world units), applied once on the server at spawn. " +
+		         "0 = leave the Fusion default. Smaller cells cull more precisely but cost more CPU. Tune together with the " +
+		         "AOI grid dimensions if very large maps fall outside the default grid.")]
+		[Min(0)]
+		public int AreaOfInterestCellSize = 0;
+
 		[Networked][Capacity(32)][HideInInspector]
 		public NetworkDictionary<PlayerRef, PlayerData> PlayerData { get; }
 		[Networked][HideInInspector]
@@ -680,6 +702,9 @@ namespace SimpleFPS
 				throw new System.NotSupportedException("This sample doesn't support Shared Mode, please start the game as Server, Host or Client.");
 			}
 
+			if (Runner.IsServer && EnableAreaOfInterest && AreaOfInterestCellSize > 0)
+				Runner.SetAreaOfInterestCellSize(AreaOfInterestCellSize);
+
 			if (HasStateAuthority)
 				InitializeWorldSeed();
 		}
@@ -720,6 +745,43 @@ namespace SimpleFPS
 					{
 						StopGameplay();
 					}
+				}
+			}
+
+			UpdateAreaOfInterest();
+		}
+
+		// Per-tick Area of Interest: each player only receives network state near their own units. A wide sphere around
+		// the possessed survivor (the active first-person / RTS-camera focus) plus a tight sphere around each AI
+		// squadmate. Server/Host only — AddPlayerAreaOfInterest must not be called on clients in server-client mode.
+		// Every own living unit sits at the centre of its own sphere, so a player always receives their complete living
+		// team; enemy survivors, zombies and pickups are received only while inside one of that player's spheres.
+		private void UpdateAreaOfInterest()
+		{
+			if (EnableAreaOfInterest == false || Runner.IsServer == false)
+				return;
+
+			foreach (var pair in PlayerData)
+			{
+				PlayerRef player = pair.Key;
+				if (player.IsRealPlayer == false)
+					continue;
+
+				if (_characterCache.TryGetValue(player, out var squad) == false)
+					continue;
+
+				int activeIndex = pair.Value.ActiveCharacterIndex;
+
+				foreach (var entry in squad)
+				{
+					Survivor survivor = entry.Value;
+					if (survivor == null || survivor.Object == null || survivor.Object.IsValid == false)
+						continue;
+					if (survivor.Health == null || survivor.Health.IsAlive == false)
+						continue;
+
+					float radius = entry.Key == activeIndex ? PossessedInterestRadius : SquadmateInterestRadius;
+					Runner.AddPlayerAreaOfInterest(player, survivor.transform.position, radius);
 				}
 			}
 		}

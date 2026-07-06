@@ -15,7 +15,7 @@
     "AllowClientServerModesInWebGL": false,
     "Simulation": {
         "InputDataWordCount": 0,
-        "ReplicationFeatures": 1,
+        "ReplicationFeatures": 3,
         "InputTransferMode": 0,
         "SimulationUpdateTimeMode": 0,
         "PlayerCount": 10,

@@ -1370,7 +1370,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   SortKey: 3805865522
-  ObjectInterest: 1
+  ObjectInterest: 0
   Flags: 262145
   NestedObjects: []
   NetworkedBehaviours:
@@ -1450,6 +1450,8 @@ MonoBehaviour:
   AirDeceleration: 1.3
   _CharacterIndex: 0
   _WeaponPreference: 0
+  _CombatBehavior: 0
+  _RetreatMode: 0
 --- !u!114 &1684734813103408741
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1647,6 +1649,8 @@ MonoBehaviour:
   IdleLookRotationIntervalMin: 3
   IdleLookRotationIntervalMax: 9
   IdleLookMaxYawDegreesPerTick: 2
+  StimulusLookDuration: 2.5
+  CombatReactiveLookDistanceRatio: 0.5
 --- !u!114 &8835636566654811975
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1744,6 +1748,7 @@ MonoBehaviour:
   MaxYawDegreesPerTick: 6
   MaxPitchDegreesPerTick: 5
   TargetSwitchHysteresis: 1.5
+  UrgentTargetSwitchDistanceRatio: 0.5
 --- !u!114 &1772856214135365984
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1758,6 +1763,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   MaxYawDegreesPerTick: 8
   ZombieRetreatDistance: 5
+  NoneZombiePriorityDistanceMultiplier: 1.5
+  NormalZombiePriorityDistanceMultiplier: 1.5
+  AggressiveZombiePriorityDistanceMultiplier: 1.25
+  DefensiveZombiePriorityDistanceMultiplier: 1.75
 --- !u!114 &4286926381959304160
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1792,6 +1801,10 @@ MonoBehaviour:
   PreferredRangeWeight: 2.75
   MoveCostWeight: 0.25
   AllySpacingRadius: 2.5
+  AggressiveRangeWeight: 4
+  AggressiveCoverWeightMultiplier: 0.25
+  DefensiveRangeWeight: 4
+  DefensiveCoverWeightMultiplier: 1.25
   PistolPreferredRangeMin: 4
   ShotgunPreferredRangeMin: 1
   RiflePreferredRangeMin: 6
@@ -1823,10 +1836,15 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   RepathInterval: 0.5
-  CornerReachDistance: 0.66
+  CornerReachDistance: 0.5
   DestinationReachDistance: 0.66
   VerticalReachDistance: 2
   DestinationChangeRepathDistance: 0.5
+  DynamicDestinationEmergencyRepathDistance: 3
+  DynamicRepathJitter: 0.2
+  FollowUnreachableRetryInterval: 1
+  CloseSegmentCheckInterval: 0.3
+  CloseSegmentRecheckDistance: 0.75
   SampleMaxDistance: 2
   ReachablePointSampleMaxDistance: 8
   AreaMask: -1

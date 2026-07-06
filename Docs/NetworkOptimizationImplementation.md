@@ -8,7 +8,9 @@ which files, and why it is safe. Each section maps to a finding in the audit.
 
 Optimizations are implemented one at a time. The order follows the audit's "Runtime Optimization Order", doing
 the overtime-related runtime fixes first and the unreachable follow-island fix afterward. The network-replication
-A/B-test items (KCC position compression, Fusion scheduling) are intentionally **not** implemented here.
+A/B-test items were tackled after the runtime work: **Fusion replication scheduling** has since been enabled in the
+config (`ReplicationFeatures`), and **per-player Area of Interest** is implemented in section 9 below. **KCC position
+compression** remains a deliberately-deferred A/B-test toggle and is **not** implemented here.
 
 Implementation started: June 27, 2026.
 
@@ -610,3 +612,94 @@ seams, exposing the gap more often.
 Hunting (and attacking) zombies now reliably close the last metre or two onto survivors standing on thin navmesh
 strips against walls and on low steps, instead of stalling. New tunable on `ZombieAI`:
 `CloseGapDirectMaxDistance` (4 m).
+
+---
+
+## 9. Per-Player Area of Interest (Interest Management)
+
+**Audit finding:** "Opportunities, Easiest First → 7. Add Interest Management" / "Current Network Configuration"
+(all actors were `ObjectInterest: Global`).
+**Status:** Implemented.
+**Files:** `Assets/Scripts/Gameplay/Gameplay.cs`, plus a config flag and prefab interest-mode flips (see "Required
+project changes" below).
+
+> ⚠️ This changes how much world state each client receives. It needs a Unity recompile and must be validated in a
+> live multi-player match: confirm each client sees its own complete team, that enemies/zombies/pickups appear when
+> they enter interest and disappear when they leave, the kill feed / scoreboard / match timer still update, and that
+> a possessed survivor is never culled from its controlling player.
+
+### The problem
+
+Every survivor, zombie and pickup prefab used `ObjectInterest: Global`, so the server replicated the full state of
+**every** actor to **every** client regardless of relevance. The audit identifies this as the largest remaining
+ongoing bandwidth cost at the intended actor/player counts: with a large city and dozens of zombies plus multiple
+enemy teams, a client receives a great deal of state for actors it cannot see and does not need.
+
+### The change
+
+Per-player Area of Interest (AOI) replication, driven from the authority each tick.
+
+`Gameplay.FixedUpdateNetwork` now calls `UpdateAreaOfInterest()` (server/host only — guarded by `Runner.IsServer`,
+and the method already runs under the existing `HasStateAuthority` early-return). For every connected real player it
+walks that player's cached squad (`_characterCache[player]`) and, for each **living** survivor, adds one interest
+sphere via `Runner.AddPlayerAreaOfInterest(player, position, radius)`:
+
+- The player's **possessed** survivor (`CharacterIndex == PlayerData.ActiveCharacterIndex`) gets
+  `PossessedInterestRadius` (default **150 m**).
+- Every other (AI) squadmate gets `SquadmateInterestRadius` (default **42 m**, ≈ the survivor sensor range).
+
+Fusion replicates to that player the union of their spheres. Because each own living unit sits at the centre of its
+own sphere, **a player always receives their complete living team**; enemy survivors, zombies and pickups are
+received only while inside one of the player's spheres.
+
+New serialized tunables on `Gameplay`: `EnableAreaOfInterest` (master switch, default on), `PossessedInterestRadius`
+(150), `SquadmateInterestRadius` (42), and `AreaOfInterestCellSize` (0 = leave Fusion's default AOI grid cell size;
+if > 0 it is applied once on the server in `Spawned()` via `Runner.SetAreaOfInterestCellSize`).
+
+### Required project changes (made outside this script)
+
+AOI only takes effect when all three are in place:
+
+1. **Config:** `ReplicationFeatures` in `Assets/Photon/Fusion/Resources/NetworkProjectConfig.fusion` must have the
+   Interest Management feature enabled (combined with Scheduling).
+2. **Prefabs:** the **actor** prefabs (`Survivor`/`BlockSurvivor`, `BlockZombie`, the weapon and health pickups) must
+   use `ObjectInterest: AreaOfInterest` instead of `Global`.
+3. **Code:** the per-tick AOI population above.
+
+The global `Gameplay` match object (scoreboard, timer, `PlayerData` dictionary, kill-feed RPCs) **must stay
+`Global`** so match state and the kill feed reach everyone regardless of where their units are.
+
+### Why it is safe
+
+- **Authority is unaffected.** AOI only governs what the *server sends to remote clients*. The host/server still
+  simulates every actor with full knowledge, so all authoritative AI, combat and pathfinding are unchanged.
+- **Own team is never lost.** Each living own unit is at the centre of its own interest sphere, so it is always in
+  range; the possessed survivor additionally holds input authority, which Fusion always keeps interested for its
+  controller.
+- **Server-only call site.** `AddPlayerAreaOfInterest` is documented as host/server-only in server-client mode; the
+  call is guarded by `Runner.IsServer` and sits under the existing state-authority early-return. (Shared mode is
+  already rejected in `Spawned()`, so the shared-mode restriction never applies.)
+- **No per-tick GC.** Iteration uses the struct enumerators of `NetworkDictionary` and `Dictionary`; no allocation.
+- **"Last seen" map icons.** The minimap awareness tracker fades enemy/zombie icons over a short forget delay
+  (~2 s). Because the possessed sphere (150 m) hugely exceeds sensor range (~42 m), any enemy a player personally
+  sights fades out fully before it could travel far enough to be culled, so the fade is unaffected for normal play.
+
+### Scope / known limitation
+
+- **AI-squadmate edge sightings.** `SquadmateInterestRadius` defaults to ≈ sensor range, so an enemy sighted *only*
+  by an AI squadmate at the very edge of that 42 m sphere can be culled almost immediately when it steps back, and
+  its minimap icon then disappears at once instead of fading (`GameMapIconController` skips enemies whose proxy is
+  no longer spawned). This was accepted deliberately to honour the requested tight squadmate bubble; raising
+  `SquadmateInterestRadius` ~15 m gives the fade time to finish without any code change.
+- **Large maps.** Very large generated cities may exceed Fusion's default AOI grid extent. If distant actors stop
+  culling correctly on big maps, tune `AreaOfInterestCellSize` and the AOI grid dimensions
+  (`Runner.SetAreaOfInterestGrid`). Left at defaults for now.
+- **Sounds beyond interest.** Audio for actors outside a player's interest is intentionally not received; per the
+  design decision these are far enough away not to matter and can be revisited later.
+
+### Expected impact
+
+Actor-state traffic to each client drops to roughly what that client can actually see, instead of the entire world.
+The gain scales with how much of the map a client is *not* near — potentially the largest ongoing bandwidth
+reduction at the intended map and actor counts, as the audit predicts. Exact savings must be confirmed with the
+Fusion statistics benchmark.

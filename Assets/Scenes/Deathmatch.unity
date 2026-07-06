@@ -131755,6 +131755,10 @@ MonoBehaviour:
     ValidateLaneOffsetPath: 1
     MoveStoppingDistanceIncreasePerExtraSurvivor: 0.2
     MoveStoppingDistanceMax: 3
+  EnableAreaOfInterest: 1
+  PossessedInterestRadius: 150
+  SquadmateInterestRadius: 50
+  AreaOfInterestCellSize: 0
   _PlayerData:
     _items: []
   _State: 0
