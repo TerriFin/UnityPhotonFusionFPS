@@ -342,13 +342,29 @@ namespace SimpleFPS
 
 			while (sampleDistance <= maxDistance + 0.01f)
 			{
-				if (NavMesh.SamplePosition(targetPosition, out var targetHit, sampleDistance, AreaMask) &&
-				    NavMesh.CalculatePath(startHit.position, targetHit.position, AreaMask, _scratchPath) &&
-				    _scratchPath.status == NavMeshPathStatus.PathComplete)
+				if (NavMesh.SamplePosition(targetPosition, out var targetHit, sampleDistance, AreaMask))
 				{
-					reachablePoint = targetHit.position;
-					pathLength = GetPathLength(_scratchPath);
-					return true;
+					// Island fast negative: a candidate on a different island can never complete — skip the
+					// expensive doomed CalculatePath and let the loop widen its sample radius instead. Same
+					// trust rule as CalculatePath: small island on either side, or both islands path-verified
+					// (street vs rooftop); an unverified large-vs-large runs the real query. This is the fast
+					// rejection for idle-wander candidates sampled onto inaccessible rooftops.
+					bool provablyDisconnected =
+						NavMeshIslandMap.TryGetIslandAt(startHit.position, 0.5f, 0.5f, out int startIsland) &&
+						NavMeshIslandMap.TryGetIslandAt(targetHit.position, 0.5f, 0.5f, out int targetIsland) &&
+						startIsland != targetIsland &&
+						(NavMeshIslandMap.GetIslandArea(startIsland) <= NavMeshIslandMap.SmallIslandMaxArea ||
+						 NavMeshIslandMap.GetIslandArea(targetIsland) <= NavMeshIslandMap.SmallIslandMaxArea ||
+						 (NavMeshIslandMap.IsIslandVerified(startIsland) && NavMeshIslandMap.IsIslandVerified(targetIsland)));
+
+					if (provablyDisconnected == false &&
+					    NavMesh.CalculatePath(startHit.position, targetHit.position, AreaMask, _scratchPath) &&
+					    _scratchPath.status == NavMeshPathStatus.PathComplete)
+					{
+						reachablePoint = targetHit.position;
+						pathLength = GetPathLength(_scratchPath);
+						return true;
+					}
 				}
 
 				sampleDistance *= 2f;
@@ -398,11 +414,29 @@ namespace SimpleFPS
 				if (_isDestinationReached)
 					return;
 
+				// Island fast negative: a goal on a different NavMesh island (survivor on a car roof, point on an
+				// inaccessible rooftop) can never have a complete path under any area mask, and asking CalculatePath
+				// anyway makes it flood-search the whole start island before giving up — the most expensive kind of
+				// path query, paid on every repath by every pursuer of an unreachable target. Skip straight to the
+				// unreachable/midpoint handling below. Follow policy still runs CalculatePath because it wants the
+				// partial path's corners. Trust rule: the verdict counts when one side is a SMALL island (prop
+				// perch) or both islands were path-verified at build time (street vs rooftop); an unverified
+				// large-vs-large disconnect could be triangulation fragmentation, so it falls through to the real
+				// CalculatePath.
+				bool provablyDisconnected = _followPolicy == false &&
+					NavMeshIslandMap.TryGetIslandAt(startHit.position, 0.5f, 0.5f, out int startIsland) &&
+					NavMeshIslandMap.TryGetIslandAt(endHit.position, 0.5f, 0.5f, out int goalIsland) &&
+					startIsland != goalIsland &&
+					(NavMeshIslandMap.GetIslandArea(startIsland) <= NavMeshIslandMap.SmallIslandMaxArea ||
+					 NavMeshIslandMap.GetIslandArea(goalIsland) <= NavMeshIslandMap.SmallIslandMaxArea ||
+					 (NavMeshIslandMap.IsIslandVerified(startIsland) && NavMeshIslandMap.IsIslandVerified(goalIsland)));
+
 				// The saved order is kept until reached; first try a direct route. Use it only if it fully reaches
 				// the destination. A path spanning most of the large, maze-like generated map can exceed
 				// NavMesh.CalculatePath's internal node budget and come back as PathPartial/PathInvalid; either way
 				// it falls through to the midpoint-chaining fallback below.
-				if (NavMesh.CalculatePath(startHit.position, endHit.position, AreaMask, _path) &&
+				if (provablyDisconnected == false &&
+				    NavMesh.CalculatePath(startHit.position, endHit.position, AreaMask, _path) &&
 				    _path.status == NavMeshPathStatus.PathComplete && _path.corners != null && _path.corners.Length > 0)
 				{
 					_corners = _path.corners;

@@ -116,6 +116,9 @@ AttackRetargetInterval: 2.5
 HuntingRetargetInterval: 5
 HuntingRetargetIntervalJitter: 1
 HuntingInitialRetargetStaggerMax: 3
+TargetSwitchDistanceFactor: 0.5
+InvestigationCommitDuration: 5
+InvestigationRetriggerDistance: 3
 ```
 
 These intervals are intentionally coarse. Zombies mostly commit to their current action and reconsider periodically.
@@ -146,6 +149,18 @@ Rules:
 - Move through the shared explicit-goal routing policy.
 - Alert nearby zombies to the same point unless this zombie was itself alerted.
 - If a survivor is detected during investigation, switch to Attacking immediately.
+- **Re-trigger on a cadence, not full deafness.** An ongoing investigation accepts a new noise/impact/alert
+  stimulus only after `InvestigationCommitDuration` (default 5 s) has elapsed since the current point was
+  accepted — so two shooters cannot ping-pong the zombie within a couple of seconds, but sustained fire keeps
+  re-aiming it at the newest shot every ~5 s. Exception: a zombie within `InvestigationRetriggerDistance`
+  (default 3 m, flat) of its current point accepts a fresh stimulus **immediately** — that point is essentially
+  spent, and this only applies while investigating (an actively chasing zombie never diverts to stimuli).
+  Directly spotting a survivor overrides everything instantly, and stimuli are still ignored during an active
+  surface climb so a retarget cannot drop the zombie off a wall.
+- *Relaxed reached:* standing flat-on-top of the point while the navigator reports arrival counts as
+  investigated even when the point itself hangs above reach — bullet-impact stimuli aim at the shooter's
+  *muzzle*, ~1.5 m above ground, which the height-aware reached check alone would never accept (zombies froze
+  on the stimulus spot before this).
 - If the point is reached without finding a survivor, switch to Idle there.
 - Do not return to the original idle position.
 - Do not periodically reconsider the investigation point.
@@ -157,6 +172,14 @@ Attacking is active while a zombie directly detects a living survivor.
 Rules:
 
 - Choose a direct target, normally the closest detected survivor.
+- **Sticky targeting:** while the current target is still directly seen/felt, another visible survivor only
+  steals the zombie's attention when its distance is below `TargetSwitchDistanceFactor` (default 0.5 — must be
+  at least twice as close) of the current target's distance. Applies to both the per-tick refresh and the
+  periodic `AttackRetargetInterval` reconsideration, so two shooters at similar range no longer flip the target
+  every tick. "Still seen" requires a *fresh* sighting (within ~3 sensor intervals): a direct-known memory
+  entry survives ~4 s after sight breaks, and holding stickiness through that window made zombies chase a
+  ghost's stale position while another survivor was visibly shooting them. Once the sighting is stale — or the
+  target stops being directly sensed at all — the closest sensed survivor wins as before.
 - Move through the shared explicit-goal routing policy.
 - Alert nearby zombies to the target position.
 - Periodically reconsider direct targets using `AttackRetargetInterval`.
@@ -180,7 +203,9 @@ Rules:
 - A directly sensed enemy always overrides the committed target. If a hunting zombie senses any survivor on the way to its assigned target — neutral survivors included — it attacks that survivor instead. This keeps neutrals threatened and stops zombies from walking past a survivor they can clearly see. The committed player is left untouched, so the zombie resumes heading to its team once the sensed enemy is killed or lost.
 - Stagger the first acquisition so the horde does not scan for survivors on one tick. A target that dies mid-hunt re-picks immediately without waiting for the stagger.
 - Add interval jitter so the horde does not permanently synchronize.
-- Keep the current target between checks unless it dies or a closer enemy is sensed.
+- Keep the current target between checks unless it dies or a closer enemy is sensed. The sensed override is
+  sticky the same way Attacking is: while the current target is itself directly sensed, another visible survivor
+  takes over only when below `TargetSwitchDistanceFactor` of its distance.
 - Move through the shared explicit-goal routing policy.
 - Use overtime stats.
 - Ignore alerts because all zombies already have hunting knowledge.
@@ -343,6 +368,11 @@ StuckRandomWanderDurationMax: 2.5
 ```
 
 This is intentionally idle-only. Zombies with an explicit goal use the explicit-goal routing policy described above instead.
+
+Performance note (July 2026): the "tiny elevated NavMesh island" and "complete path to goal height" questions are
+now answered by the precomputed `NavMeshIslandMap` (island-id lookups; see `Docs/NavMeshIslandMap.md`) instead of
+rings of `NavMesh.SamplePosition` probes plus `NavMesh.CalculatePath`. The decisions and tunables described in
+this document are unchanged — only their cost dropped.
 
 ## Alerting
 

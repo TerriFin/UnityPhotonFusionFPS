@@ -213,10 +213,19 @@ Avoid making bullet impacts `[Networked]` only for AI awareness. AI decisions ha
 
 The sensor needs a way to know what counts as an enemy.
 
-First implementation options:
+Survivor relationships are centralized in `CharacterFactionUtility` rather than inferred directly from unequal
+`OwnerRef` values:
 
-- For survivors, use `OwnerRef` and treat survivors with a different `OwnerRef` as enemies.
-- For zombies, add a simple faction/team component later, for example `CharacterFaction`.
+- same-owner survivors are allied;
+- different player owners are normally enemies;
+- in raid mode, different non-host client owners are temporarily allied while the raid host is alive;
+- the raid host remains an enemy of every client;
+- zombies remain enemies of survivors;
+- neutral-survivor attackability remains unchanged.
+
+`CharacterSensor` also removes a remembered survivor when the current relationship says it is now allied. This
+prevents a target remembered during match initialization from leaking into the allied raid phase. Allied weapon
+noise and bullet impacts are rejected by the same centralized relationship.
 
 Recommended direction:
 
@@ -229,7 +238,9 @@ public enum ECharacterFaction
 }
 ```
 
-Survivors need both a faction and an owner/team id. Zombies can treat all non-zombies as enemies. Neutral recruitable survivors can start neutral and later change owner/team.
+Survivors still need both a faction and an owner/team id. A combat alliance changes hostility without changing
+ownership. Zombies can treat all non-zombies as enemies. Neutral recruitable survivors can start neutral and
+later change owner/team.
 
 Do not solve the full faction system in the first sensor implementation unless the zombie work starts immediately.
 
@@ -284,7 +295,7 @@ At the current prototype scale, 2-20 players with a few survivors each is fine i
 - `WeaponPickup` and `HealthPickup` register themselves for lightweight pickup vision scans.
 - `SurvivorNonCombatAI` hold assignments use sensor look input while staying still when investigation is enabled.
 - `SurvivorNonCombatAI` receives `Noise` and `BulletImpact` events immediately from `CharacterSensor`; they are not stored in the normal known-enemy memory list.
-- Direct `Vision` and `Proximity` memories are not investigation destinations for the survivor that sees the enemy, but that survivor can send a one-hop investigation alert to nearby same-team survivors that do not currently have their own direct enemy target. Receiving survivors do not need their own line of sight to react to an ally alert; the alert represents teammate communication, not personal detection.
+- Direct `Vision` and `Proximity` memories are not investigation destinations for the survivor that sees the enemy, but that survivor can send a one-hop investigation alert to nearby allied survivors that do not currently have their own direct enemy target. In raid mode this includes other client teams until the host is defeated. Receiving survivors do not need their own line of sight to react to an ally alert; the alert represents teammate communication, not personal detection.
 - If AI shooting had line of fire to a direct enemy and then loses it while the enemy is still alive, non-combat AI can investigate the last known enemy position as a fresh investigation target.
 - Movement AI can use direct combat aim/fire while moving, but should reserve sensor-only investigation look for stopped or safe moments so it does not accidentally walk away from the movement target.
 - Later, attach the same component to zombies with zombie-tuned values.

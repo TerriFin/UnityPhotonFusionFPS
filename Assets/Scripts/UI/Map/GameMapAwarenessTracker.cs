@@ -16,6 +16,7 @@ namespace SimpleFPS
 		private readonly Dictionary<NetworkObject, EnemyMapMemory> _enemyMemory = new();
 		private readonly Dictionary<NetworkObject, PickupMapMemory> _pickupMemory = new();
 		private readonly Dictionary<NetworkObject, ZombieMapMemory> _zombieMemory = new();
+		private int _lastTickFrame = -1;
 
 		public IReadOnlyDictionary<NetworkObject, EnemyMapMemory> EnemyMemory => _enemyMemory;
 		public IReadOnlyDictionary<NetworkObject, PickupMapMemory> PickupMemory => _pickupMemory;
@@ -25,6 +26,12 @@ namespace SimpleFPS
 		{
 			if (gameplay == null || runner == null)
 				return;
+
+			// The full map and the minimap share one tracker and both tick it; the second tick in the
+			// same frame would just redo identical sensor work, so skip it.
+			if (_lastTickFrame == Time.frameCount)
+				return;
+			_lastTickFrame = Time.frameCount;
 
 			float now = Time.time;
 

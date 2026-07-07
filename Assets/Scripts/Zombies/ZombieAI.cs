@@ -35,6 +35,13 @@ namespace SimpleFPS
 		public float HuntingRetargetInterval = 5f;
 		public float HuntingRetargetIntervalJitter = 1f;
 		public float HuntingInitialRetargetStaggerMax = 3f;
+		[Range(0f, 1f)]
+		[Tooltip("While the current target is still directly seen/felt, another visible survivor only steals the zombie's attention when its distance is below this fraction of the current target's distance. 0.5 = must be at least twice as close. 1 = old behavior (closest always wins).")]
+		public float TargetSwitchDistanceFactor = 0.5f;
+		[Tooltip("After getting an explicit investigation point, new noise/impact/alert stimuli are ignored for this many seconds so two shooters cannot ping-pong the zombie. After it elapses the investigation re-triggers freely; sustained fire keeps re-aiming the zombie at the newest shot on this cadence. Seeing a survivor always overrides instantly.")]
+		public float InvestigationCommitDuration = 5f;
+		[Tooltip("A zombie within this flat distance of its current investigation point accepts a fresh stimulus immediately (the commit timer is bypassed) — the current point is essentially spent, so the next shot should re-aim it without waiting.")]
+		public float InvestigationRetriggerDistance = 3f;
 
 		[Header("Movement")]
 		public float StoppingDistance = 1.35f;
@@ -135,6 +142,8 @@ namespace SimpleFPS
 		private PlayerRef _huntPlayer;
 		private bool _hasHuntPlayer;
 		private Vector3 _investigationTarget;
+		// When the current investigation point was accepted; drives the stimulus re-trigger cadence.
+		private float _investigationStartTime;
 		private Vector3 _lastKnownTargetPosition;
 		private float _nextIdleWanderTime;
 		private float _nextRetargetTime;
@@ -302,7 +311,17 @@ namespace SimpleFPS
 				return UpdateAttacking();
 			}
 
-			if (HasReachedExplicitGoal(_investigationTarget, StoppingDistance))
+			var navigator = _zombie != null ? _zombie.Navigator : null;
+
+			// Reached: the height-aware explicit check, or standing flat-on-top of the point with the navigator
+			// reporting arrival at the nearest navigable spot. Bullet-impact stimuli aim at the shooter's MUZZLE
+			// (~1.5 m above ground), which the height gate alone can never accept — without this relaxation a
+			// zombie stands exactly on the stimulus forever, and the investigation commitment keeps it deaf the
+			// whole time.
+			bool flatWithinStopping =
+				FlatDistanceSqr(transform.position, _investigationTarget) <= StoppingDistance * StoppingDistance;
+			if (HasReachedExplicitGoal(_investigationTarget, StoppingDistance) ||
+			    (flatWithinStopping && navigator != null && navigator.IsDestinationReached))
 			{
 				ReturnToIdle();
 				return default;
@@ -340,7 +359,7 @@ namespace SimpleFPS
 
 			if (Time.timeSinceLevelLoad >= _nextRetargetTime)
 			{
-				if (TryGetDirectEnemy(out var enemy))
+				if (TryGetStickyDirectEnemy(out var enemy))
 					StartAttack(enemy);
 				else if (_target != null)
 					StartInvestigation(_lastKnownTargetPosition, _lastStimulusTick, false);
@@ -374,7 +393,9 @@ namespace SimpleFPS
 			// players, but a zombie that senses any survivor (neutral included) on the way to its
 			// target should still attack whoever it ran into. This is temporary: the committed player
 			// is left untouched, so the zombie resumes heading to its team once the sensed enemy is lost.
-			if (TryGetDirectEnemy(out var sensed))
+			// Sticky: while the current target is itself directly sensed, another visible survivor only
+			// takes over when dramatically closer (TargetSwitchDistanceFactor).
+			if (TryGetStickyDirectEnemy(out var sensed))
 				SetHuntTarget(sensed.Object);
 			else
 				EnsureCommittedHuntTarget();
@@ -454,7 +475,7 @@ namespace SimpleFPS
 
 		private bool TryRefreshDirectAttackTarget()
 		{
-			if (TryGetDirectEnemy(out var enemy) == false)
+			if (TryGetStickyDirectEnemy(out var enemy) == false)
 				return false;
 
 			bool targetChanged = enemy.Object != _target;
@@ -477,6 +498,7 @@ namespace SimpleFPS
 			_investigationTarget = target;
 			_target = null;
 			State = EZombieAIState.Investigating;
+			_investigationStartTime = Time.timeSinceLevelLoad;
 			ClearExplicitGoalRoute(ShouldPreserveActiveClimbForTarget(target));
 
 			if (fromAlert == false)
@@ -893,6 +915,31 @@ namespace SimpleFPS
 			float heightTolerance = Mathf.Max(0.1f, ExplicitGoalHeightTolerance);
 			const int samples = 8;
 
+			// Island-map fast path: the ring question is "does connected same-height NavMesh exist at ring
+			// distance", which the precomputed island map answers per probe with a grid lookup instead of a
+			// NavMesh sample plus a ring-sampled CalculatePath (formerly up to 8 × ~27 NavMesh queries here).
+			if (NavMeshIslandMap.TryGetIslandAt(startHit.position, sampleDistance, sampleDistance, out int startIsland))
+			{
+				// A large island is ordinary walkable ground by definition — it can never be a "small elevated
+				// island", so skip the ring outright. This also shields the verdict from triangulation
+				// fragmentation: a zombie standing on a big (even wrongly split) street fragment must never be
+				// flagged stranded, because that verdict feeds the direct-move/random-wander stuck recovery.
+				if (NavMeshIslandMap.GetIslandArea(startIsland) > NavMeshIslandMap.SmallIslandMaxArea)
+					return false;
+
+				float probeHeightTolerance = Mathf.Min(sampleDistance, heightTolerance);
+				for (int i = 0; i < samples; i++)
+				{
+					float angle = i * Mathf.PI * 2f / samples;
+					Vector3 probe = startHit.position + new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle)) * radius;
+					if (NavMeshIslandMap.TryGetIslandAt(probe, sampleDistance, probeHeightTolerance, out int probeIsland) &&
+					    probeIsland == startIsland)
+						return false;
+				}
+
+				return true;
+			}
+
 			for (int i = 0; i < samples; i++)
 			{
 				float angle = i * Mathf.PI * 2f / samples;
@@ -915,6 +962,37 @@ namespace SimpleFPS
 			float sampleDistance = navigator != null ? Mathf.Max(0.25f, navigator.SampleMaxDistance) : Mathf.Max(0.25f, StuckSampleRadius);
 			if (NavMesh.SamplePosition(start, out var startHit, sampleDistance, areaMask) == false)
 				return false;
+
+			// Island-map fast path. This method only needs the boolean "does a complete path exist", which for a
+			// full area mask is exactly "are start and goal on the same island". Replaces the up-to-25-sample
+			// goal ring search plus a CalculatePath (which floods a whole island when the goal is unreachable).
+			// Restrictive masks fall through: island equality does not guarantee a mask-limited path.
+			if (areaMask == NavMesh.AllAreas &&
+			    NavMeshIslandMap.TryGetIslandAt(startHit.position, 0.5f, 0.5f, out int startIsland))
+			{
+				// Mirrors TrySampleNavMeshGoalAtHeight's search: NavMesh near the goal within sampleDistance
+				// horizontally and maxGoalHeightDelta vertically. No qualifying NavMesh → no path, same as the
+				// sampling failing.
+				if (NavMeshIslandMap.TryGetIslandAt(goal, sampleDistance, maxGoalHeightDelta, out int goalIsland))
+				{
+					if (goalIsland == startIsland)
+						return true;
+
+					// Trust the negative when one side is a small (prop-perch) island or both islands were
+					// path-verified at build time (street vs rooftop). An unverified large-vs-large disconnect
+					// could be triangulation fragmentation, so verify with a real path query below instead of
+					// feeding a false "no path" into the stuck/direct-move logic.
+					if (NavMeshIslandMap.GetIslandArea(startIsland) <= NavMeshIslandMap.SmallIslandMaxArea ||
+					    NavMeshIslandMap.GetIslandArea(goalIsland) <= NavMeshIslandMap.SmallIslandMaxArea ||
+					    (NavMeshIslandMap.IsIslandVerified(startIsland) && NavMeshIslandMap.IsIslandVerified(goalIsland)))
+						return false;
+				}
+				else
+				{
+					return false;
+				}
+			}
+
 			if (TrySampleNavMeshGoalAtHeight(goal, sampleDistance, maxGoalHeightDelta, areaMask, out Vector3 sampledGoal) == false)
 				return false;
 			if (_scratchNavMeshPath == null)
@@ -1556,10 +1634,67 @@ namespace SimpleFPS
 			       IsTargetAlive(enemy.Object);
 		}
 
+		// Sticky variant for zombies that already have a live target: while that target is still directly
+		// seen/felt, keep it — another visible survivor only steals attention when it is dramatically closer
+		// (below TargetSwitchDistanceFactor of the current target's distance). Without this, two shooters at
+		// similar range flip the "closest sensed enemy" back and forth every tick and the zombie ping-pongs
+		// between them instead of committing to one. Degrades to the plain closest pick when there is no live
+		// current target or it is no longer directly sensed.
+		private bool TryGetStickyDirectEnemy(out KnownEnemyInfo enemy)
+		{
+			if (TryGetDirectEnemy(out enemy) == false)
+				return false;
+			if (enemy.Object == _target || IsTargetAlive(_target) == false)
+				return true;
+			if (_zombie.Sensor == null || _zombie.Sensor.TryGetDirectEnemy(_target, out KnownEnemyInfo current) == false)
+				return true;
+
+			// Stickiness only applies while the current target is actually still being seen/felt. A direct-known
+			// entry lives for MemoryDuration (~4 s) after the last real sighting, but its Tick stops refreshing
+			// the moment direct sensing breaks — so a stale tick means the zombie would be holding a ghost while
+			// another survivor is visibly shooting it. Let the closest visible enemy win, as before stickiness.
+			var runner = _zombie.Runner;
+			if (runner != null)
+			{
+				float sightingAge = (runner.Tick - current.Tick) * runner.DeltaTime;
+				float freshWindow = Mathf.Max(0.05f, _zombie.Sensor.SensorInterval) * 3f + 0.1f;
+				if (sightingAge > freshWindow)
+					return true;
+			}
+
+			// Same 3D metric TryGetClosestDirectEnemy ranks by.
+			Vector3 origin = transform.position;
+			float closestSqr = (enemy.LastKnownPosition - origin).sqrMagnitude;
+			float currentSqr = (current.LastKnownPosition - origin).sqrMagnitude;
+			float factor = Mathf.Clamp01(TargetSwitchDistanceFactor);
+			if (closestSqr < currentSqr * factor * factor)
+				return true;
+
+			enemy = current;
+			return true;
+		}
+
 		private bool ShouldIgnoreInvestigationStimulus()
 		{
-			return (State == EZombieAIState.Attacking || State == EZombieAIState.Hunting) &&
-			       IsTargetAlive(_target);
+			// A concrete live target beats any noise: actively chasing zombies never divert to stimuli.
+			if ((State == EZombieAIState.Attacking || State == EZombieAIState.Hunting) && IsTargetAlive(_target))
+				return true;
+
+			if (State != EZombieAIState.Investigating)
+				return false;
+
+			// An ongoing investigation re-triggers on a cadence rather than being fully deaf: the point is
+			// committed for InvestigationCommitDuration (so two shooters cannot ping-pong the zombie back and
+			// forth within a couple of seconds), after which the next stimulus re-aims it. A zombie that has
+			// basically arrived (within InvestigationRetriggerDistance flat of the point) accepts a fresh
+			// stimulus immediately — its current point is spent. Directly seeing a survivor overrides all of
+			// this instantly, and active climbs are protected by the _climbingSurface guard in
+			// ReceiveInvestigationStimulus.
+			float retriggerDistance = Mathf.Max(0f, InvestigationRetriggerDistance);
+			if (FlatDistanceSqr(transform.position, _investigationTarget) <= retriggerDistance * retriggerDistance)
+				return false;
+
+			return Time.timeSinceLevelLoad - _investigationStartTime < Mathf.Max(0f, InvestigationCommitDuration);
 		}
 
 		private bool ShouldHoldMeleePosition(NetworkObject target, Vector3 targetPosition)

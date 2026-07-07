@@ -1200,6 +1200,9 @@ namespace SimpleFPS
 			}
 
 			NavMeshSurface.BuildNavMesh();
+
+			// The NavMesh changed, so the precomputed connectivity islands must be rebuilt before the next query.
+			NavMeshIslandMap.Invalidate();
 		}
 
 		private void SpawnLoot()

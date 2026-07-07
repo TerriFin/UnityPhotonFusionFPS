@@ -100,6 +100,17 @@ namespace SimpleFPS
 
 		internal static readonly List<CharacterSensor> ActiveSensors = new(64);
 
+		// Scans used to test every active sensor/pickup in the game per scan tick — quadratic in actor count
+		// (~85k candidate checks/second at the audit's 170-actor scale before line-of-sight tests). Each hash
+		// rebuilds at most once per rendered frame and feeds the scan only candidates within range-covering
+		// cells; all existing eligibility/distance/LOS filtering below is unchanged.
+		private static readonly SpatialHash2D<CharacterSensor> CharacterHash = new(16f);
+		private static readonly List<CharacterSensor> CharacterQueryResults = new(64);
+		private static readonly SpatialHash2D<WeaponPickup> WeaponPickupHash = new(16f);
+		private static readonly List<WeaponPickup> WeaponPickupQueryResults = new(32);
+		private static readonly SpatialHash2D<HealthPickup> HealthPickupHash = new(16f);
+		private static readonly List<HealthPickup> HealthPickupQueryResults = new(32);
+
 		public NetworkObject NetworkObject => _networkObject;
 		public Survivor Survivor => _survivor;
 		public ZombieCharacter Zombie => _zombie;
@@ -146,6 +157,38 @@ namespace SimpleFPS
 		{
 			ExpireOldEntries();
 			return TryGetClosestKnownEnemy(out enemy, true);
+		}
+
+		// Targeted lookup: is this specific object currently directly sensed (vision/proximity), and with what
+		// info? Lets a chaser check whether its committed target is still visible without scanning for a new one.
+		public bool TryGetDirectEnemy(NetworkObject target, out KnownEnemyInfo enemy)
+		{
+			enemy = default;
+			if (target == null)
+				return false;
+
+			ExpireOldEntries();
+
+			for (int i = 0; i < _knownEnemies.Count; i++)
+			{
+				var candidate = _knownEnemies[i];
+				if (candidate.Object != target)
+					continue;
+
+				if (IsDeadRememberedCharacter(candidate))
+				{
+					_knownEnemies.RemoveAt(i);
+					return false;
+				}
+
+				if (IsDirectCombatStimulus(candidate.Stimulus) == false)
+					return false;
+
+				enemy = candidate;
+				return true;
+			}
+
+			return false;
 		}
 
 		public void GetDirectKnownEnemies(List<KnownEnemyInfo> results)
@@ -270,6 +313,12 @@ namespace SimpleFPS
 			if (info.Object == null)
 				return false;
 
+			// A remembered enemy can despawn while the memory entry is still alive (disconnect, corpse
+			// cleanup). Its [Networked] health is inaccessible then — treat it as gone so the entry is removed
+			// instead of throwing.
+			if (info.Object.IsValid == false)
+				return true;
+
 			var survivor = info.Object.GetComponent<Survivor>();
 			if (survivor != null)
 				return survivor.Health == null || survivor.Health.IsAlive == false;
@@ -367,24 +416,34 @@ namespace SimpleFPS
 
 		private bool IsAliveCharacter()
 		{
+			// Health.IsAlive reads a [Networked] property, which throws for an object that has despawned (or
+			// not yet spawned). Validity must be checked first — ScanCharacters can receive a stale spatial-hash
+			// entry whose object despawned earlier in the same rendered frame.
 			if (_survivor != null)
+			{
+				if (_survivor.Object == null || _survivor.Object.IsValid == false)
+					return false;
 				return _survivor.Health != null && _survivor.Health.IsAlive;
+			}
+
 			if (_zombie != null)
+			{
+				if (_zombie.Object == null || _zombie.Object.IsValid == false)
+					return false;
 				return _zombie.Health != null && _zombie.Health.IsAlive;
+			}
 
 			return true;
 		}
 
 		private void ScanCharacters()
 		{
-			for (int i = ActiveSensors.Count - 1; i >= 0; i--)
+			CharacterHash.RebuildIfStale(ActiveSensors);
+			CharacterHash.Query(transform.position, Mathf.Max(VisionDistance, ProximityAwarenessRadius), CharacterQueryResults);
+
+			for (int i = CharacterQueryResults.Count - 1; i >= 0; i--)
 			{
-				var other = ActiveSensors[i];
-				if (other == null)
-				{
-					ActiveSensors.RemoveAt(i);
-					continue;
-				}
+				var other = CharacterQueryResults[i];
 
 				if (other == this || other.IsAliveCharacter() == false)
 					continue;
@@ -423,14 +482,12 @@ namespace SimpleFPS
 
 		private void ScanWeaponPickups()
 		{
-			for (int i = WeaponPickup.ActivePickups.Count - 1; i >= 0; i--)
+			WeaponPickupHash.RebuildIfStale(WeaponPickup.ActivePickups);
+			WeaponPickupHash.Query(transform.position, Mathf.Max(VisionDistance, ProximityAwarenessRadius), WeaponPickupQueryResults);
+
+			for (int i = WeaponPickupQueryResults.Count - 1; i >= 0; i--)
 			{
-				WeaponPickup pickup = WeaponPickup.ActivePickups[i];
-				if (pickup == null)
-				{
-					WeaponPickup.ActivePickups.RemoveAt(i);
-					continue;
-				}
+				WeaponPickup pickup = WeaponPickupQueryResults[i];
 				if (pickup.IsVisibleForSensor == false)
 					continue;
 
@@ -447,14 +504,12 @@ namespace SimpleFPS
 
 		private void ScanHealthPickups()
 		{
-			for (int i = HealthPickup.ActivePickups.Count - 1; i >= 0; i--)
+			HealthPickupHash.RebuildIfStale(HealthPickup.ActivePickups);
+			HealthPickupHash.Query(transform.position, Mathf.Max(VisionDistance, ProximityAwarenessRadius), HealthPickupQueryResults);
+
+			for (int i = HealthPickupQueryResults.Count - 1; i >= 0; i--)
 			{
-				HealthPickup pickup = HealthPickup.ActivePickups[i];
-				if (pickup == null)
-				{
-					HealthPickup.ActivePickups.RemoveAt(i);
-					continue;
-				}
+				HealthPickup pickup = HealthPickupQueryResults[i];
 				if (pickup.IsVisibleForSensor == false)
 					continue;
 
@@ -535,7 +590,7 @@ namespace SimpleFPS
 		private bool IsEnemy(CharacterSensor other)
 		{
 			if (_survivor != null && other._survivor != null)
-				return _survivor.OwnerRef != other._survivor.OwnerRef;
+				return CharacterFactionUtility.AreSurvivorsAllied(_survivor, other._survivor) == false;
 
 			if (_zombie != null && other._survivor != null)
 				return true;
@@ -611,19 +666,31 @@ namespace SimpleFPS
 		private void ExpireOldEntries()
 		{
 			NetworkRunner runner = GetRunner();
-			if (runner == null || MemoryDuration <= 0f)
+			if (runner == null)
 				return;
 
-			int maxAgeTicks = Mathf.CeilToInt(MemoryDuration / runner.DeltaTime);
+			bool expireByAge = MemoryDuration > 0f;
+			int maxAgeTicks = expireByAge ? Mathf.CeilToInt(MemoryDuration / runner.DeltaTime) : int.MaxValue;
 			int currentTick = GetTick();
 
 			for (int i = _knownEnemies.Count - 1; i >= 0; i--)
 			{
-				if (currentTick - _knownEnemies[i].Tick > maxAgeTicks)
+				KnownEnemyInfo enemy = _knownEnemies[i];
+				if (IsRememberedAlliedSurvivor(enemy) ||
+				    (expireByAge && currentTick - enemy.Tick > maxAgeTicks))
 				{
 					_knownEnemies.RemoveAt(i);
 				}
 			}
+		}
+
+		private bool IsRememberedAlliedSurvivor(KnownEnemyInfo info)
+		{
+			if (_survivor == null || info.Object == null || info.Object.IsValid == false)
+				return false;
+
+			Survivor other = info.Object.GetComponent<Survivor>();
+			return other != null && CharacterFactionUtility.AreSurvivorsAllied(_survivor, other);
 		}
 
 		private void ExpireOldPickupEntries()

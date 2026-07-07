@@ -134,7 +134,10 @@ Preferred range scoring:
 
 The movement behavior should discourage clumping.
 
-For each candidate point, nearby same-team survivors add a spacing penalty. The penalty is strongest when the candidate is very close to an ally and fades out by `AllySpacingRadius`.
+For each candidate point, nearby allied survivors add a spacing penalty. The penalty is strongest when the
+candidate is very close to an ally and fades out by `AllySpacingRadius`. Ally identity comes from
+`CharacterFactionUtility`, so different raid-client teams contribute while the raid host is alive and stop
+contributing after the host is defeated.
 
 This should help when several survivors respond to the same alert from behind a corner. They may still travel along the same route, but once they reach the fight they should try to occupy different nearby positions.
 

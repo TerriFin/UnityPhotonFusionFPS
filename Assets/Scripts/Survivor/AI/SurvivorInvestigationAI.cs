@@ -165,7 +165,7 @@ namespace SimpleFPS
 				var ally = sensor.Survivor;
 				if (ally == null || ally == survivor || ally.Health == null || ally.Health.IsAlive == false)
 					continue;
-				if (ally.OwnerRef != survivor.OwnerRef)
+				if (CharacterFactionUtility.AreSurvivorsAllied(survivor, ally) == false)
 					continue;
 				if (ally.IsActiveCharacter())
 					continue;

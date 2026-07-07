@@ -80647,7 +80647,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 273883981725572060, guid: 310084b1b12b8db4c8eb685d3679568b, type: 3}
       propertyPath: m_SizeDelta.y
-      value: 288.62292
+      value: 290.15375
       objectReference: {fileID: 0}
     - target: {fileID: 273883981725572060, guid: 310084b1b12b8db4c8eb685d3679568b, type: 3}
       propertyPath: m_AnchoredPosition.x
@@ -131732,7 +131732,7 @@ MonoBehaviour:
   SurvivorPrefab: {fileID: 7289181853176218816, guid: 44131b8a4a20e85489614616f24f7063, type: 3}
   GameDuration: 450
   DoubleDamageDuration: 0
-  StartingCharacterCount: 40
+  StartingCharacterCount: 12
   RaidMode: 1
   RaidModeClientStartingCharacterCount: 12
   SpawnClusterRadius: 1
@@ -138393,7 +138393,7 @@ MonoBehaviour:
   RuntimeTextureSize: {x: 1024, y: 1024}
   LogSetupStatus: 0
   MapKey: 53
-  RevealMode: 0
+  RevealMode: 2
   Spectator: {fileID: 0}
 --- !u!114 &2056786219
 MonoBehaviour:

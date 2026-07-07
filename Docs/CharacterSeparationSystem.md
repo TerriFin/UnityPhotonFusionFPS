@@ -140,6 +140,7 @@ The desired filtering rules:
 | Pair | Hard Collision | Separation |
 | --- | --- | --- |
 | Same-team survivor vs same-team survivor | No | Yes |
+| Different raid-client teams while host is alive | No | Yes |
 | Enemy survivor vs enemy survivor | Yes | No, unless later wanted |
 | Survivor vs zombie | Yes | No, unless later wanted |
 | Zombie vs zombie | No | Yes |
@@ -153,11 +154,16 @@ The phasing solution should be local physics configuration, not networked state.
 
 ```csharp
 bool shouldPhase =
-    bothAreSurvivors && sameOwnerTeam ||
+    bothAreSurvivors && CharacterFactionUtility.AreSurvivorsAllied(first, second) ||
     bothAreZombies;
 ```
 
 If a neutral survivor is added later, it should not phase with player teams until it is recruited and receives that team's ownership/faction.
+
+The raid-client alliance is dynamic. `CharacterSeparation` caches the last observed alliance phase and refreshes
+all `Physics.IgnoreCollision(...)` pairs when it changes. This is necessary because ignored PhysX collision pairs
+persist until explicitly restored; the dynamic KCC callback alone would not make client teams solid after the
+host dies.
 
 ## Neighbor Detection
 

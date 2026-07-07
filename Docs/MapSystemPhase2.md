@@ -133,12 +133,11 @@ This UI memory is client-local. It does not need to be `[Networked]`.
 
 ### Reveal everything (no fog of war)
 
-`GameMapAwarenessTracker.Tick(gameplay, runner, revealAll)` takes a `revealAll` flag. When set, it seeds every survivor, zombie, and pickup into memory at its live position each tick (full opacity, never fades) before the normal sensor pass. Reveal is a debug tool and is **off by default for everyone in normal and raid play**. Each map view owns whether it reveals:
+`GameMapAwarenessTracker.Tick(gameplay, runner, revealAll)` takes a `revealAll` flag. When set, it seeds every survivor, zombie, and pickup into memory at its live position each tick (full opacity, never fades) before the normal sensor pass. Reveal is a debug tool and is **off by default for everyone in normal and raid play**.
 
-- `GameMapView.RevealMode` — `Auto` / `ForceOff` / `ForceOn` (default `Auto`). `Auto` reveals the full map **only for a defeated spectator** (see `Docs/SpectateMode.md`) and otherwise stays fog-of-war. `ForceOn`/`ForceOff` is a debug override that ignores the spectator state. (The toggle was moved here from `GameMapCameraController`, where it did not belong.)
-- `GameMinimapView.RevealEverything` — a debug bool, **default off**. Defeated spectators have no minimap at all (`GameMinimapView.Suppressed`), so this is purely a debugging aid for the minimap.
+There is exactly **one** reveal knob: `GameMapView.RevealMode` — `Auto` / `ForceOff` / `ForceOn` (default `Auto`). `Auto` reveals the full map **only for a defeated spectator** (see `Docs/SpectateMode.md`) and otherwise stays fog-of-war. `ForceOn`/`ForceOff` is a debug override that ignores the spectator state. The minimap follows the same knob (`GameMinimapView.ShouldRevealEverything()` returns true only when `MainMapView.RevealMode == ForceOn`); it has no reveal toggle of its own. The `Auto` spectator reveal never applies to the minimap because defeated spectators have no minimap at all (`GameMinimapView.Suppressed`).
 
-Because the reveal writes into the awareness tracker's shared memory, a revealing minimap must use its **own** tracker rather than adopting the full map's via `TryAdoptSharedTracker` — otherwise the reveal would leak onto the (fog-of-war) full map, and toggling the full map's reveal would leak onto the minimap for the forget-delay window. `GameMinimapView` therefore skips tracker adoption while its `RevealEverything` is on.
+Both views always share one `GameMapAwarenessTracker` (the minimap adopts the full map's tracker via `TryAdoptSharedTracker`; GameUI wires `MainMapView` automatically). Since the single knob reveals both views together, the old "revealing minimap must keep its own tracker so the reveal does not leak onto the fog-of-war full map" rule is gone. The tracker skips a second `Tick` in the same frame so the two views never duplicate its sensor work.
 
 `CharacterSensor` now exposes direct known enemies through `GetDirectKnownEnemies(...)`. Direct vision/proximity scans are allowed to run on the owning client for map UI purposes, while noise and bullet-impact recording still use the existing state-authority sensing path.
 

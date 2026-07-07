@@ -18,6 +18,11 @@ namespace SimpleFPS
 	public class CharacterSeparation : MonoBehaviour
 	{
 		private static readonly List<CharacterSeparation> ActiveSeparators = new(64);
+		// Neighbor queries used to scan the whole ActiveSeparators registry per refresh — quadratic in actor
+		// count (~289k pair checks/second at 170 actors, millions at the design target). The hash rebuilds at
+		// most once per rendered frame and feeds each query only the actors in nearby cells.
+		private static readonly SpatialHash2D<CharacterSeparation> SpatialHash = new(4f);
+		private static readonly List<CharacterSeparation> QueryResults = new(32);
 
 		[Header("Identity")]
 		public CharacterSeparationKind Kind = CharacterSeparationKind.Survivor;
@@ -33,6 +38,7 @@ namespace SimpleFPS
 		private ZombieCharacter _zombie;
 		private Collider[] _colliders = Array.Empty<Collider>();
 		private PlayerRef _lastOwnerRef = PlayerRef.None;
+		private bool _lastRaidClientAllianceActive;
 		private Func<KCC, Collider, bool> _previousResolveCollision;
 		private Func<KCC, Collider, bool> _resolveCollisionCallback;
 		private bool _isRegistered;
@@ -45,6 +51,7 @@ namespace SimpleFPS
 			_survivor = survivor;
 			_zombie = null;
 			_lastOwnerRef = _survivor != null ? _survivor.OwnerRef : PlayerRef.None;
+			_lastRaidClientAllianceActive = CharacterFactionUtility.IsRaidClientAllianceActive(_survivor);
 			ActivateShared();
 		}
 
@@ -53,6 +60,7 @@ namespace SimpleFPS
 			_zombie = zombie;
 			_survivor = null;
 			_lastOwnerRef = PlayerRef.None;
+			_lastRaidClientAllianceActive = false;
 			ActivateShared();
 		}
 
@@ -93,6 +101,7 @@ namespace SimpleFPS
 				return;
 
 			bool needsRefresh = RefreshOwnerRef();
+			needsRefresh |= RefreshRaidClientAllianceState();
 
 			if (_colliders.Length == 0)
 			{
@@ -162,9 +171,12 @@ namespace SimpleFPS
 			int neighborCount = 0;
 			float radiusSqr = Radius * Radius;
 
-			for (int i = 0; i < ActiveSeparators.Count; i++)
+			SpatialHash.RebuildIfStale(ActiveSeparators);
+			SpatialHash.Query(transform.position, Radius, QueryResults);
+
+			for (int i = 0; i < QueryResults.Count; i++)
 			{
-				CharacterSeparation other = ActiveSeparators[i];
+				CharacterSeparation other = QueryResults[i];
 				if (other == this || ShouldSeparateFrom(other) == false)
 					continue;
 
@@ -226,7 +238,11 @@ namespace SimpleFPS
 
 		private bool ShouldSeparateFrom(CharacterSeparation other)
 		{
-			if (other == null || other.IsAlive() == false)
+			// The spatial hash rebuilds at most once per rendered frame, so a separator despawned mid-frame
+			// (Deactivate has already unregistered it) can still surface in query results until the next
+			// rebuild. It must be skipped before IsAlive touches its [Networked] health, which throws on a
+			// despawned object.
+			if (other == null || other._isRegistered == false || other.IsAlive() == false)
 				return false;
 
 			return CanPhaseWith(other);
@@ -246,15 +262,28 @@ namespace SimpleFPS
 			if (_survivor.OwnerRef == PlayerRef.None || other._survivor.OwnerRef == PlayerRef.None)
 				return false;
 
-			return _survivor.OwnerRef == other._survivor.OwnerRef;
+			return CharacterFactionUtility.AreSurvivorsAllied(_survivor, other._survivor);
 		}
 
 		private bool IsAlive()
 		{
+			// Health.IsAlive reads a [Networked] property, which throws for an object that has despawned (or
+			// not yet spawned). Validity must be checked first — this can be called on a stale spatial-hash
+			// entry whose object despawned earlier in the same rendered frame.
 			if (_survivor != null)
+			{
+				if (_survivor.Object == null || _survivor.Object.IsValid == false)
+					return false;
 				return _survivor.Health == null || _survivor.Health.IsAlive;
+			}
+
 			if (_zombie != null)
+			{
+				if (_zombie.Object == null || _zombie.Object.IsValid == false)
+					return false;
 				return _zombie.Health == null || _zombie.Health.IsAlive;
+			}
+
 			return true;
 		}
 
@@ -273,6 +302,19 @@ namespace SimpleFPS
 				return false;
 
 			_lastOwnerRef = _survivor.OwnerRef;
+			return true;
+		}
+
+		private bool RefreshRaidClientAllianceState()
+		{
+			if (_survivor == null)
+				return false;
+
+			bool allianceActive = CharacterFactionUtility.IsRaidClientAllianceActive(_survivor);
+			if (allianceActive == _lastRaidClientAllianceActive)
+				return false;
+
+			_lastRaidClientAllianceActive = allianceActive;
 			return true;
 		}
 

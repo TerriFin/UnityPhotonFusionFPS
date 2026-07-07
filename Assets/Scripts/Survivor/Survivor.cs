@@ -11,6 +11,10 @@ namespace SimpleFPS
 	[DefaultExecutionOrder(-5)]
 	public class Survivor : NetworkBehaviour
 	{
+		// All spawned survivors (player-owned and neutral). Kept so per-frame consumers (map icons, …) can walk
+		// the live set without a FindObjectsOfType scan; mirrors ZombieCharacter.ActiveZombies.
+		internal static readonly System.Collections.Generic.List<Survivor> ActiveSurvivors = new(64);
+
 		private const float AnimationMoveDeadZone = 0.05f;
 
 		[Header("Components")]
@@ -276,6 +280,9 @@ namespace SimpleFPS
 				_hasRegisteredIdentity = true;
 			}
 
+			if (ActiveSurvivors.Contains(this) == false)
+				ActiveSurvivors.Add(this);
+
 			SetIdleAI();
 		}
 
@@ -344,6 +351,8 @@ namespace SimpleFPS
 
 		public override void Despawned(NetworkRunner runner, bool hasState)
 		{
+			ActiveSurvivors.Remove(this);
+
 			if (Separation != null)
 			{
 				Separation.Deactivate();

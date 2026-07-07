@@ -549,12 +549,33 @@ namespace SimpleFPS
 			if (requiredRadius <= 0f)
 				return true;
 
-			if (_spawnValidationPath == null)
-				_spawnValidationPath = new NavMeshPath();
-
 			const int probeCount = 12;
 			float radius = Mathf.Max(0.5f, requiredRadius);
 			float navSampleDistance = Mathf.Max(0.5f, sampleDistance);
+
+			// Island-map fast path: "same connected mesh at ring distance" is one island-id comparison per probe
+			// instead of a NavMesh sample plus a CalculatePath (mirrors ZombieOrchestrator).
+			if (NavMeshIslandMap.TryGetIslandAt(navMeshPosition, 0.5f, 0.5f, out int markerIsland))
+			{
+				// A marker on a large island is on ordinary walkable ground — accept without the ring. Also
+				// shields against triangulation fragmentation falsely rejecting street markers.
+				if (NavMeshIslandMap.GetIslandArea(markerIsland) > NavMeshIslandMap.SmallIslandMaxArea)
+					return true;
+
+				for (int i = 0; i < probeCount; i++)
+				{
+					float angle = i * Mathf.PI * 2f / probeCount;
+					Vector3 probe = navMeshPosition + new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle)) * radius;
+					if (NavMeshIslandMap.TryGetIslandAt(probe, navSampleDistance, navSampleDistance, out int probeIsland) &&
+					    probeIsland == markerIsland)
+						return true;
+				}
+
+				return false;
+			}
+
+			if (_spawnValidationPath == null)
+				_spawnValidationPath = new NavMeshPath();
 
 			for (int i = 0; i < probeCount; i++)
 			{

@@ -40,8 +40,12 @@ namespace SimpleFPS
 			if (IsImmortal)
 				return false;
 
-			CurrentHealth -= damage;
 			var survivor = GetComponent<Survivor>();
+			Gameplay gameplay = _sceneObjects != null ? _sceneObjects.Gameplay : null;
+			if (CharacterFactionUtility.CanPlayerDamageSurvivor(gameplay, instigator, survivor) == false)
+				return false;
+
+			CurrentHealth -= damage;
 
 			if (CurrentHealth <= 0f)
 			{

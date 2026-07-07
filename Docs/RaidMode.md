@@ -75,9 +75,12 @@ Static helper holding the raid rule. `IsRaidControlledPlayer(Gameplay, PlayerRef
 given player is the raid host. (Named `RaidModeRules` rather than `RaidMode` because `Gameplay` already has a
 `RaidMode` field, which would shadow a same-named type inside that class.)
 
-State-authority-only: it relies on `Runner.LocalPlayer` being the host, which is the same assumption the
-existing raid spawn logic (`Gameplay.GetStartingCharacterCount`) already makes. It is called only from
-state-authority gameplay code:
+`Gameplay.RaidHostPlayer` stores the host identity as one replicated `PlayerRef`, assigned by state authority
+when `Gameplay` spawns. `RaidModeRules.TryGetRaidHostPlayer` therefore resolves the same commander on every peer.
+The helper also owns the temporary client combat-alliance queries documented in
+`Docs/RaidModeClientAlliance.md`.
+
+The possession rule is consumed by state-authority gameplay code:
 
 - `Gameplay.SpawnTeam` — picks `-1` vs `0` for the new team's active character.
 - `Gameplay.SwitchActiveCharacter` / `Gameplay.SwitchToCharacter` — early-return for the host, blocking
@@ -91,13 +94,34 @@ Raid is the `RaidCommander` mode of `SpectatorController`; the orbit camera is t
 Both are documented in `Docs/SpectateMode.md`. In `RaidCommander` mode specifically:
 
 - The mode is detected as `Gameplay.RaidMode && Gameplay.HasStateAuthority && localData.IsAlive` (uniquely true
-  on the host peer while it still has survivors). This is the local-view counterpart to
-  `RaidModeRules.IsRaidControlledPlayer`, which is the state-authority counterpart — both identify the same host.
+  on the host peer while it still has survivors). `RaidModeRules.IsRaidControlledPlayer` uses the replicated
+  `Gameplay.RaidHostPlayer`; both paths identify the same host.
 - The inspect target is the lowest-index alive **own** survivor (auto-advances on death); Ctrl/Shift (map closed)
   cycle within the own team; map-Space sets the inspect target; WASD orbits the `SpectatorCamera`.
 - The host's map **auto-opens once** at the start (their RTS tool) but stays closeable — unlike a lock.
 - When the host loses its last survivor mid-match, `Mode` falls through to `DefeatedSpectator` and they spectate
   all teams without command (see `Docs/SpectateMode.md`).
+
+## Client Combat Alliance
+
+While the raid host's replicated `PlayerData.IsAlive` is true, all different non-host player teams are allied for
+combat behavior. Client survivors:
+
+- do not perceive, investigate, or auto-attack one another as enemies;
+- cannot damage one another with possessed or AI-controlled weapon fire;
+- let allied bullets pass through instead of blocking them;
+- share existing ally alerts, combat-spacing behavior, friendly separation, and friendly phasing.
+
+The host remains hostile to every client. Zombies and neutral-survivor rules are unchanged.
+
+When the host loses its final survivor (or disconnects), the derived alliance becomes inactive. Surviving client
+teams become hostile, client/client collision becomes solid, and the normal last-team-standing win condition
+continues. No alliance timer or phase RPC exists; the rule derives from `RaidHostPlayer` and the host's existing
+replicated `PlayerData`.
+
+This alliance does not merge ownership. Each client retains separate possession, commands, rosters, colors,
+home bases, map awareness, recruitment, scoring, and win-condition identity. See
+`Docs/RaidModeClientAlliance.md` for the full implementation and verification matrix.
 
 ### Map integration
 
@@ -129,6 +153,6 @@ clamped to the 128-character team mask capacity.
 ## What Raid Mode Does NOT Change
 
 - The win/lose condition and `UIGameOverView` (already correct without a possessed survivor).
-- Client behavior — clients are unchanged FPS players.
+- Client possession, commands, team ownership, and FPS controls.
 - Non-raid matches — the host possesses and plays in first person exactly as before.
 - No new RTS HUD is added; the host's FPS-only `PlayerView` simply stays hidden (no PlayerObject).

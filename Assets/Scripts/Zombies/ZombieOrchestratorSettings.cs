@@ -41,6 +41,11 @@ namespace SimpleFPS
 		public float StartAlertRadius = 8f;
 		public float EndAlertRadius = 24f;
 
+		[Header("Attack")]
+		[Tooltip("Melee reach of every spawned zombie. This asset is the single authority for zombie stats — the ZombieCharacter prefab no longer exposes stat fields.")]
+		public float AttackRange = 1.3f;
+		public float AttackCooldown = 1.1f;
+
 		[Header("Overtime Spawn Rate (per connected player)")]
 		[Tooltip("Zombies spawned per minute for each connected player during overtime, independent of the normal Start/End spawn rate. Multiplied by the number of connected players.")]
 		public float OvertimeSpawnRatePerMinute = 60f;
@@ -52,6 +57,8 @@ namespace SimpleFPS
 		public float OvertimeNewZombieHealthIncreasePer10Seconds = 10f;
 		public float OvertimeDamage = 35f;
 		public float OvertimeMoveSpeed = 7.5f;
+		[Tooltip("Alert radius for overtime zombies. Overtime zombies hunt permanently, so this mostly affects how far their alerts propagate to nearby zombies. Was previously read from the zombie prefab (8).")]
+		public float OvertimeAlertRadius = 8f;
 
 		[Header("Regional Pressure")]
 		[Range(0f, 1f)]
@@ -82,6 +89,9 @@ namespace SimpleFPS
 			EndMoveSpeed = Mathf.Max(0f, EndMoveSpeed);
 			StartAlertRadius = Mathf.Max(0f, StartAlertRadius);
 			EndAlertRadius = Mathf.Max(0f, EndAlertRadius);
+			AttackRange = Mathf.Max(0.1f, AttackRange);
+			AttackCooldown = Mathf.Max(0.05f, AttackCooldown);
+			OvertimeAlertRadius = Mathf.Max(0f, OvertimeAlertRadius);
 			OvertimeHealth = Mathf.Max(1f, OvertimeHealth);
 			OvertimeNewZombieHealthIncreasePer10Seconds = Mathf.Max(0f, OvertimeNewZombieHealthIncreasePer10Seconds);
 			OvertimeDamage = Mathf.Max(0f, OvertimeDamage);

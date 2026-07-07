@@ -215,6 +215,20 @@ private Vector3 EvaluateTrajectory(in ActiveProjectile proj, float elapsed)
 
 An overload (or the same method with different input types) must also be accessible from `Render()` using a `ProjectileSpawnData` struct instead of `ActiveProjectile` — the math is identical.
 
+### Raid-alliance friendly pass-through
+
+`Weapons.StepActiveProjectiles()` keeps the normal single-hit lag-compensated raycast as its fast path. If that
+first hit belongs to an allied survivor, it performs `RaycastAll()` for only that projectile segment and chooses
+the nearest hit that is not allied. A reusable scratch list avoids per-query allocation. This makes different
+raid-client teams behave like same-owner survivors while the host is alive: their bodies neither take damage nor
+terminate the projectile/tracer, and a hostile survivor, zombie, or wall behind them can still be hit.
+
+Only the selected non-allied blocking hit writes `ProjectileHitData`, reports a bullet-impact sensory event, or
+applies damage. `CharacterFactionUtility.CanSurvivorWeaponDamage()` remains an authoritative guard, and
+`Health.ApplyDamage()` also rejects player-instigated same-owner/allied survivor damage as defense in depth. The
+relationship is evaluated when the hit resolves, so a projectile fired before the raid host dies can damage a
+client if it arrives after the client alliance has dissolved.
+
 ### State authority reconstruction after resimulation
 
 Photon Fusion re-runs `FixedUpdateNetwork` during resimulation (rollback and replay). The `_activeProjectiles` list is not networked, so after a resimulation the list may be stale. To handle this:
@@ -349,15 +363,17 @@ Suggested starting values:
 > and the visual spawn/terminate loops now live in `Assets/Scripts/Weapons/Weapons.cs` as one shared per-shot
 > system; `Weapon.cs` retains only ammo/cooldown state, config, and the per-weapon reload/fire visual hooks.
 
-### Files unchanged
+### Current integration
 
 - `Assets/Scripts/Weapons/Weapons.cs` — **now the owner** of the shared projectile streams, bullet simulation, and
   visuals (was previously a thin manager). `RegisterShot()` is the entry point weapons call on a successful fire.
 - `Assets/Scripts/Survivor/Survivor.cs` — calls `Weapons.Fire()` identically.
 - `Assets/Scripts/Survivor/SurvivorInput.cs` — input flow unchanged.
-- `Assets/Scripts/Survivor/Health.cs` — `ApplyDamage()` signature unchanged.
+- `Assets/Scripts/Survivor/Health.cs` — `ApplyDamage()` signature is unchanged; it now includes the final
+  player-owner alliance guard described above.
 - `Assets/Scripts/Survivor/BodyHitbox.cs` — hitbox system unchanged.
-- `Assets/Scripts/Gameplay/Gameplay.cs` — kill tracking and game loop unchanged.
+- `Assets/Scripts/Gameplay/Gameplay.cs` — projectile kill tracking and the game loop are unchanged; raid mode
+  separately replicates `RaidHostPlayer` for the relationship query.
 - `Assets/Scripts/UI/UICrosshair.cs` — crosshair hit feedback needs one small change: instead of triggering in `FireProjectile()`, trigger it from `Render()` when `_hitCount` changes for a bullet the local player fired. Check `HasInputAuthority`.
 
 ---

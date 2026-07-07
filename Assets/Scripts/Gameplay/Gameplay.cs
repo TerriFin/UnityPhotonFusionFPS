@@ -157,6 +157,8 @@ namespace SimpleFPS
 		public EGameplayState State { get; set; }
 		[Networked][HideInInspector]
 		public int WorldSeed { get; set; }
+		[Networked][HideInInspector]
+		public PlayerRef RaidHostPlayer { get; private set; }
 
 		public bool DoubleDamageActive => State == EGameplayState.Running && RemainingTime.RemainingTime(Runner).GetValueOrDefault() < DoubleDamageDuration;
 
@@ -706,7 +708,10 @@ namespace SimpleFPS
 				Runner.SetAreaOfInterestCellSize(AreaOfInterestCellSize);
 
 			if (HasStateAuthority)
+			{
+				RaidHostPlayer = RaidMode ? Runner.LocalPlayer : PlayerRef.None;
 				InitializeWorldSeed();
+			}
 		}
 
 		public override void FixedUpdateNetwork()
@@ -767,23 +772,59 @@ namespace SimpleFPS
 				if (player.IsRealPlayer == false)
 					continue;
 
-				if (_characterCache.TryGetValue(player, out var squad) == false)
-					continue;
+				bool hasAnySphere = false;
 
-				int activeIndex = pair.Value.ActiveCharacterIndex;
-
-				foreach (var entry in squad)
+				if (_characterCache.TryGetValue(player, out var squad))
 				{
-					Survivor survivor = entry.Value;
-					if (survivor == null || survivor.Object == null || survivor.Object.IsValid == false)
-						continue;
-					if (survivor.Health == null || survivor.Health.IsAlive == false)
-						continue;
+					int activeIndex = pair.Value.ActiveCharacterIndex;
 
-					float radius = entry.Key == activeIndex ? PossessedInterestRadius : SquadmateInterestRadius;
-					Runner.AddPlayerAreaOfInterest(player, survivor.transform.position, radius);
+					foreach (var entry in squad)
+					{
+						Survivor survivor = entry.Value;
+						if (survivor == null || survivor.Object == null || survivor.Object.IsValid == false)
+							continue;
+						if (survivor.Health == null || survivor.Health.IsAlive == false)
+							continue;
+
+						float radius = entry.Key == activeIndex ? PossessedInterestRadius : SquadmateInterestRadius;
+						Runner.AddPlayerAreaOfInterest(player, survivor.transform.position, radius);
+						hasAnySphere = true;
+					}
 				}
+
+				// A player with no living survivor (defeated spectator, or the brief pre-spawn window) would
+				// otherwise have no interest at all and receive no actor state — but spectate mode promises them
+				// the orbit camera on any surviving team and a fully revealed map. Give them one sphere covering
+				// the whole generated world instead.
+				if (hasAnySphere == false)
+					Runner.AddPlayerAreaOfInterest(player, GetWorldInterestCenter(), GetWorldInterestRadius());
 			}
+		}
+
+		// Whole-map interest sphere for players without living survivors. Derived from the generated road grid
+		// (same bounds the map camera uses); falls back to a large constant before/without generation.
+		private Vector3 GetWorldInterestCenter()
+		{
+			ResolveWorldGenerators();
+			if (_roadGridGenerator == null)
+				return Vector3.zero;
+
+			float width = Mathf.Max(1, _roadGridGenerator.Width) * _roadGridGenerator.TileSize;
+			float height = Mathf.Max(1, _roadGridGenerator.Height) * _roadGridGenerator.TileSize;
+			return _roadGridGenerator.transform.position +
+			       new Vector3((width - _roadGridGenerator.TileSize) * 0.5f, 0f, (height - _roadGridGenerator.TileSize) * 0.5f);
+		}
+
+		private float GetWorldInterestRadius()
+		{
+			ResolveWorldGenerators();
+			if (_roadGridGenerator == null)
+				return 1000f;
+
+			float width = Mathf.Max(1, _roadGridGenerator.Width) * _roadGridGenerator.TileSize;
+			float height = Mathf.Max(1, _roadGridGenerator.Height) * _roadGridGenerator.TileSize;
+			// Half diagonal plus a vertical/edge margin so elevated ledge tiles at the map corners stay inside.
+			return 0.5f * Mathf.Sqrt(width * width + height * height) + 50f;
 		}
 
 		public override void Render()

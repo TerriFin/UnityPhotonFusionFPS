@@ -56,12 +56,11 @@ namespace SimpleFPS
 					heightGenerator.Settings = preset;
 			}
 
+			// Map size is set only on the HeightMapGenerator — the RoadGridGenerator mirrors it from there
+			// before every generation, so setting it twice would just hide which one is authoritative.
 			RoadGridGenerator roadGenerator = FindInScene<RoadGridGenerator>(scene);
 			if (roadGenerator != null)
 			{
-				roadGenerator.Width = _settings.MapWidth;
-				roadGenerator.Height = _settings.MapHeight;
-
 				RoadGenerationSettings preset = _catalog != null
 					? _catalog.GetRoadGenerationPreset(_settings.RoadGenerationPreset)
 					: null;
@@ -115,6 +114,16 @@ namespace SimpleFPS
 
 				neutralSurvivorOrchestrator.SetRuntimeDesiredNeutralSurvivorCount(_settings.PreferredNeutralSurvivorCount);
 			}
+
+			// One visible line stating that lobby settings now own the scene configuration. Inspector values on the
+			// generators/orchestrators are only used when a scene is played directly without the menu flow.
+			Debug.Log(
+				$"{nameof(MatchRuntimeSettings)} applied lobby settings to scene '{scene.name}': " +
+				$"map {_settings.MapWidth}x{_settings.MapHeight}, " +
+				$"height preset {_settings.HeightGenerationPreset}, road preset {_settings.RoadGenerationPreset}, " +
+				$"buildings preset {_settings.BuildingPlacementPreset}, loot preset {_settings.LootSpawnPreset}, " +
+				$"zombies preset {_settings.ZombieOrchestratorPreset}, neutrals preset {_settings.NeutralSurvivorPreset}. " +
+				"These override the corresponding inspector values for this match.");
 		}
 
 		private static void RegisterSceneLoadedHook()

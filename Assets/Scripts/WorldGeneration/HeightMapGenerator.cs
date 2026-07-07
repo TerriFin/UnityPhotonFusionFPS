@@ -58,6 +58,7 @@ namespace SimpleFPS
 		private readonly Dictionary<Vector2Int, GameObject> _ledgeInstances = new();
 		private Coroutine _generationCompleteCoroutine;
 		private int _lastAppliedNetworkedSeed;
+		private Gameplay _gameplay;
 
 		public bool IsGenerationComplete { get; private set; }
 		public int EffectiveWidth => Mathf.Max(3, Width);
@@ -82,7 +83,7 @@ namespace SimpleFPS
 			if (Application.isPlaying == false)
 				return;
 
-			Gameplay gameplay = FindObjectOfType<Gameplay>();
+			Gameplay gameplay = GetGameplay();
 			if (gameplay == null ||
 			    gameplay.Object == null ||
 			    gameplay.Object.IsValid == false ||
@@ -1900,9 +1901,20 @@ namespace SimpleFPS
 				yield return null;
 		}
 
+		// FindObjectOfType scans every loaded object; the previous code ran it every rendered frame from Update()
+		// for the whole match. The Gameplay object lives for the entire scene, so it is found once and cached
+		// (a destroyed reference re-triggers the find thanks to Unity's overloaded null).
+		private Gameplay GetGameplay()
+		{
+			if (_gameplay == null)
+				_gameplay = FindObjectOfType<Gameplay>();
+
+			return _gameplay;
+		}
+
 		private bool ShouldWaitForNetworkedWorldSeed()
 		{
-			Gameplay gameplay = FindObjectOfType<Gameplay>();
+			Gameplay gameplay = GetGameplay();
 			if (gameplay == null)
 				return false;
 
@@ -1913,7 +1925,7 @@ namespace SimpleFPS
 		{
 			seed = 0;
 
-			Gameplay gameplay = FindObjectOfType<Gameplay>();
+			Gameplay gameplay = GetGameplay();
 			if (gameplay == null || gameplay.Object == null || gameplay.Object.IsValid == false)
 				return false;
 

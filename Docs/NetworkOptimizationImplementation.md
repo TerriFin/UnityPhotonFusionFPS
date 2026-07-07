@@ -684,6 +684,15 @@ The global `Gameplay` match object (scoreboard, timer, `PlayerData` dictionary, 
   (~2 s). Because the possessed sphere (150 m) hugely exceeds sensor range (~42 m), any enemy a player personally
   sights fades out fully before it could travel far enough to be culled, so the fade is unaffected for normal play.
 
+### Follow-up fix (July 2026, cleanup step 2)
+
+The original implementation had a hole: a player with **no living survivors** (defeated spectator, or the brief
+pre-spawn window) got no interest spheres at all and therefore received no actor state — but spectate mode
+promises exactly those players a fully revealed map and an orbit camera on any surviving team
+(`Docs/SpectateMode.md`). `UpdateAreaOfInterest` now detects a player for whom no sphere was added and gives them
+one whole-map sphere (center/radius derived from the generated road-grid bounds, +50 m margin; 1000 m fallback).
+See `Docs/OptimizationReviewFixes.md`.
+
 ### Scope / known limitation
 
 - **AI-squadmate edge sightings.** `SquadmateInterestRadius` defaults to ≈ sensor range, so an enemy sighted *only*

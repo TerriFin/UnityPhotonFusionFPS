@@ -317,7 +317,7 @@ Create > SimpleFPS > World Generation > Road Generation Settings
 
 7. Assign the tile set to `RoadTiles`.
 8. Add `RoadGridGenerator` to an empty GameObject in the scene.
-9. Assign the settings asset. For flat fallback generation, set `Width`, `Height`, and `Seed` on the `RoadGridGenerator` component. With height generation enabled, set shared map size and seed on `HeightMapGenerator` instead.
+9. Assign the settings asset. Map size, seed, and tile size are always set on `HeightMapGenerator` — the road generator mirrors them from there before every generation. (`RoadGridGenerator` still carries hidden fallback fields that are only used in a scene with no `HeightMapGenerator` at all.)
 10. Use the component context menu:
 
 ```text

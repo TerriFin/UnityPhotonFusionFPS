@@ -18,10 +18,8 @@ namespace SimpleFPS
 		public Camera MinimapCamera;
 		public GameMapIconController IconController;
 
-		[Tooltip("The full-screen GameMapView. If assigned, the minimap reuses its GameMapAwarenessTracker so both maps share one model of \"what does this player know\". Leave null to use SharedAwarenessTracker or fall back to a local tracker.")]
+		[Tooltip("The full-screen GameMapView. The minimap reuses its GameMapAwarenessTracker so both maps share one model of \"what does this player know\", and follows its RevealMode debug toggle. GameUI wires this automatically when left empty.")]
 		public GameMapView MainMapView;
-		[Tooltip("Optional explicit tracker to share. Only used when MainMapView is null. Both fields can be left empty — the minimap will then spin up its own tracker, which works but does duplicate work each frame.")]
-		public GameMapAwarenessTracker SharedAwarenessTracker;
 
 		[Header("Render Texture")]
 		public RenderTexture MinimapRenderTexture;
@@ -36,8 +34,6 @@ namespace SimpleFPS
 		[Header("Behaviour")]
 		[Tooltip("Minimap automatically hides while the full GameMapView is open so the two overlays do not double up.")]
 		public bool HideWhileFullMapIsOpen = true;
-		[Tooltip("Debug only: when on, the minimap shows every survivor, zombie, and pickup at its live position (no fog of war). Off for normal play. Uses its own awareness model so it does not reveal anything on the full map.")]
-		public bool RevealEverything;
 		[Tooltip("Set by GameUI to hide the minimap entirely (defeated spectators have no minimap).")]
 		[HideInInspector]
 		public bool Suppressed;
@@ -101,23 +97,23 @@ namespace SimpleFPS
 			UpdateCameraTransform(runner);
 
 			if (IconController != null)
-				IconController.Tick(this, gameplay, runner, RevealEverything);
+				IconController.Tick(this, gameplay, runner, ShouldRevealEverything());
+		}
+
+		// The single "see everything" knob lives on GameMapView.RevealMode; the minimap follows it. ForceOn reveals
+		// both views (they share one awareness tracker, so a per-view reveal is not meaningful anyway). The Auto
+		// spectator reveal is irrelevant here because defeated spectators have no minimap (Suppressed).
+		private bool ShouldRevealEverything()
+		{
+			return MainMapView != null && MainMapView.RevealMode == EMapRevealMode.ForceOn;
 		}
 
 		private void TryAdoptSharedTracker()
 		{
-			if (IconController == null)
+			if (IconController == null || MainMapView == null || MainMapView.IconController == null)
 				return;
 
-			// A constantly-revealing minimap must keep its own awareness tracker. Sharing the full map's tracker
-			// would seed every entity into the shared memory, leaking the reveal onto the (fog-of-war) full map.
-			if (RevealEverything)
-				return;
-
-			GameMapAwarenessTracker desired = SharedAwarenessTracker;
-			if (desired == null && MainMapView != null && MainMapView.IconController != null)
-				desired = MainMapView.IconController.AwarenessTracker;
-
+			GameMapAwarenessTracker desired = MainMapView.IconController.AwarenessTracker;
 			if (desired != null && IconController.AwarenessTracker != desired)
 				IconController.AwarenessTracker = desired;
 		}
@@ -245,7 +241,7 @@ namespace SimpleFPS
 			{
 				string cameraName = MinimapCamera != null ? MinimapCamera.name : "None";
 				string textureName = MinimapRenderTexture != null ? MinimapRenderTexture.name : "None";
-				string trackerName = SharedAwarenessTracker != null ? SharedAwarenessTracker.name : "(local)";
+				string trackerName = MainMapView != null ? MainMapView.name : "(local)";
 				Debug.Log($"{nameof(GameMinimapView)} setup on {name}: Image={(MapImage != null ? MapImage.name : "None")}, Camera={cameraName}, Texture={textureName}, Tracker={trackerName}.", this);
 			}
 		}

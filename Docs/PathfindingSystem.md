@@ -153,6 +153,11 @@ Complete path available -> steer toward next path corner
 No in-budget route, order still far -> chain via a reachable midpoint (bisecting toward the origin, sampling around each midpoint; repathing re-tries the saved order and extends the route across the map)
 ```
 
+Performance note (July 2026): before running the direct `NavMesh.CalculatePath`, the navigator consults the
+precomputed `NavMeshIslandMap` (see `Docs/NavMeshIslandMap.md`). A destination on a **different** connectivity
+island can never have a complete path, so the expensive doomed path flood is skipped and the flow falls straight
+to the unreachable / midpoint handling above. The observable behavior model in this document is unchanged.
+
 Movement input should stay simple at first:
 
 ```csharp

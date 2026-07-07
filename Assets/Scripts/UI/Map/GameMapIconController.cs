@@ -441,10 +441,17 @@ namespace SimpleFPS
 			return _pickupCircleSprite;
 		}
 
+		// Uses the static spawned-survivor registry instead of FindObjectsOfType, which scanned every loaded
+		// object (and allocated a fresh array) every frame the minimap or map was visible.
 		private static void CollectSurvivors(List<Survivor> results)
 		{
 			results.Clear();
-			results.AddRange(FindObjectsOfType<Survivor>());
+			var survivors = Survivor.ActiveSurvivors;
+			for (int i = 0; i < survivors.Count; i++)
+			{
+				if (survivors[i] != null)
+					results.Add(survivors[i]);
+			}
 		}
 
 		private static bool IsAlive(Survivor survivor)

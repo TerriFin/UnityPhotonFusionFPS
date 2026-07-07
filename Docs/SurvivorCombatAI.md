@@ -161,6 +161,9 @@ The detailed rules, Inspector thresholds, roster control, and authoritative requ
 
 Combat AI should evaluate known direct enemies and choose one target.
 
+An enemy survivor is defined by `CharacterFactionUtility`, not merely by a different `OwnerRef`. Different
+raid-client teams are excluded while the raid host is alive and become valid targets after the host is defeated.
+
 Priority modes:
 
 - `PreferZombies`: zombies rank above enemy survivors.

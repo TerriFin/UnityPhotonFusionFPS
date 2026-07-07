@@ -75,6 +75,7 @@ namespace SimpleFPS
 		// hit detection; _activeVisuals tracks one client visual per (shot slot, pellet) so a confirmed hit can
 		// terminate the right tracer.
 		private readonly List<ActiveProjectile> _activeProjectiles = new List<ActiveProjectile>();
+		private readonly List<LagCompensatedHit> _projectileHitScratch = new List<LagCompensatedHit>(8);
 		private readonly ProjectileVisual[] _activeVisuals = new ProjectileVisual[FireStreamCapacity * MaxPelletsPerShot];
 		private readonly Vector3[] _pelletDirections = new Vector3[MaxPelletsPerShot];
 		private int _visibleFireCount;
@@ -356,8 +357,7 @@ namespace SimpleFPS
 				if (stepLen < 0.001f)
 					continue;
 
-				if (Runner.LagCompensation.Raycast(prevPos, delta / stepLen, stepLen,
-					    Object.InputAuthority, out var hit, weapon.HitMask, hitOptions))
+				if (TryGetProjectileHit(prevPos, delta / stepLen, stepLen, weapon.HitMask, hitOptions, out var hit))
 				{
 					bool isKill = false;
 					bool isCrit = false;
@@ -384,6 +384,65 @@ namespace SimpleFPS
 					_activeProjectiles.RemoveAt(i);
 				}
 			}
+		}
+
+		private bool TryGetProjectileHit(
+			Vector3 origin,
+			Vector3 direction,
+			float distance,
+			LayerMask hitMask,
+			HitOptions hitOptions,
+			out LagCompensatedHit hit)
+		{
+			if (Runner.LagCompensation.Raycast(origin, direction, distance,
+				    Object.InputAuthority, out hit, hitMask, hitOptions) == false)
+			{
+				return false;
+			}
+
+			if (IsAlliedSurvivorHit(hit) == false)
+				return true;
+
+			// The normal single-hit query is retained for every ordinary projectile segment. Only a segment whose
+			// nearest hit is an allied survivor pays for RaycastAll so that the bullet can pass through that ally
+			// and still stop on the nearest wall, zombie, or hostile survivor behind them.
+			_projectileHitScratch.Clear();
+			Runner.LagCompensation.RaycastAll(origin, direction, distance, Object.InputAuthority,
+				_projectileHitScratch, hitMask, true, hitOptions);
+
+			bool found = false;
+			float closestDistanceSqr = float.MaxValue;
+
+			for (int i = 0; i < _projectileHitScratch.Count; i++)
+			{
+				LagCompensatedHit candidate = _projectileHitScratch[i];
+				if (IsAlliedSurvivorHit(candidate))
+					continue;
+
+				float candidateDistanceSqr = (candidate.Point - origin).sqrMagnitude;
+				bool isCloser = candidateDistanceSqr < closestDistanceSqr - 0.0001f;
+				bool preferHitboxAtSameDistance = found &&
+				                                  Mathf.Abs(candidateDistanceSqr - closestDistanceSqr) <= 0.0001f &&
+				                                  candidate.Hitbox != null &&
+				                                  hit.Hitbox == null;
+
+				if (found && isCloser == false && preferHitboxAtSameDistance == false)
+					continue;
+
+				hit = candidate;
+				closestDistanceSqr = candidateDistanceSqr;
+				found = true;
+			}
+
+			return found;
+		}
+
+		private bool IsAlliedSurvivorHit(LagCompensatedHit hit)
+		{
+			GameObject hitObject = hit.GameObject;
+			Survivor hitSurvivor = hitObject != null ? hitObject.GetComponentInParent<Survivor>() : null;
+			return hitSurvivor != null &&
+			       CharacterFactionUtility.AreSurvivorsAllied(_ownerSurvivor, hitSurvivor);
 		}
 
 		private void RenderProjectiles()

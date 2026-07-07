@@ -16,14 +16,17 @@ namespace SimpleFPS
 		public HitboxRoot HitboxRoot;
 		public Animator Animator;
 
-		[Header("Default Stats")]
+		// Runtime stats, always assigned by ZombieOrchestrator.ApplyStats on spawn. Deliberately not serialized:
+		// ZombieOrchestratorSettings is the single place zombie stats are tuned. The initializer only covers
+		// zombies spawned outside the orchestrator (test scenes).
+		[System.NonSerialized]
 		public ZombieStats Stats = new ZombieStats
 		{
 			MaxHealth = 40f,
 			Damage = 8f,
 			MoveSpeed = 2.2f,
 			AlertRadius = 8f,
-			AttackRange = 1.2f,
+			AttackRange = 1.3f,
 			AttackCooldown = 1.1f,
 		};
 
@@ -52,6 +55,7 @@ namespace SimpleFPS
 
 		private TickTimer _despawnTimer;
 		private float _nextAttackTime;
+		private bool _corpseSettled;
 
 		public CharacterSensor Sensor { get; private set; }
 		public CharacterNavigator Navigator { get; private set; }
@@ -98,6 +102,11 @@ namespace SimpleFPS
 
 			if (ActiveZombies.Contains(this) == false)
 				ActiveZombies.Add(this);
+
+			// Defensive reset in case the NetworkObject instance is ever reused: stale corpse state must not
+			// leak into a fresh zombie.
+			_corpseSettled = false;
+			_despawnTimer = default;
 		}
 
 		public override void Despawned(NetworkRunner runner, bool hasState)
@@ -302,12 +311,18 @@ namespace SimpleFPS
 			// corpse actually falls instead of floating off where the climb left it.
 			_mantleTimer = default;
 
-			if (KCC != null)
+			if (KCC != null && _corpseSettled == false)
 			{
 				KCC.SetColliderLayer(LayerMask.NameToLayer("Ignore Raycast"));
 				KCC.SetCollisionLayerMask(LayerMask.GetMask("Default"));
 				KCC.SetGravity(KCC.RealVelocity.y >= 0f ? -UpGravity : -DownGravity);
 				MoveZombie();
+
+				// A grounded corpse with no residual motion never moves again (the world is static), so stop
+				// stepping its KCC for the rest of the despawn delay. At the overtime kill rate this removes up
+				// to a whole horde's worth of pointless corpse KCC.Move calls per tick for ~8 s per corpse.
+				if (KCC.IsGrounded && KCC.RealVelocity.sqrMagnitude < 0.01f && _moveVelocity.sqrMagnitude < 0.01f)
+					_corpseSettled = true;
 			}
 
 			if (_despawnTimer.IsRunning == false && DespawnAfterDeath > 0f)

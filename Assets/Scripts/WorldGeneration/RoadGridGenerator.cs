@@ -18,12 +18,20 @@ namespace SimpleFPS
 		[Header("Setup")]
 		public RoadGenerationSettings Settings;
 		public HeightMapGenerator HeightGenerator;
-		[Min(3)]
+		// Width/Height/Seed/RandomizeSeedOnGenerate/TileSize are mirrors of the HeightMapGenerator's values —
+		// SyncRunValuesFromHeightGenerator overwrites them before every generation, and the generated height
+		// snapshot overrides Width/Height again in ApplyHeightSnapshotRunValues. They are hidden so map size and
+		// seed are tuned in exactly one place (the HeightMapGenerator); the serialized values only matter as a
+		// fallback in scenes that have no HeightMapGenerator at all.
+		[HideInInspector, Min(3)]
 		public int Width = 12;
-		[Min(3)]
+		[HideInInspector, Min(3)]
 		public int Height = 12;
+		[HideInInspector]
 		public int Seed = 12345;
+		[HideInInspector]
 		public bool RandomizeSeedOnGenerate;
+		[HideInInspector]
 		public float TileSize = 20f;
 		public string GeneratedRootName = "Generated Road Grid";
 		public bool GenerateOnStart;
@@ -50,6 +58,7 @@ namespace SimpleFPS
 		private int _failedPathAttempts;
 		private int _lastAppliedNetworkedSeed;
 		private Coroutine _generationCompleteCoroutine;
+		private Gameplay _gameplay;
 
 		public Transform GeneratedRoot => _generatedRoot;
 		public bool IsGenerationComplete { get; private set; }
@@ -57,6 +66,11 @@ namespace SimpleFPS
 		private void Awake()
 		{
 			ResolveHeightGenerator();
+			SyncRunValuesFromHeightGenerator();
+		}
+
+		private void SyncRunValuesFromHeightGenerator()
+		{
 			if (HeightGenerator == null)
 				return;
 
@@ -84,7 +98,7 @@ namespace SimpleFPS
 			if (Application.isPlaying == false)
 				return;
 
-			Gameplay gameplay = FindObjectOfType<Gameplay>();
+			Gameplay gameplay = GetGameplay();
 			if (gameplay == null ||
 			    gameplay.Object == null ||
 			    gameplay.Object.IsValid == false ||
@@ -114,6 +128,9 @@ namespace SimpleFPS
 			}
 
 			ResolveHeightGenerator();
+			// Keep the height generator authoritative in edit-mode generation too (Awake only covers play mode).
+			// The networked-seed override below still wins in play mode.
+			SyncRunValuesFromHeightGenerator();
 
 			if (ClearBeforeGenerate)
 				ClearGenerated();
@@ -1520,9 +1537,20 @@ namespace SimpleFPS
 			return UnityEngine.Random.Range(int.MinValue, int.MaxValue);
 		}
 
+		// FindObjectOfType scans every loaded object; the previous code ran it every rendered frame from Update()
+		// for the whole match. The Gameplay object lives for the entire scene, so it is found once and cached
+		// (a destroyed reference re-triggers the find thanks to Unity's overloaded null).
+		private Gameplay GetGameplay()
+		{
+			if (_gameplay == null)
+				_gameplay = FindObjectOfType<Gameplay>();
+
+			return _gameplay;
+		}
+
 		private bool ShouldWaitForNetworkedWorldSeed()
 		{
-			Gameplay gameplay = FindObjectOfType<Gameplay>();
+			Gameplay gameplay = GetGameplay();
 			if (gameplay == null)
 				return false;
 
@@ -1533,7 +1561,7 @@ namespace SimpleFPS
 		{
 			seed = 0;
 
-			Gameplay gameplay = FindObjectOfType<Gameplay>();
+			Gameplay gameplay = GetGameplay();
 			if (gameplay == null || gameplay.Object == null || gameplay.Object.IsValid == false)
 				return false;
 

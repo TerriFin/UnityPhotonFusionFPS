@@ -570,12 +570,34 @@ namespace SimpleFPS
 			if (requiredRadius <= 0f)
 				return true;
 
-			if (_spawnValidationPath == null)
-				_spawnValidationPath = new NavMeshPath();
-
 			const int probeCount = 12;
 			float radius = Mathf.Max(0.5f, requiredRadius);
 			float navSampleDistance = Mathf.Max(0.5f, sampleDistance);
+
+			// Island-map fast path: "same connected mesh at ring distance" is one island-id comparison per probe
+			// instead of a NavMesh sample plus a CalculatePath. Validating hundreds of markers at collection time
+			// previously cost thousands of NavMesh queries in one frame.
+			if (NavMeshIslandMap.TryGetIslandAt(navMeshPosition, 0.5f, 0.5f, out int markerIsland))
+			{
+				// A marker on a large island is on ordinary walkable ground — accept without the ring. Also
+				// shields against triangulation fragmentation falsely rejecting street markers.
+				if (NavMeshIslandMap.GetIslandArea(markerIsland) > NavMeshIslandMap.SmallIslandMaxArea)
+					return true;
+
+				for (int i = 0; i < probeCount; i++)
+				{
+					float angle = i * Mathf.PI * 2f / probeCount;
+					Vector3 probe = navMeshPosition + new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle)) * radius;
+					if (NavMeshIslandMap.TryGetIslandAt(probe, navSampleDistance, navSampleDistance, out int probeIsland) &&
+					    probeIsland == markerIsland)
+						return true;
+				}
+
+				return false;
+			}
+
+			if (_spawnValidationPath == null)
+				_spawnValidationPath = new NavMeshPath();
 
 			for (int i = 0; i < probeCount; i++)
 			{
@@ -800,29 +822,21 @@ namespace SimpleFPS
 				Damage = Mathf.Lerp(Settings.StartDamage, Settings.EndDamage, progress),
 				MoveSpeed = Mathf.Lerp(Settings.StartMoveSpeed, Settings.EndMoveSpeed, progress),
 				AlertRadius = Mathf.Lerp(Settings.StartAlertRadius, Settings.EndAlertRadius, progress),
-				AttackRange = Settings.ZombiePrefab != null
-					? Settings.ZombiePrefab.GetComponent<ZombieCharacter>()?.Stats.AttackRange ?? 1.2f
-					: 1.2f,
-				AttackCooldown = Settings.ZombiePrefab != null
-					? Settings.ZombiePrefab.GetComponent<ZombieCharacter>()?.Stats.AttackCooldown ?? 1.1f
-					: 1.1f,
+				AttackRange = Settings.AttackRange,
+				AttackCooldown = Settings.AttackCooldown,
 			};
 		}
 
 		private ZombieStats GetOvertimeStats()
 		{
-			ZombieStats prefabStats = Settings.ZombiePrefab != null && Settings.ZombiePrefab.GetComponent<ZombieCharacter>() != null
-				? Settings.ZombiePrefab.GetComponent<ZombieCharacter>().Stats
-				: default;
-
 			return new ZombieStats
 			{
 				MaxHealth = Settings.OvertimeHealth,
 				Damage = Settings.OvertimeDamage,
 				MoveSpeed = Settings.OvertimeMoveSpeed,
-				AlertRadius = prefabStats.AlertRadius,
-				AttackRange = prefabStats.AttackRange > 0f ? prefabStats.AttackRange : 1.2f,
-				AttackCooldown = prefabStats.AttackCooldown > 0f ? prefabStats.AttackCooldown : 1.1f,
+				AlertRadius = Settings.OvertimeAlertRadius,
+				AttackRange = Settings.AttackRange,
+				AttackCooldown = Settings.AttackCooldown,
 			};
 		}
 
