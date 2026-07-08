@@ -255,11 +255,11 @@ namespace SimpleFPS
 			if (target == null)
 				return false;
 
-			var survivor = target.GetComponent<Survivor>();
+			var survivor = Survivor.GetFrom(target);
 			if (survivor != null)
 				return survivor.Health != null && survivor.Health.IsAlive;
 
-			var zombie = target.GetComponent<ZombieCharacter>();
+			var zombie = ZombieCharacter.GetFrom(target);
 			if (zombie != null)
 				return zombie.Health != null && zombie.Health.IsAlive;
 

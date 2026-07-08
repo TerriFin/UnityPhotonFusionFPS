@@ -221,6 +221,8 @@ Rules:
 - the possessed survivor is marked but not command-selectable for movement/follow/defend orders,
 - right click outside the map does nothing,
 - while the map is open, left clicking empty non-interactive UI/map space clears the current selection.
+- selection-box drags may start from the map image or other non-blocked screen space outside the map image, but
+  not from the roster panel / pointer blocker.
 
 Roster card selection is single-select by default so the player can quickly focus one survivor from the list. Clicking an already selected card toggles it off. Shift-click range selection never clears the current selection; it only fills the gap between the clicked survivor and the closest selected survivor.
 

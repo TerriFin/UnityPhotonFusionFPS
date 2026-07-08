@@ -86,7 +86,13 @@ public void UnregisterSurvivor(Survivor character)
 
 `Survivor.Spawned()` calls `RegisterSurvivor(this)` and `Survivor.Despawned()` calls `UnregisterSurvivor(this)`. Fusion calls these on every peer as objects appear and disappear in their local simulation via state replication, so the cache stays in sync on all machines without any explicit messages.
 
-Recruitment is the one case where a survivor's `OwnerRef`/`CharacterIndex` change **without** a Spawned/Despawned event — only the networked fields replicate. The state authority re-registers the recruit explicitly inside `Gameplay.TryRecruitNeutralSurvivor`, but other peers would otherwise keep the recruit stuck in the neutral list and never move it into the owning team's cache (so it would show on the map via `FindObjectsOfType` yet be missing from cycling, AI commands, and death-switching). To cover every peer, `Survivor` records the owner/index it last registered with and, in `Render()`, calls `Gameplay.ReregisterSurvivor(this, previousOwnerRef, previousCharacterIndex)` whenever it detects the identity changed. That moves the cache entry from the old key to the new one on all machines.
+Recruitment and raid client rescue are the cases where a survivor's `OwnerRef`/`CharacterIndex` change **without**
+a Spawned/Despawned event — only the networked fields replicate. The state authority re-registers the transferred
+survivor explicitly, but other peers would otherwise keep the survivor in the old owner's cache and never move it
+into the new owning team's cache (so it would show on the map via `FindObjectsOfType` yet be missing from cycling,
+AI commands, and death-switching). To cover every peer, `Survivor` records the owner/index it last registered with
+and, in `Render()`, calls `Gameplay.ReregisterSurvivor(this, previousOwnerRef, previousCharacterIndex)` whenever it
+detects the identity changed. That moves the cache entry from the old key to the new one on all machines.
 
 To look up a live character by owner and index:
 
@@ -105,7 +111,11 @@ public Survivor GetSurvivor(PlayerRef owner, int index)
 [Networked, HideInInspector] public int       CharacterIndex { get; set; }
 ```
 
-Both are set once immediately after spawn and never change. `OwnerRef` is the `PlayerRef` of the human who owns this character. `CharacterIndex` increments from 0 upward within a player's team across the whole match — recruited characters continue the sequence (e.g., if a player starts with indices 0–4, their first recruit is index 5).
+Both are assigned immediately after spawn, then can change only through explicit state-authority roster transfers:
+neutral recruitment and raid client rescue. `OwnerRef` is the `PlayerRef` of the human who owns this character.
+`CharacterIndex` is the survivor's current index within that owner's roster. Recruited/rescued characters are
+added through `Gameplay`, which also keeps `PlayerData`, input authority, and the local survivor lookup cache in
+sync.
 
 ### New input buttons (SurvivorInput.cs / EInputButton enum)
 

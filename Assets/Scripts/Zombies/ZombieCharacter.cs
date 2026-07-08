@@ -10,11 +10,14 @@ namespace SimpleFPS
 	{
 		internal static readonly List<ZombieCharacter> ActiveZombies = new(256);
 
+		// NetworkObject → ZombieCharacter lookup for hot paths (sensor memory validation, AI target checks) that
+		// used to pay a GetComponent per call, many times per tick per zombie. Maintained in Spawned/Despawned.
+		private static readonly Dictionary<NetworkObject, ZombieCharacter> Lookup = new(256);
+
 		[Header("Components")]
 		public SimpleKCC KCC;
 		public Health Health;
 		public HitboxRoot HitboxRoot;
-		public Animator Animator;
 
 		// Runtime stats, always assigned by ZombieOrchestrator.ApplyStats on spawn. Deliberately not serialized:
 		// ZombieOrchestratorSettings is the single place zombie stats are tuned. The initializer only covers
@@ -63,6 +66,15 @@ namespace SimpleFPS
 		public ZombieAI AI { get; private set; }
 		public bool IsOvertime { get; private set; }
 
+		// Fast replacement for target.GetComponent<ZombieCharacter>() on spawned objects.
+		public static ZombieCharacter GetFrom(NetworkObject obj)
+		{
+			if (obj == null)
+				return null;
+
+			return Lookup.TryGetValue(obj, out ZombieCharacter zombie) ? zombie : obj.GetComponent<ZombieCharacter>();
+		}
+
 		public override void Spawned()
 		{
 			if (KCC == null)
@@ -71,8 +83,6 @@ namespace SimpleFPS
 				Health = GetComponent<Health>();
 			if (HitboxRoot == null)
 				HitboxRoot = GetComponent<HitboxRoot>();
-			if (Animator == null)
-				Animator = GetComponentInChildren<Animator>();
 
 			Sensor = GetComponent<CharacterSensor>();
 			if (Sensor == null)
@@ -85,7 +95,6 @@ namespace SimpleFPS
 			Separation = GetComponent<CharacterSeparation>();
 			if (Separation == null)
 				Separation = gameObject.AddComponent<CharacterSeparation>();
-			Separation.Kind = CharacterSeparationKind.Zombie;
 			Separation.Activate(this);
 
 			AI = GetComponent<ZombieAI>();
@@ -102,6 +111,8 @@ namespace SimpleFPS
 
 			if (ActiveZombies.Contains(this) == false)
 				ActiveZombies.Add(this);
+			if (Object != null)
+				Lookup[Object] = this;
 
 			// Defensive reset in case the NetworkObject instance is ever reused: stale corpse state must not
 			// leak into a fresh zombie.
@@ -112,6 +123,8 @@ namespace SimpleFPS
 		public override void Despawned(NetworkRunner runner, bool hasState)
 		{
 			ActiveZombies.Remove(this);
+			if (Object != null)
+				Lookup.Remove(Object);
 			Separation?.Deactivate();
 		}
 
@@ -133,7 +146,24 @@ namespace SimpleFPS
 			}
 
 			NetworkedInput input = AI != null ? AI.GetInput(Runner) : default;
+
+			// Settled idle zombies (grounded, near-zero velocity, no AI intent, no separation push) skip KCC
+			// stepping entirely this tick — mirrors the survivor settled-skip. KCC.Move runs physics sweeps even
+			// for zero input, so with a large mostly-idle horde this removes the dominant per-tick cost. The
+			// zombie resumes full simulation the moment its AI produces any input or it leaves the ground.
+			if (KCC != null && KCC.IsGrounded &&
+			    _moveVelocity.sqrMagnitude < 0.01f &&
+			    HasAnyInput(input) == false &&
+			    (AI == null || AI.WantsToClimb == false) &&
+			    (Separation == null || Separation.HasSeparation() == false))
+				return;
+
 			ProcessInput(input);
+		}
+
+		private static bool HasAnyInput(NetworkedInput input)
+		{
+			return input.MoveDirection != Vector2.zero || input.LookRotationDelta != Vector2.zero || input.Buttons.Bits != 0;
 		}
 
 		public void ApplyStats(ZombieStats stats, bool preserveHealthPercentage)
@@ -178,7 +208,7 @@ namespace SimpleFPS
 			if (target == null || Time.timeSinceLevelLoad < _nextAttackTime)
 				return false;
 
-			var survivor = target.GetComponent<Survivor>();
+			var survivor = Survivor.GetFrom(target);
 			if (survivor == null || survivor.Health == null || survivor.Health.IsAlive == false)
 				return false;
 

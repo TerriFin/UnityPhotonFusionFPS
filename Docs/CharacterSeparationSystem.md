@@ -54,15 +54,17 @@ CharacterSeparation
 
 The component should be assignable to survivors now and zombies later.
 
-Current inspector fields:
+The component has no inspector fields (July 2026 knob reduction). `Kind` is inferred from which `Activate`
+overload runs (`Activate(Survivor)` → Survivor, `Activate(ZombieCharacter)` → Zombie), and the tuning values are
+code constants — survivors and zombies were always configured identically:
 
 ```csharp
-public CharacterSeparationKind Kind = CharacterSeparationKind.Survivor;
-public float Radius = 0.8f;
-public float DesiredDistance = 0.65f;
-public float PushSpeed = 1.5f;
-public int MaxNeighbors = 8;
-public float RefreshInterval = 0.1f;
+public CharacterSeparationKind Kind { get; private set; } // set by Activate
+private const float Radius = 0.8f;
+private const float DesiredDistance = 0.65f;
+private const float PushSpeed = 1.5f;
+private const int MaxNeighbors = 8;
+private const float RefreshInterval = 0.1f;
 ```
 
 The component should expose a method similar to:
@@ -203,7 +205,7 @@ Zombie-vs-zombie phasing should reduce horde traffic jams. Zombie-vs-survivor co
 5. `MoveSurvivor(...)` adds separation velocity before calling `KCC.Move(...)`.
 6. The settled-character skip checks `HasSeparationIntent()` so overlap/separation wakes idle characters.
 7. Same-team survivor phasing uses `SimpleKCC.ResolveCollision` plus pairwise `Physics.IgnoreCollision(...)`; enemy teams keep normal collision.
-8. Zombies use the same component with `Kind = Zombie`.
+8. Zombies use the same component; `Activate(ZombieCharacter)` sets `Kind = Zombie` automatically.
 
 ## Testing Checklist
 

@@ -77,6 +77,10 @@ namespace SimpleFPS
 		private readonly List<ActiveProjectile> _activeProjectiles = new List<ActiveProjectile>();
 		private readonly List<LagCompensatedHit> _projectileHitScratch = new List<LagCompensatedHit>(8);
 		private readonly ProjectileVisual[] _activeVisuals = new ProjectileVisual[FireStreamCapacity * MaxPelletsPerShot];
+		// Pool generation of each tracked visual. A tracer that self-released at max lifetime can be recycled to
+		// another shot while this array still references it; the generation check keeps a late hit or slot reuse
+		// from terminating somebody else's tracer.
+		private readonly int[] _activeVisualGenerations = new int[FireStreamCapacity * MaxPelletsPerShot];
 		private readonly Vector3[] _pelletDirections = new Vector3[MaxPelletsPerShot];
 		private int _visibleFireCount;
 		private int _visibleHitCount;
@@ -228,17 +232,22 @@ namespace SimpleFPS
 
 			if (HasStateAuthority && Runner.IsForward)
 			{
+				PlayerRef lagCompPlayer = _ownerSurvivor != null && _ownerSurvivor.IsActiveCharacter()
+					? Object.InputAuthority
+					: PlayerRef.None;
+
 				int count = ReconstructPelletDirections(weapon, baseDirection, Runner.Tick);
 				for (int p = 0; p < count; p++)
 				{
 					_activeProjectiles.Add(new ActiveProjectile
 					{
-						Origin      = origin,
-						Direction   = _pelletDirections[p],
-						SpawnTick   = Runner.Tick,
-						WeaponType  = weapon.Type,
-						ShotSlot    = (byte)slot,
-						PelletIndex = (byte)p,
+						Origin        = origin,
+						Direction     = _pelletDirections[p],
+						SpawnTick     = Runner.Tick,
+						WeaponType    = weapon.Type,
+						ShotSlot      = (byte)slot,
+						PelletIndex   = (byte)p,
+						LagCompPlayer = lagCompPlayer,
 					});
 				}
 			}
@@ -318,7 +327,6 @@ namespace SimpleFPS
 				return;
 
 			float dt = Runner.DeltaTime;
-			var hitOptions = HitOptions.IncludePhysX | HitOptions.IgnoreInputAuthority;
 
 			for (int i = _activeProjectiles.Count - 1; i >= 0; i--)
 			{
@@ -357,7 +365,7 @@ namespace SimpleFPS
 				if (stepLen < 0.001f)
 					continue;
 
-				if (TryGetProjectileHit(prevPos, delta / stepLen, stepLen, weapon.HitMask, hitOptions, out var hit))
+				if (TryGetProjectileHit(prevPos, delta / stepLen, stepLen, weapon.HitMask, proj.LagCompPlayer, out var hit))
 				{
 					bool isKill = false;
 					bool isCrit = false;
@@ -391,11 +399,19 @@ namespace SimpleFPS
 			Vector3 direction,
 			float distance,
 			LayerMask hitMask,
-			HitOptions hitOptions,
+			PlayerRef lagCompPlayer,
 			out LagCompensatedHit hit)
 		{
+			// AI-fired pellets (lagCompPlayer = None) resolve against current server state instead of the owner's
+			// interpolated view. IgnoreInputAuthority must be dropped for them: zombies carry no input authority
+			// either, so a None-player query with that flag would skip every zombie hitbox. Own-team hitboxes that
+			// register instead are filtered out by the allied pass-through below (a survivor is allied with itself).
+			HitOptions hitOptions = lagCompPlayer.IsRealPlayer
+				? HitOptions.IncludePhysX | HitOptions.IgnoreInputAuthority
+				: HitOptions.IncludePhysX;
+
 			if (Runner.LagCompensation.Raycast(origin, direction, distance,
-				    Object.InputAuthority, out hit, hitMask, hitOptions) == false)
+				    lagCompPlayer, out hit, hitMask, hitOptions) == false)
 			{
 				return false;
 			}
@@ -407,7 +423,7 @@ namespace SimpleFPS
 			// nearest hit is an allied survivor pays for RaycastAll so that the bullet can pass through that ally
 			// and still stop on the nearest wall, zombie, or hostile survivor behind them.
 			_projectileHitScratch.Clear();
-			Runner.LagCompensation.RaycastAll(origin, direction, distance, Object.InputAuthority,
+			Runner.LagCompensation.RaycastAll(origin, direction, distance, lagCompPlayer,
 				_projectileHitScratch, hitMask, true, hitOptions);
 
 			bool found = false;
@@ -478,10 +494,11 @@ namespace SimpleFPS
 						for (int p = 0; p < count; p++)
 						{
 							int visualIndex = VisualIndex(slot, p);
-							var visual = Instantiate(weapon.ProjectileVisualPrefab, weapon.MuzzleTransform.position, weapon.MuzzleTransform.rotation);
+							var visual = ProjectileVisual.Get(weapon.ProjectileVisualPrefab, weapon.MuzzleTransform.position, weapon.MuzzleTransform.rotation);
 							visual.Initialize(spawnData.Origin, _pelletDirections[p], visualIndex,
 								weapon.BulletSpeed, weapon.GravityScale, alreadyElapsed, maxLifetime);
 							_activeVisuals[visualIndex] = visual;
+							_activeVisualGenerations[visualIndex] = visual.Generation;
 						}
 					}
 				}
@@ -498,7 +515,9 @@ namespace SimpleFPS
 				int visualIndex = VisualIndex(hitData.ShotSlot, hitData.PelletIndex);
 				if (visualIndex >= 0 && visualIndex < _activeVisuals.Length && _activeVisuals[visualIndex] != null)
 				{
-					_activeVisuals[visualIndex].Terminate(hitData.HitPosition, hitData.HitNormal, hitData.ShowEffect);
+					var visual = _activeVisuals[visualIndex];
+					if (visual.Generation == _activeVisualGenerations[visualIndex])
+						visual.Terminate(hitData.HitPosition, hitData.HitNormal, hitData.ShowEffect);
 					_activeVisuals[visualIndex] = null;
 				}
 
@@ -519,7 +538,8 @@ namespace SimpleFPS
 				var visual = _activeVisuals[baseIndex + p];
 				if (visual != null)
 				{
-					Destroy(visual.gameObject);
+					if (visual.Generation == _activeVisualGenerations[baseIndex + p])
+						visual.Release();
 					_activeVisuals[baseIndex + p] = null;
 				}
 			}
@@ -680,6 +700,11 @@ namespace SimpleFPS
 			public EWeaponType WeaponType;
 			public byte        ShotSlot;
 			public byte        PelletIndex;
+			// Whose view the lag-compensated hit query resolves against, captured at fire time. The owning
+			// player for shots aimed by a possessed character, PlayerRef.None (current server state) for
+			// AI-fired shots — AI aims at current-tick positions, so rewinding hitboxes to the owner's
+			// interpolated view would make client-owned AI survivors miss fast targets under load.
+			public PlayerRef   LagCompPlayer;
 		}
 	}
 }

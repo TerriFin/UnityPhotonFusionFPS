@@ -23,6 +23,10 @@ i.e. the player had a team and now has no living survivor, while the match has n
 `SpectatorController.DetermineMode` alongside the raid-host mode, so a defeated raid host falls out of
 `RaidCommander` and into `DefeatedSpectator` automatically.
 
+In raid mode, a defeated non-host client may leave this state again while the raid host is still alive: the raid
+client rescue rule can transfer a non-possessed allied survivor, or a later allied recruit, into that client's
+roster and set it as their active survivor. See `Docs/RaidModeClientRescue.md`.
+
 ## Behavior
 
 A defeated spectator:
@@ -42,6 +46,9 @@ A defeated spectator:
 
 When the inspected survivor dies, the camera advances to the next living survivor of the same team; if that team
 is wiped, it falls back to any living player survivor.
+
+If raid rescue later revives the local client, their `PlayerData.IsAlive` becomes true again, the spectator mode
+turns off locally, and normal possession/minimap/HUD behavior resumes through the newly assigned `PlayerObject`.
 
 ## Shared architecture
 

@@ -56,24 +56,24 @@ Responsibilities:
 - Report whether the destination is reached, invalid, or unreachable.
 - Resolve off-NavMesh target positions into nearby reachable NavMesh points when requested.
 
-Suggested inspector fields:
+Inspector fields (per-character movement tuning — the survivor and zombie prefabs carry different values):
 
 ```csharp
-public float RepathInterval = 0.25f;
-public float CornerReachDistance = 0.35f;
-public float DestinationReachDistance = 1.25f;
+public float RepathInterval;                 // survivor prefab 0.5, zombie prefab 0.4
+public float CornerReachDistance;            // 0.5 on both prefabs
+public float DestinationReachDistance;       // 0.66 on both prefabs
 public float VerticalReachDistance = 2f;     // vertical tolerance for "reached"; see Height-Aware Reach
-public float DestinationChangeRepathDistance = 0.5f;
-public float SampleMaxDistance = 2f;
-public float ReachablePointSampleMaxDistance = 6f;
-public int AreaMask = NavMesh.AllAreas;
-
-// Far/blocked-order fallback (see Tick steps 6–7).
-public float UnreachableDistance = 12f;     // within this and still no complete path => unreachable
-public int MidpointBisectionAttempts = 3;   // how many times to halve toward the origin
-public float MidpointSampleDistance = 6f;    // NavMesh.SamplePosition radius per midpoint probe
-public float MidpointSurroundingRadius = 8f; // ring radius sampled around each midpoint
+public float DestinationChangeRepathDistance; // survivor 0.5, zombie 0.33
 ```
+
+Everything else became code constants in the July 2026 knob reduction (`Docs/OptimizationAndKnobPass2.md`) —
+they had one tuned value shared by every character: `SampleMaxDistance` 2 and `AreaMask` (always
+`NavMesh.AllAreas`; the survivor/zombie mask split was removed with the climb-links experiment) are read-only
+properties so external AI code still reads them off the instance; `ReachablePointSampleMaxDistance` 8,
+`UnreachableDistance` 12, `MidpointBisectionAttempts` 2, `MidpointSampleDistance` 6,
+`MidpointSurroundingRadius` 8, plus the dynamic-repath internals (`DynamicDestinationEmergencyRepathDistance` 3,
+`DynamicRepathJitter` 0.2, `FollowUnreachableRetryInterval` 1, `CloseSegmentCheckInterval` 0.3,
+`CloseSegmentRecheckDistance` 0.75) are private constants.
 
 Suggested public API:
 
@@ -101,7 +101,7 @@ public void Tick(Vector3 currentPosition);
 4. Call `NavMesh.CalculatePath(...)`.
 5. Steer only when `NavMesh.CalculatePath` returns a `PathComplete` route. A path spanning most of the large, maze-like generated map can exceed `CalculatePath`'s internal node budget and return `PathPartial`/`PathInvalid`; both are treated as "no in-budget route" and fall through to steps 6–7.
 6. **No complete route + the saved order is within `UnreachableDistance` (default 12) → report it unreachable.** Within 12 units `CalculatePath` has ample node budget, so if it still can't return a complete path the last stretch is genuinely blocked (target inside a building, on a disconnected ledge). Set `IsDestinationUnreachable` and stop; the order issuer abandons the order and holds instead of waiting on a path that cannot exist.
-7. **No complete route + the order is farther than `UnreachableDistance` → chain via a reachable midpoint.** This is almost always the node budget giving up on a long path, *not* an unreachable goal — a survivor in the centre can reach every corner, but one in a corner cannot reach the opposite corner in a single query. **Bisect toward the origin**: try the midpoint between the survivor and the goal; if that is unreachable, halve again toward the survivor, up to `MidpointBisectionAttempts` (default 3) times. Each candidate samples its **surrounding area** (centre then a ring scaled by `MidpointSurroundingRadius`) so a midpoint that lands inside a building block resolves to the road beside it; the first candidate reachable by a complete in-budget path **and** meaningfully closer to the goal is used as the stepping target. Closer candidates are progressively more likely to fall on an in-budget patch of NavMesh. Because the saved order is kept until reached, repathing from the survivor's advancing position re-tries the *original* point each interval and chains the survivor across the whole map. If all attempts find nothing the survivor holds and retries next repath; a genuinely disconnected goal therefore degrades to "advance as far as the NavMesh connects, then hold." (`TryFindReachablePoint`, used for reachability *tests* rather than steering, still requires `PathComplete`.)
+7. **No complete route + the order is farther than `UnreachableDistance` → chain via a reachable midpoint.** This is almost always the node budget giving up on a long path, *not* an unreachable goal — a survivor in the centre can reach every corner, but one in a corner cannot reach the opposite corner in a single query. **Bisect toward the origin**: try the midpoint between the survivor and the goal; if that is unreachable, halve again toward the survivor, up to `MidpointBisectionAttempts` (constant 2) times. Each candidate samples its **surrounding area** (centre then a ring scaled by `MidpointSurroundingRadius`) so a midpoint that lands inside a building block resolves to the road beside it; the first candidate reachable by a complete in-budget path **and** meaningfully closer to the goal is used as the stepping target. Closer candidates are progressively more likely to fall on an in-budget patch of NavMesh. Because the saved order is kept until reached, repathing from the survivor's advancing position re-tries the *original* point each interval and chains the survivor across the whole map. If all attempts find nothing the survivor holds and retries next repath; a genuinely disconnected goal therefore degrades to "advance as far as the NavMesh connects, then hold." (`TryFindReachablePoint`, used for reachability *tests* rather than steering, still requires `PathComplete`.)
 8. Advance the corner index when close enough to the current corner.
 
 `TryFindReachablePoint(...)` is used before setting destinations for suspicious investigation targets. It samples nearby NavMesh around the raw target and verifies a complete path from the survivor. This is useful when a player creates a stimulus from a position that is valid for players but not AI-walkable, such as firing from the top of a car.

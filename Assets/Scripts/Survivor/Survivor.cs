@@ -15,6 +15,10 @@ namespace SimpleFPS
 		// the live set without a FindObjectsOfType scan; mirrors ZombieCharacter.ActiveZombies.
 		internal static readonly System.Collections.Generic.List<Survivor> ActiveSurvivors = new(64);
 
+		// NetworkObject → Survivor lookup for hot paths (sensor memory validation, zombie AI target checks) that
+		// used to pay a GetComponent per call, many times per tick per actor. Maintained in Spawned/Despawned.
+		private static readonly System.Collections.Generic.Dictionary<Fusion.NetworkObject, Survivor> Lookup = new(64);
+
 		private const float AnimationMoveDeadZone = 0.05f;
 
 		[Header("Components")]
@@ -65,6 +69,8 @@ namespace SimpleFPS
 		private int _visibleJumpCount;
 		private bool _firstPersonVisualsActive;
 		private CinemachineVirtualCamera[] _virtualCameras;
+		private int _upperBodyLayerIndex = -1;
+		private int _lookLayerIndex = -1;
 
 		// Owner/index this survivor was last registered into Gameplay's lookup with. Used to re-sync the lookup on
 		// every peer when recruitment changes the networked OwnerRef/CharacterIndex (which does not fire Spawned).
@@ -220,11 +226,30 @@ namespace SimpleFPS
 			       nonCombatAI.FollowTarget == target;
 		}
 
+		// Fast replacement for target.GetComponent<Survivor>() on spawned objects.
+		public static Survivor GetFrom(Fusion.NetworkObject obj)
+		{
+			if (obj == null)
+				return null;
+
+			return Lookup.TryGetValue(obj, out Survivor survivor) ? survivor : obj.GetComponent<Survivor>();
+		}
+
 		public override void Spawned()
 		{
 			name = $"{Object.InputAuthority}:{CharacterIndex} ({(HasInputAuthority ? "Input Authority" : (HasStateAuthority ? "State Authority" : "Proxy"))})";
 
 			_virtualCameras = GetComponentsInChildren<CinemachineVirtualCamera>(true);
+
+			// The third-person body animator only needs to pose transforms while some renderer of it is visible.
+			// Hitboxes live on a static (non-animated) node, so culling the pose affects visuals only. With many
+			// offscreen characters this removes most of the animation cost on every peer.
+			if (Animator != null)
+			{
+				Animator.cullingMode = AnimatorCullingMode.CullUpdateTransforms;
+				_upperBodyLayerIndex = Animator.GetLayerIndex("UpperBody");
+				_lookLayerIndex = Animator.GetLayerIndex("Look");
+			}
 
 			// Default to third-person visuals and disabled cameras. Render() will enable
 			// first-person + virtual cameras when this character becomes active for the local player.
@@ -282,6 +307,8 @@ namespace SimpleFPS
 
 			if (ActiveSurvivors.Contains(this) == false)
 				ActiveSurvivors.Add(this);
+			if (Object != null)
+				Lookup[Object] = this;
 
 			SetIdleAI();
 		}
@@ -352,6 +379,8 @@ namespace SimpleFPS
 		public override void Despawned(NetworkRunner runner, bool hasState)
 		{
 			ActiveSurvivors.Remove(this);
+			if (Object != null)
+				Lookup.Remove(Object);
 
 			if (Separation != null)
 			{
@@ -457,12 +486,8 @@ namespace SimpleFPS
 			if (Health.IsAlive == false)
 			{
 				// Disable UpperBody (override) and Look (additive) layers. Death animation is full-body.
-
-				int upperBodyLayerIndex = Animator.GetLayerIndex("UpperBody");
-				Animator.SetLayerWeight(upperBodyLayerIndex, Mathf.Max(0f, Animator.GetLayerWeight(upperBodyLayerIndex) - Time.deltaTime));
-
-				int lookLayerIndex = Animator.GetLayerIndex("Look");
-				Animator.SetLayerWeight(lookLayerIndex, Mathf.Max(0f, Animator.GetLayerWeight(lookLayerIndex) - Time.deltaTime));
+				Animator.SetLayerWeight(_upperBodyLayerIndex, Mathf.Max(0f, Animator.GetLayerWeight(_upperBodyLayerIndex) - Time.deltaTime));
+				Animator.SetLayerWeight(_lookLayerIndex, Mathf.Max(0f, Animator.GetLayerWeight(_lookLayerIndex) - Time.deltaTime));
 			}
 
 			if (_visibleJumpCount < _jumpCount)

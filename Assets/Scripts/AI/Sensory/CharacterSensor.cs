@@ -97,8 +97,15 @@ namespace SimpleFPS
 		private ZombieCharacter _zombie;
 		private NetworkObject _networkObject;
 		private float _nextSenseTime;
+		private int _lastEnemyExpireTick = int.MinValue;
+		private int _lastPickupExpireTick = int.MinValue;
 
 		internal static readonly List<CharacterSensor> ActiveSensors = new(64);
+
+		// Highest awareness radii seen on any registered sensor. Conservative (never shrinks); lets the global
+		// noise/bullet-impact events query the spatial hash instead of fanning out to every sensor in the game.
+		internal static float MaxNoiseAwarenessRadius { get; private set; }
+		internal static float MaxBulletImpactAwarenessRadius { get; private set; }
 
 		// Scans used to test every active sensor/pickup in the game per scan tick — quadratic in actor count
 		// (~85k candidate checks/second at the audit's 170-actor scale before line-of-sight tests). Each hash
@@ -106,6 +113,8 @@ namespace SimpleFPS
 		// cells; all existing eligibility/distance/LOS filtering below is unchanged.
 		private static readonly SpatialHash2D<CharacterSensor> CharacterHash = new(16f);
 		private static readonly List<CharacterSensor> CharacterQueryResults = new(64);
+		// Separate buffer for the global noise/impact events so an event raised mid-scan cannot clobber a scan.
+		private static readonly List<CharacterSensor> EventQueryResults = new(64);
 		private static readonly SpatialHash2D<WeaponPickup> WeaponPickupHash = new(16f);
 		private static readonly List<WeaponPickup> WeaponPickupQueryResults = new(32);
 		private static readonly SpatialHash2D<HealthPickup> HealthPickupHash = new(16f);
@@ -114,6 +123,15 @@ namespace SimpleFPS
 		public NetworkObject NetworkObject => _networkObject;
 		public Survivor Survivor => _survivor;
 		public ZombieCharacter Zombie => _zombie;
+
+		// Sensors within radius of the position (spatial-hash superset — callers keep their exact checks).
+		internal static void QuerySensorsForEvent(Vector3 position, float radius, List<CharacterSensor> results)
+		{
+			CharacterHash.RebuildIfStale(ActiveSensors);
+			CharacterHash.Query(position, radius, results);
+		}
+
+		internal static List<CharacterSensor> EventQueryBuffer => EventQueryResults;
 
 		public bool IsStateAuthority => _networkObject != null && _networkObject.HasStateAuthority;
 
@@ -319,11 +337,11 @@ namespace SimpleFPS
 			if (info.Object.IsValid == false)
 				return true;
 
-			var survivor = info.Object.GetComponent<Survivor>();
+			var survivor = Survivor.GetFrom(info.Object);
 			if (survivor != null)
 				return survivor.Health == null || survivor.Health.IsAlive == false;
 
-			var zombie = info.Object.GetComponent<ZombieCharacter>();
+			var zombie = ZombieCharacter.GetFrom(info.Object);
 			return zombie != null && (zombie.Health == null || zombie.Health.IsAlive == false);
 		}
 
@@ -346,17 +364,21 @@ namespace SimpleFPS
 			return true;
 		}
 
+		// Cheapest checks first: these run once per nearby sensor for every shot fired in the game, so the
+		// distance rejection happens before authority/aliveness reads and the faction lookup.
 		public void RecordNoise(Vector3 noisePosition, NetworkObject source, float radius)
 		{
-			if (IsSenseEnabled == false || NoiseAwarenessRadius <= 0f)
-				return;
-			if (_survivor == null && _zombie == null)
-				return;
-			if (IsEnemySource(source) == false)
+			if (NoiseAwarenessRadius <= 0f)
 				return;
 
 			float effectiveRadius = radius > 0f ? Mathf.Min(radius, NoiseAwarenessRadius) : NoiseAwarenessRadius;
 			if ((noisePosition - transform.position).sqrMagnitude > effectiveRadius * effectiveRadius)
+				return;
+			if (_survivor == null && _zombie == null)
+				return;
+			if (IsSenseEnabled == false)
+				return;
+			if (IsEnemySource(source) == false)
 				return;
 
 			if (_survivor != null)
@@ -367,11 +389,15 @@ namespace SimpleFPS
 
 		public void RecordBulletImpact(Vector3 impactPosition, Vector3 approximateShooterPosition, NetworkObject shooter)
 		{
-			if (IsSenseEnabled == false || BulletImpactAwarenessRadius <= 0f)
-				return;
-			if ((_survivor == null && _zombie == null) || IsEnemySource(shooter) == false)
+			if (BulletImpactAwarenessRadius <= 0f)
 				return;
 			if ((impactPosition - transform.position).sqrMagnitude > BulletImpactAwarenessRadius * BulletImpactAwarenessRadius)
+				return;
+			if (_survivor == null && _zombie == null)
+				return;
+			if (IsSenseEnabled == false)
+				return;
+			if (IsEnemySource(shooter) == false)
 				return;
 
 			if (_survivor != null)
@@ -393,6 +419,9 @@ namespace SimpleFPS
 			{
 				ActiveSensors.Add(this);
 			}
+
+			MaxNoiseAwarenessRadius = Mathf.Max(MaxNoiseAwarenessRadius, NoiseAwarenessRadius);
+			MaxBulletImpactAwarenessRadius = Mathf.Max(MaxBulletImpactAwarenessRadius, BulletImpactAwarenessRadius);
 		}
 
 		private void OnDisable()
@@ -606,7 +635,7 @@ namespace SimpleFPS
 			if (source == null)
 				return true;
 
-			var sourceZombie = source.GetComponent<ZombieCharacter>();
+			var sourceZombie = ZombieCharacter.GetFrom(source);
 			if (_zombie != null)
 				return sourceZombie == null;
 
@@ -669,6 +698,13 @@ namespace SimpleFPS
 			if (runner == null)
 				return;
 
+			// The AI queries known enemies several times within one simulation tick; nothing can expire between
+			// those calls, so run the age/faction sweep once per tick. Dead/despawned entries are additionally
+			// filtered (and pruned) by every query loop itself.
+			if (runner.Tick == _lastEnemyExpireTick)
+				return;
+			_lastEnemyExpireTick = runner.Tick;
+
 			bool expireByAge = MemoryDuration > 0f;
 			int maxAgeTicks = expireByAge ? Mathf.CeilToInt(MemoryDuration / runner.DeltaTime) : int.MaxValue;
 			int currentTick = GetTick();
@@ -689,7 +725,7 @@ namespace SimpleFPS
 			if (_survivor == null || info.Object == null || info.Object.IsValid == false)
 				return false;
 
-			Survivor other = info.Object.GetComponent<Survivor>();
+			Survivor other = Survivor.GetFrom(info.Object);
 			return other != null && CharacterFactionUtility.AreSurvivorsAllied(_survivor, other);
 		}
 
@@ -698,6 +734,10 @@ namespace SimpleFPS
 			NetworkRunner runner = GetRunner();
 			if (runner == null || MemoryDuration <= 0f)
 				return;
+
+			if (runner.Tick == _lastPickupExpireTick)
+				return;
+			_lastPickupExpireTick = runner.Tick;
 
 			int maxAgeTicks = Mathf.CeilToInt(MemoryDuration / runner.DeltaTime);
 			int currentTick = GetTick();

@@ -2,54 +2,42 @@ using UnityEngine;
 
 namespace SimpleFPS
 {
+	// Drives the zombie body animator from the character's networked state. All references are resolved
+	// automatically (put this anywhere on the zombie prefab) and the animator parameter names are fixed
+	// contract constants — there is nothing to configure in the inspector.
 	[DisallowMultipleComponent]
 	public sealed class ZombieAnimator : MonoBehaviour
 	{
-		[Header("Components")]
-		public ZombieCharacter Zombie;
-		public ZombieAI AI;
-		public Animator Animator;
+		private const float MoveSpeedDampTime = 0.1f;
 
-		[Header("Parameters")]
-		public string MoveSpeedParameter = "MoveSpeed";
-		public string IsAliveParameter = "IsAlive";
-		public string IsGroundedParameter = "IsGrounded";
-		public string AttackTrigger = "Attack";
+		private static readonly int MoveSpeedId = Animator.StringToHash("MoveSpeed");
+		private static readonly int IsAliveId = Animator.StringToHash("IsAlive");
+		private static readonly int IsGroundedId = Animator.StringToHash("IsGrounded");
+		private static readonly int AttackId = Animator.StringToHash("Attack");
 
-		[Header("Smoothing")]
-		public float MoveSpeedDampTime = 0.1f;
-
-		private int _moveSpeedId;
-		private int _isAliveId;
-		private int _isGroundedId;
-		private int _attackId;
+		private ZombieCharacter _zombie;
+		private ZombieAI _ai;
+		private Animator _animator;
 		private float _lastAttackTime = -1f;
 		private bool _loggedMissingReferences;
 
 		private void Awake()
 		{
 			ResolveReferences();
-			RefreshParameterIds();
 			WriteInitialAliveParameters();
 		}
 
 		private void OnEnable()
 		{
 			ResolveReferences();
-			RefreshParameterIds();
 			WriteInitialAliveParameters();
-		}
-
-		private void OnValidate()
-		{
-			RefreshParameterIds();
 		}
 
 		private void Update()
 		{
 			ResolveReferences();
 
-			if (Animator == null || Zombie == null)
+			if (_animator == null || _zombie == null)
 			{
 				LogMissingReferencesOnce();
 				return;
@@ -58,48 +46,67 @@ namespace SimpleFPS
 			_loggedMissingReferences = false;
 
 			bool isAlive = IsZombieAliveForAnimation();
-			bool isGrounded = Zombie.KCC == null || Zombie.KCC.IsGrounded;
-			float moveSpeed = Zombie.KCC != null ? FlatSpeed(Zombie.KCC.RealVelocity) : 0f;
+			bool isGrounded = _zombie.KCC == null || _zombie.KCC.IsGrounded;
+			float moveSpeed = _zombie.KCC != null ? FlatSpeed(_zombie.KCC.RealVelocity) : 0f;
 
-			if (_moveSpeedId != 0)
-				Animator.SetFloat(_moveSpeedId, moveSpeed, MoveSpeedDampTime, Time.deltaTime);
-			if (_isAliveId != 0)
-				Animator.SetBool(_isAliveId, isAlive);
-			if (_isGroundedId != 0)
-				Animator.SetBool(_isGroundedId, isGrounded);
+			_animator.SetFloat(MoveSpeedId, moveSpeed, MoveSpeedDampTime, Time.deltaTime);
+			_animator.SetBool(IsAliveId, isAlive);
+			_animator.SetBool(IsGroundedId, isGrounded);
 
-			if (AI != null && AI.LastAttackTime > _lastAttackTime)
+			if (_ai != null && _ai.LastAttackTime > _lastAttackTime)
 			{
-				_lastAttackTime = AI.LastAttackTime;
-				if (_attackId != 0)
-					Animator.SetTrigger(_attackId);
+				_lastAttackTime = _ai.LastAttackTime;
+				_animator.SetTrigger(AttackId);
 			}
 		}
 
+		// No ?? chains here: in the editor GetComponent returns a fake-null placeholder for a missing component,
+		// which ?? (a plain CLR reference check) treats as found — the chain then never tries the child/parent
+		// searches. Explicit checks go through Unity's overloaded == and handle the placeholder correctly.
 		private void ResolveReferences()
 		{
-			if (Zombie == null)
-				Zombie = GetComponent<ZombieCharacter>() ?? GetComponentInParent<ZombieCharacter>() ?? GetComponentInChildren<ZombieCharacter>(true);
-
-			if (AI == null)
+			if (_zombie == null)
 			{
-				if (Zombie != null)
-					AI = Zombie.AI != null ? Zombie.AI : Zombie.GetComponent<ZombieAI>();
-				if (AI == null)
-					AI = GetComponent<ZombieAI>() ?? GetComponentInParent<ZombieAI>() ?? GetComponentInChildren<ZombieAI>(true);
+				_zombie = GetComponent<ZombieCharacter>();
+				if (_zombie == null)
+					_zombie = GetComponentInParent<ZombieCharacter>();
+				if (_zombie == null)
+					_zombie = GetComponentInChildren<ZombieCharacter>(true);
 			}
 
-			if (Animator == null)
-				Animator = GetComponent<Animator>() ?? GetComponentInChildren<Animator>(true) ?? GetComponentInParent<Animator>();
+			if (_ai == null && _zombie != null)
+				_ai = _zombie.AI != null ? _zombie.AI : _zombie.GetComponent<ZombieAI>();
+			if (_ai == null)
+			{
+				_ai = GetComponent<ZombieAI>();
+				if (_ai == null)
+					_ai = GetComponentInParent<ZombieAI>();
+				if (_ai == null)
+					_ai = GetComponentInChildren<ZombieAI>(true);
+			}
+
+			if (_animator == null)
+			{
+				_animator = GetComponent<Animator>();
+				if (_animator == null)
+					_animator = GetComponentInChildren<Animator>(true);
+				if (_animator == null)
+					_animator = GetComponentInParent<Animator>();
+
+				// Zombie hitboxes sit on a static (non-animated) node, so the pose is visual-only: culling
+				// transform writes for offscreen zombies is safe and removes most animation cost of a horde.
+				if (_animator != null)
+					_animator.cullingMode = AnimatorCullingMode.CullUpdateTransforms;
+			}
 		}
 
 		private bool IsZombieAliveForAnimation()
 		{
-			if (Zombie == null)
+			if (_zombie == null)
 				return true;
-			if (Zombie.Object == null || Zombie.Object.IsValid == false)
+			if (_zombie.Object == null || _zombie.Object.IsValid == false)
 				return true;
-			return Zombie.Health == null || Zombie.Health.IsAlive;
+			return _zombie.Health == null || _zombie.Health.IsAlive;
 		}
 
 		private void LogMissingReferencesOnce()
@@ -108,28 +115,17 @@ namespace SimpleFPS
 				return;
 
 			_loggedMissingReferences = true;
-			Debug.LogWarning($"{nameof(ZombieAnimator)} on {name} is missing references. Zombie={Zombie}, Animator={Animator}. Put it on the zombie prefab root or assign both fields explicitly.", this);
-		}
-
-		private void RefreshParameterIds()
-		{
-			_moveSpeedId = string.IsNullOrWhiteSpace(MoveSpeedParameter) ? 0 : Animator.StringToHash(MoveSpeedParameter);
-			_isAliveId = string.IsNullOrWhiteSpace(IsAliveParameter) ? 0 : Animator.StringToHash(IsAliveParameter);
-			_isGroundedId = string.IsNullOrWhiteSpace(IsGroundedParameter) ? 0 : Animator.StringToHash(IsGroundedParameter);
-			_attackId = string.IsNullOrWhiteSpace(AttackTrigger) ? 0 : Animator.StringToHash(AttackTrigger);
+			Debug.LogWarning($"{nameof(ZombieAnimator)} on {name} could not resolve its references. Zombie={_zombie}, Animator={_animator}. Put it on the zombie prefab root.", this);
 		}
 
 		private void WriteInitialAliveParameters()
 		{
-			if (Animator == null)
+			if (_animator == null)
 				return;
 
-			if (_moveSpeedId != 0)
-				Animator.SetFloat(_moveSpeedId, 0f);
-			if (_isAliveId != 0)
-				Animator.SetBool(_isAliveId, true);
-			if (_isGroundedId != 0)
-				Animator.SetBool(_isGroundedId, true);
+			_animator.SetFloat(MoveSpeedId, 0f);
+			_animator.SetBool(IsAliveId, true);
+			_animator.SetBool(IsGroundedId, true);
 		}
 
 		private static float FlatSpeed(Vector3 velocity)

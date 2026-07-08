@@ -271,9 +271,12 @@ namespace SimpleFPS
 			// Target stickiness: keep the still-valid current target unless a different enemy is decisively closer.
 			// Without this, a surrounding pack makes the "closest" enemy flip between several near-equal candidates
 			// every sensor tick; each flip resets the first-shot delay in UpdateTargetState, so the survivor stays
-			// perpetually "about to fire" and never actually shoots.
+			// perpetually "about to fire" and never actually shoots. An emergency zombie bypasses stickiness only
+			// across categories (it must beat a survivor target immediately, which the category check below already
+			// guarantees); between zombies it goes through the same hysteresis, otherwise a surrounding pack re-rolls
+			// the emergency target every sensor tick and starves fire exactly like the flicker case above.
 			enemy = preferred;
-			if (hasEmergencyZombie == false && hasCurrent && current.Object != preferred.Object &&
+			if (hasCurrent && current.Object != preferred.Object &&
 			    IsSameTargetCategory(current.Object, preferred.Object))
 			{
 				float closestDistance = Mathf.Sqrt(preferredDistanceSqr);
@@ -295,7 +298,7 @@ namespace SimpleFPS
 
 		private static bool IsZombie(NetworkObject target)
 		{
-			return target != null && target.GetComponent<ZombieCharacter>() != null;
+			return target != null && ZombieCharacter.GetFrom(target) != null;
 		}
 
 		private void Awake()
@@ -308,11 +311,11 @@ namespace SimpleFPS
 			if (target == null)
 				return false;
 
-			var survivor = target.GetComponent<Survivor>();
+			var survivor = Survivor.GetFrom(target);
 			if (survivor != null)
 				return survivor.Health == null || survivor.Health.IsAlive == false;
 
-			var zombie = target.GetComponent<ZombieCharacter>();
+			var zombie = ZombieCharacter.GetFrom(target);
 			return zombie != null && (zombie.Health == null || zombie.Health.IsAlive == false);
 		}
 
@@ -452,7 +455,7 @@ namespace SimpleFPS
 
 		private static bool IsZombieTarget(NetworkObject target)
 		{
-			return target != null && target.GetComponent<ZombieCharacter>() != null;
+			return target != null && ZombieCharacter.GetFrom(target) != null;
 		}
 	}
 }

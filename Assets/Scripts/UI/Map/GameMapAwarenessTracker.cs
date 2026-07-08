@@ -48,7 +48,7 @@ namespace SimpleFPS
 				if (sensor == null)
 					continue;
 
-				var survivor = sensor.GetComponent<Survivor>();
+				var survivor = sensor.Survivor;
 				if (IsSpawnedSurvivor(survivor) == false || survivor.OwnerRef != runner.LocalPlayer)
 					continue;
 				if (survivor.Health == null || survivor.Health.IsAlive == false)
@@ -63,7 +63,7 @@ namespace SimpleFPS
 					if (enemy.Object == null)
 						continue;
 
-					var enemySurvivor = enemy.Object.GetComponent<Survivor>();
+					var enemySurvivor = Survivor.GetFrom(enemy.Object);
 					if (enemySurvivor != null)
 					{
 						if (IsSpawnedSurvivor(enemySurvivor) == false || enemySurvivor.Health == null || enemySurvivor.Health.IsAlive == false)
@@ -85,7 +85,7 @@ namespace SimpleFPS
 						continue;
 					}
 
-					var zombie = enemy.Object.GetComponent<ZombieCharacter>();
+					var zombie = ZombieCharacter.GetFrom(enemy.Object);
 					if (IsSpawnedZombie(zombie) == false || zombie.Health == null || zombie.Health.IsAlive == false)
 						continue;
 

@@ -123,6 +123,23 @@ This alliance does not merge ownership. Each client retains separate possession,
 home bases, map awareness, recruitment, scoring, and win-condition identity. See
 `Docs/RaidModeClientAlliance.md` for the full implementation and verification matrix.
 
+## Client Rescue While Boss Is Alive
+
+While the raid host is alive, a wiped non-host client can be pulled back into the match instead of being left in
+spectate mode:
+
+- if another allied client has an alive non-possessed survivor, the eliminated client steals the closest valid
+  one and immediately possesses it;
+- the donor keeps their possessed survivor and remains alive;
+- if no stealable survivor exists, the client is eliminated normally;
+- if a surviving client later recruits a neutral while the raid host is still alive, that recruit can be assigned
+  directly to the waiting eliminated client and possessed automatically.
+
+This is an ownership transfer, not shared control. The stolen/recruited survivor becomes part of the rescued
+client's own roster and uses their input authority, team color, commands, damage relationship, and scoring from
+that point on. The rescue rule ends when the raid host is defeated or disconnected. See
+`Docs/RaidModeClientRescue.md`.
+
 ### Map integration
 
 - `GameMapView.Spectator` (a `SpectatorController`) is set by `GameUI`. `GameMapSelectionController` routes
@@ -153,6 +170,7 @@ clamped to the 128-character team mask capacity.
 ## What Raid Mode Does NOT Change
 
 - The win/lose condition and `UIGameOverView` (already correct without a possessed survivor).
-- Client possession, commands, team ownership, and FPS controls.
+- Client possession, commands, and FPS controls, except for the explicit boss-alive rescue transfer documented in
+  `Docs/RaidModeClientRescue.md`.
 - Non-raid matches — the host possesses and plays in first person exactly as before.
 - No new RTS HUD is added; the host's FPS-only `PlayerView` simply stays hidden (no PlayerObject).

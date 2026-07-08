@@ -27,6 +27,11 @@ This component does **not** perform the ownership/team transfer. The authoritati
 
 Because the orchestrator picks the closest player-owned survivor, the recruiting survivor normally is the one that gets credited, but any closer teammate or the possessed player can claim the neutral first — in which case the recruiter simply returns to its task.
 
+In raid mode, recruitment has one extra state-authoritative redirection: while the raid host is alive, if a
+non-host client has been eliminated and is waiting for raid rescue, the recruited neutral can be assigned directly
+to that waiting client instead of to the recruiting survivor's owner. The waiting client immediately possesses the
+new recruit. See `Docs/RaidModeClientRescue.md`.
+
 ## Detection
 
 There is no special recruiting range. A survivor will go recruit a neutral whenever it can **sense** one through its own `CharacterSensor` (vision or proximity), the same senses that put the neutral on the map. Neutral survivors already appear in a player-owned survivor's sensor as "direct known enemies" (different `OwnerRef`); the recruiting behavior scans that list, keeps only living neutral survivors, and targets the closest.
@@ -126,6 +131,10 @@ RetreatMode
 The settings are copied on state authority during recruitment. The movement assignment is installed before the inherited retreat mode is applied, so an already-injured recruit whose inherited percentage threshold is active may immediately replace that inherited order with a retreat-to-home-base assignment.
 
 Later changes remain per-survivor. Inheritance is a one-time copy, not a permanent link between recruiter and recruit.
+
+For raid rescue recruitment, the new survivor is assigned to the waiting rescued client and set as that client's
+active survivor, so it does not inherit a follow/move assignment from the recruiter. Durable behavior settings are
+still copied before the survivor is reset to an idle assignment for clean possession.
 
 ## Network Model
 

@@ -108,6 +108,8 @@ The character notices noisy enemies/events inside `NoiseAwarenessRadius`.
 
 Noise is event-based. Weapon fire currently calls `CharacterSensorEvents.ReportNoise(...)` on state authority. Future sprinting, zombie screams, explosions, or other sound emitters should call the same central event method.
 
+Fan-out is spatially partitioned (July 2026): `ReportNoise`/`ReportBulletImpact` query the shared sensor spatial hash with the largest noise/impact awareness radius any registered sensor has (a conservative static max tracked in `CharacterSensor.OnEnable`), instead of touching every sensor in the game per shot. Each candidate sensor then applies its own exact radius, authority, aliveness, and faction checks — with the cheap distance rejection running first.
+
 Noise events are immediate investigation prompts, not remembered targets and not direct shooting targets. If an uncontrolled survivor can investigate at the moment it hears the event and its non-combat investigation setting is enabled, its AI may move toward the noise position to check it out, then return to its current assignment anchor. If it cannot investigate immediately, it ignores the event.
 
 ### Bullet Impact Awareness

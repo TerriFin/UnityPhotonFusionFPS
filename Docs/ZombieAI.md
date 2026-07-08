@@ -107,18 +107,15 @@ public enum EZombieAIState
 }
 ```
 
-Suggested timing defaults:
+Timing values (July 2026 knob reduction — see `Docs/OptimizationAndKnobPass2.md`): only the designer-facing
+intervals remain inspector fields on `ZombieAI`; the rest are code constants carrying the tuned values.
 
 ```text
-IdleWanderIntervalMin: 10
-IdleWanderIntervalMax: 14
-AttackRetargetInterval: 2.5
-HuntingRetargetInterval: 5
-HuntingRetargetIntervalJitter: 1
-HuntingInitialRetargetStaggerMax: 3
-TargetSwitchDistanceFactor: 0.5
-InvestigationCommitDuration: 5
-InvestigationRetriggerDistance: 3
+Inspector knobs:            IdleWanderIntervalMin: 3, IdleWanderIntervalMax: 7,
+                            AttackRetargetInterval: 1, HuntingRetargetInterval: 6,
+                            TargetSwitchDistanceFactor: 0.5
+Constants (ZombieAI.cs):    HuntingRetargetIntervalJitter: 2, HuntingInitialRetargetStaggerMax: 3,
+                            InvestigationCommitDuration: 5, InvestigationRetriggerDistance: 3
 ```
 
 These intervals are intentionally coarse. Zombies mostly commit to their current action and reconsider periodically.
@@ -237,7 +234,7 @@ A zombie reaches a survivor given that every survivor-reachable elevated place h
 - Roof-capable building prefabs should add `ZombieClimbableSurface` on the building root if players can reach the roof and zombies must be able to follow. Keep those surfaces `Rescue` unless the building exterior should also be used as a normal shortcut.
 - `ZombieClimbableSurface` builds four climb faces from child collider bounds by default. If a prefab's collider bounds are too broad or too narrow, enable `UseManualLocalBounds` and size the local box to the climbable volume.
 
-Configurable terrain-surface knobs live on `ZombieOrchestrator` (`BuildTerrainClimbSurfaces`, `TerrainClimbShortcutMinPathSavings`, `TerrainClimbSurfaceWidthFactor`, `TerrainClimbLandingInset`). Runtime behavior knobs live on `ZombieAI` (`IdleWanderNavMeshSampleDistance`, `IdleWanderStuckTimeout`, `IdleWanderStuckMinProgress`, `UseClimbSurfaces`, `UseTerrainShortcutClimbs`, `UseRescueClimbs`, `ClimbSurfaceEngageDistance`, `ClimbDirectApproachDistance`, `ExplicitGoalClimbRefreshInterval`, `ClimbRouteSideTolerance`, `ClimbMinRise`, `RescueMinTargetHeight`, `RescueLandingHeightTolerance`, `RescueLandingFlatTolerance`, `ClimbMaxDuration`, `ClimbMantleMaxSnapHeight`, `ClimbMantleMaxHorizontalSnapDistance`, `ClimbSpeedMultiplier`, `ClimbCommitDuration`, `UseRoadDirectMovement`, `RoadDirectMaxDistance`, `RoadDirectMaxObstacleHeight`, `RoadDirectClimbMaxZombieHeightAboveTarget`, `RoadDirectClimbMinRise`, `RoadDirectClimbProbeDistance`, `RoadDirectClimbMaxHeight`, `RoadDirectClimbLandingInset`, `RoadDirectClimbMinSurfaceNormalY`, `RoadDirectWalkableLandingSampleDistance`, `RoadDirectWalkableLandingPathTolerance`, `StuckSmallIslandRadius`). `ClimbDirectApproachDistance` limits nearby rescue climb searches, while terrain shortcut ledges are searched along the full direct segment to the explicit goal. `ExplicitGoalClimbRefreshInterval` throttles the expensive surface scan / approach-validation step per zombie and is jittered so hordes do not all refresh on the same tick. `TerrainClimbLandingInset`, `ZombieClimbableSurface.LandingInset`, and `RoadDirectClimbLandingInset` control how far inward the mantle endpoint is placed.
+Configurable terrain-surface knobs live on `ZombieOrchestrator` (`BuildTerrainClimbSurfaces`, `TerrainClimbShortcutMinPathSavings`, `TerrainClimbSurfaceWidthFactor`, `TerrainClimbLandingInset`). On `ZombieAI` only the capability toggles and feel values are inspector knobs (`UseClimbSurfaces`, `UseTerrainShortcutClimbs`, `UseRescueClimbs`, `ClimbSpeedMultiplier`, `ClimbMantleMaxSnapHeight`, `UseRoadDirectMovement`, `RoadDirectMaxDistance`); every other climb/road-direct value (engage distances, probe geometry, landing insets, commit/stuck/cooldown timers, tolerances) is a code constant in `ZombieAI.cs` carrying the tuned value. `ClimbDirectApproachDistance` (constant 18) limits nearby rescue climb searches, while terrain shortcut ledges are searched along the full direct segment to the explicit goal. `ExplicitGoalClimbRefreshInterval` (constant 0.2) throttles the expensive surface scan / approach-validation step per zombie and is jittered so hordes do not all refresh on the same tick. `TerrainClimbLandingInset`, `ZombieClimbableSurface.LandingInset`, and the road-direct landing inset constant control how far inward the mantle endpoint is placed.
 
 ## Climb Execution
 
@@ -252,69 +249,34 @@ Once `BuildExplicitGoalMoveInput` commits to a registered climb surface or road 
 
 A full terrain step is `HeightLevelWorldUnits` tall; the zombie scales most of it by sustained climb impulse against the cliff face, then mantles the last part onto the surface landing point.
 
-Useful movement / climb tunables (`ZombieAI`):
+Movement / climb values. Since the July 2026 knob reduction only the first group is inspector-editable on
+`ZombieAI`; the second group are `private const` fields in `ZombieAI.cs` (change them in code — they carry the
+values that were tuned on the BlockZombie prefab):
 
 ```text
-StoppingDistance
-DirectMoveDistance
-ReachablePointSampleDistance
-IdleWanderNavMeshSampleDistance
-IdleWanderStuckTimeout
-IdleWanderStuckMinProgress
-ExplicitGoalStoppingDistance
-ExplicitGoalHeightTolerance
-UseClimbSurfaces
-UseTerrainShortcutClimbs
-UseRescueClimbs
-ClimbSurfaceEngageDistance
-ClimbDirectApproachDistance
-ExplicitGoalClimbRefreshInterval
-ClimbRouteSideTolerance
-ClimbMinRise
-RescueMinTargetHeight
-RescueLandingHeightTolerance
-RescueLandingFlatTolerance
-ClimbStuckTimeout
-ClimbMaxDuration
-ClimbCooldown
-ClimbSpeedMultiplier
-ClimbCommitDuration
-ClimbMantleMaxSnapHeight
-ClimbMantleMaxHorizontalSnapDistance
-UseRoadDirectMovement
-RoadDirectMaxDistance
-RoadDirectMaxObstacleHeight
-RoadDirectClimbMaxZombieHeightAboveTarget
-RoadDirectClimbMinRise
-RoadDirectClimbProbeDistance
-RoadDirectClimbMaxHeight
-RoadDirectClimbLandingInset
-RoadDirectClimbMinSurfaceNormalY
-RoadDirectWalkableLandingSampleDistance
-RoadDirectWalkableLandingPathTolerance
-StuckSmallIslandRadius
-```
-
-`ExplicitGoalStoppingDistance` is a final-goal/attack-position tuning value. While following a NavMesh path, `ZombieAI` clamps the steering-corner stop distance below `CharacterNavigator.CornerReachDistance`, so a zombie does not stop just short of a corner the navigator has not advanced yet (which otherwise looks like it is staring through a wall until another zombie bumps it).
-
-Recommended first-pass defaults:
-
-```text
-StoppingDistance: 1.35
-DirectMoveDistance: 0.25
-ReachablePointSampleDistance: 6
-IdleWanderNavMeshSampleDistance: 8
-IdleWanderStuckTimeout: 3
-IdleWanderStuckMinProgress: 0.25
-ExplicitGoalStoppingDistance: 0.2
-ExplicitGoalHeightTolerance: 0.75
+Inspector knobs (defaults = tuned prefab values):
+StoppingDistance: 0.66           (also the explicit hunt/attack arrival distance — the old separate
+                                  ExplicitGoalStoppingDistance knob was merged into it)
+MaxYawDegreesPerTick: 6
 UseClimbSurfaces: true
 UseTerrainShortcutClimbs: true
 UseRescueClimbs: true
+ClimbSpeedMultiplier: 0.45       (climb rises at MoveSpeed x this; raise for a faster climb)
+ClimbMantleMaxSnapHeight: 1.75
+UseRoadDirectMovement: true
+RoadDirectMaxDistance: 18
+
+Constants in ZombieAI.cs:
+DirectMoveDistance: 0.75
+IdleWanderNavMeshSampleDistance: 8   (also serves as the reachable-point sample distance)
+IdleWanderStuckTimeout: 3
+IdleWanderStuckMinProgress: 0.25
+ExplicitGoalHeightTolerance: 0.75
+CloseGapDirectMaxDistance: 4
 ClimbSurfaceEngageDistance: 1.25
 ClimbDirectApproachDistance: 18
 ExplicitGoalClimbRefreshInterval: 0.2
-ClimbRouteSideTolerance: 1.5
+ClimbRouteSideTolerance: 1.6
 ClimbMinRise: 0.75
 RescueMinTargetHeight: 0.75
 RescueLandingHeightTolerance: 2.5
@@ -322,12 +284,8 @@ RescueLandingFlatTolerance: 2.5
 ClimbStuckTimeout: 1.5
 ClimbMaxDuration: 15
 ClimbCooldown: 2
-ClimbSpeedMultiplier: 0.5   (climb rises at MoveSpeed x this; raise for a faster climb)
 ClimbCommitDuration: 0.75
-ClimbMantleMaxSnapHeight: 2.0
 ClimbMantleMaxHorizontalSnapDistance: 1.5
-UseRoadDirectMovement: true
-RoadDirectMaxDistance: 18
 RoadDirectMaxObstacleHeight: 5
 RoadDirectClimbMaxZombieHeightAboveTarget: 0.75
 RoadDirectClimbMinRise: 0.2
@@ -338,7 +296,11 @@ RoadDirectClimbMinSurfaceNormalY: 0.45
 RoadDirectWalkableLandingSampleDistance: 1
 RoadDirectWalkableLandingPathTolerance: 0.75
 StuckSmallIslandRadius: 4
+MaxAlertRecipients: 16
+AlertCooldown: 2
 ```
+
+The stopping distance is a final-goal/attack-position tuning value. While following a NavMesh path, `ZombieAI` clamps the steering-corner stop distance below `CharacterNavigator.CornerReachDistance`, so a zombie does not stop just short of a corner the navigator has not advanced yet (which otherwise looks like it is staring through a wall until another zombie bumps it).
 
 Terrain surface generation defaults (`ZombieOrchestrator`):
 
@@ -357,12 +319,13 @@ A zombie can finish direct traversal on a prop and then lose its goal. Idle reta
 3. While elevated and Idle, move in a random horizontal direction for `StuckRandomWanderDurationMin..Max`; if still elevated, keep choosing new random directions until it falls back to normal ground.
 4. Resume ordinary idle wandering once the zombie returns to NavMesh-covered ground.
 
-Recommended defaults:
+These are all constants in `ZombieAI.cs` (no inspector knobs):
 
 ```text
 StuckSampleRadius: 0.6
 StuckMinHeightAboveNavMesh: 0.6
 StuckCheckInterval: 0.5
+ElevatedIslandCheckInterval: 1.5
 StuckRandomWanderDurationMin: 1
 StuckRandomWanderDurationMax: 2.5
 ```

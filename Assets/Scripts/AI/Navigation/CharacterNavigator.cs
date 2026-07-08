@@ -7,6 +7,8 @@ namespace SimpleFPS
 	[DisallowMultipleComponent]
 	public sealed class CharacterNavigator : MonoBehaviour
 	{
+		// Per-character movement tuning (differs between the survivor and zombie prefabs). Everything else that
+		// used to be a serialized field here is a constant below — internal mechanics with one tuned value.
 		public float RepathInterval = 0.35f;
 		public float CornerReachDistance = 0.75f;
 		public float DestinationReachDistance = 1.35f;
@@ -15,36 +17,41 @@ namespace SimpleFPS
 		// Keep below a building floor's height so stacked floors are distinguished, but above pivot/step variance.
 		public float VerticalReachDistance = 2f;
 		public float DestinationChangeRepathDistance = 0.5f;
+
+		// All characters navigate the full NavMesh (the survivor/zombie area-mask split was removed with the climb
+		// links experiment; climb surfaces are not pathed through).
+		public int AreaMask => NavMesh.AllAreas;
+		// How far off the mesh a character may stand and still resolve its own position onto the NavMesh.
+		public float SampleMaxDistance => 2f;
+
 		// Dynamic (hunt/follow) targets move continuously. SetDestination wipes the path and forces an immediate
 		// repath whenever the goal drifts past DestinationChangeRepathDistance — for a survivor running at ~6 m/s
 		// that fires ~18x/second, bypassing RepathInterval and making every pursuer recalc on the same ticks.
 		// SetDynamicDestination instead updates the goal in place and lets Tick repath on the RepathInterval cap.
 		// A jump larger than this emergency distance (teleport, large vertical change, target on a fresh ledge)
 		// still forces an immediate repath so the pursuer does not chase a badly stale path.
-		public float DynamicDestinationEmergencyRepathDistance = 3f;
+		private const float DynamicDestinationEmergencyRepathDistance = 3f;
 		// Per-repath jitter fraction applied to dynamic-target repaths so a horde sharing one target does not all
 		// recalculate on the same simulation tick. 0.2 = ±20%.
-		public float DynamicRepathJitter = 0.2f;
+		private const float DynamicRepathJitter = 0.2f;
 		// Follow-policy targets (SetFollowDestination) whose leader is on a disconnected NavMesh island re-check on
 		// this slower interval (jittered by DynamicRepathJitter) instead of every RepathInterval. A large leader
 		// displacement still forces an immediate repath, so following resumes promptly when the leader returns.
-		public float FollowUnreachableRetryInterval = 1f;
+		private const float FollowUnreachableRetryInterval = 1f;
 		// Follow-policy "reached" close-segment NavMesh test (two samples + a raycast) is throttled to this interval
 		// (or sooner if the follower moves past CloseSegmentRecheckDistance), instead of running every tick while a
 		// follower idles at the foot of the leader's prop.
-		public float CloseSegmentCheckInterval = 0.3f;
-		public float CloseSegmentRecheckDistance = 0.75f;
-		public float SampleMaxDistance = 2f;
-		public float ReachablePointSampleMaxDistance = 8f;
-		public int AreaMask = NavMesh.AllAreas;
+		private const float CloseSegmentCheckInterval = 0.3f;
+		private const float CloseSegmentRecheckDistance = 0.75f;
+		private const float ReachablePointSampleMaxDistance = 8f;
 
 		// Fallback used when a saved move order has no complete, in-budget NavMesh path. See CalculatePath /
 		// TryBuildMidpointChainPath. UnreachableDistance is the "give up" radius: if the order is this close yet
 		// still has no complete path, the last stretch is genuinely blocked and the order is reported unreachable.
-		public float UnreachableDistance = 12f;
-		public int MidpointBisectionAttempts = 3;
-		public float MidpointSampleDistance = 6f;
-		public float MidpointSurroundingRadius = 8f;
+		private const float UnreachableDistance = 12f;
+		private const int MidpointBisectionAttempts = 2;
+		private const float MidpointSampleDistance = 6f;
+		private const float MidpointSurroundingRadius = 8f;
 
 		// Runtime lane-spread state. Written by SurvivorAICommandService at lane assignment time —
 		// the canonical tunable values live on SurvivorAICommandSettings (on the Gameplay GameObject).

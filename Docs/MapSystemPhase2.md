@@ -223,7 +223,10 @@ Icons are hidden when their world position is outside the current map camera vie
 
 The active possessed survivor is shown with a special icon/treatment for orientation, but it is not selectable. It should not enter click selection, drag-box selection, double-click select-all, keyboard cycling, or map order masks. The player controls the possessed survivor directly.
 
-Roster UI blocks new map clicks and drag starts, but a selection box that started on the map may pass over the roster without being canceled. Survivor icons whose screen position is under the roster blocker are ignored by drag selection.
+Roster UI blocks new map clicks and selection-box drag starts, but a selection box may start from any other
+non-blocked screen space, including outside the map image. Once active, the selection box may pass over the map
+edge or roster without being canceled. Survivor icons whose screen position is under the roster blocker are
+ignored by drag selection.
 
 Hovering a survivor roster card or its own-team map arrow icon draws the same hover link between that card and icon. The icons stay non-raycast-blocking, so hover lookup is done by the map UI controller rather than by Unity pointer events on the icon object.
 

@@ -126,12 +126,19 @@ Replace the current immediate `Runner.LagCompensation.Raycast()` call with:
    ```
 3. Add to the local `_activeProjectiles` list:
    ```csharp
+   // Captured at fire time: whose view lag compensation resolves this shot against.
+   // Possessed characters aimed on the owner's screen; AI aimed at current server state.
+   PlayerRef lagCompPlayer = _ownerSurvivor != null && _ownerSurvivor.IsActiveCharacter()
+       ? Object.InputAuthority
+       : PlayerRef.None;
+
    _activeProjectiles.Add(new ActiveProjectile
    {
-       Origin    = firePosition,
-       Direction = fireDirection,
-       SpawnTick = Runner.Tick,
-       SlotIndex = slot
+       Origin        = firePosition,
+       Direction     = fireDirection,
+       SpawnTick     = Runner.Tick,
+       SlotIndex     = slot,
+       LagCompPlayer = lagCompPlayer
    });
    ```
 4. Increment `_fireCount` (as today).
@@ -178,9 +185,13 @@ if (HasStateAuthority)
         if (stepLen < 0.001f)
             continue;
 
-        var hitOptions = HitOptions.IncludePhysX | HitOptions.IgnoreInputAuthority;
+        // See "Lag Compensation: Possessed vs AI-Fired Shots" for why the player and flags
+        // are per projectile instead of a fixed Object.InputAuthority query.
+        var hitOptions = proj.LagCompPlayer.IsRealPlayer
+            ? HitOptions.IncludePhysX | HitOptions.IgnoreInputAuthority
+            : HitOptions.IncludePhysX;
         if (Runner.LagCompensation.Raycast(prevPos, delta / stepLen, stepLen,
-            Object.InputAuthority, out var hit, HitMask, hitOptions))
+            proj.LagCompPlayer, out var hit, HitMask, hitOptions))
         {
             // Record hit for all clients.
             int slot = proj.SlotIndex;
@@ -214,6 +225,29 @@ private Vector3 EvaluateTrajectory(in ActiveProjectile proj, float elapsed)
 ```
 
 An overload (or the same method with different input types) must also be accessible from `Render()` using a `ProjectileSpawnData` struct instead of `ActiveProjectile` — the math is identical.
+
+### Lag Compensation: Possessed vs AI-Fired Shots
+
+Hit queries do not always use `Object.InputAuthority`. Each projectile stores a `LagCompPlayer`, captured
+when the shot is registered:
+
+- **Possessed character** (`Survivor.IsActiveCharacter()` true at fire time): `Object.InputAuthority`. The
+  player aimed on their own screen against their interpolated view, so hitboxes must be rewound to that view
+  — standard Fusion lag compensation.
+- **AI-fired** (uncontrolled survivor): `PlayerRef.None`, meaning no rewind — hitboxes resolve at current
+  server state. The AI runs on the state authority and aims at current-tick target positions. Rewinding its
+  hits to the *owner's* view made client-owned AI survivors miss badly whenever the client's view delay grew:
+  under load the rewind reached hundreds of milliseconds, displacing fast overtime zombies a meter or more
+  sideways relative to where the AI had aimed, while host-owned AI survivors (rewind ≈ 0) kept hitting. This
+  was the root cause of client teams collapsing before host teams during overtime (July 2026).
+
+Because the shot's `LagCompPlayer` is fixed at fire time, a bullet fired while possessed still resolves with
+the owner's view even if the player switches characters mid-flight, and vice versa.
+
+`HitOptions.IgnoreInputAuthority` is only set when `LagCompPlayer` is a real player. Zombies have no input
+authority, so a `PlayerRef.None` query with that flag would match them and skip every zombie hitbox. Dropping
+the flag means AI pellets can register the shooter's own team (including the shooter) as the first hit; the
+allied pass-through below filters those out, since a survivor is allied with itself and its teammates.
 
 ### Raid-alliance friendly pass-through
 
@@ -391,7 +425,7 @@ If this becomes a bottleneck:
 - For bullets that have travelled less than 5 m since last tick and are heading towards empty space, skip the raycast and fast-forward several ticks at once.
 
 ### Client CPU
-Trajectory evaluation is three multiplications and one subtraction per bullet per frame — no physics queries. 1 000 bullets is trivially cheap. The main cost is `GameObject` overhead from `ProjectileVisual` instances; consider a pool.
+Trajectory evaluation is three multiplications and one subtraction per bullet per frame — no physics queries. 1 000 bullets is trivially cheap. The `GameObject` overhead of `ProjectileVisual` instances is pooled (July 2026): `ProjectileVisual.Get(prefab, pos, rot)` reuses released instances per prefab, `Release()` parks them (clearing trail renderers on reuse), and a per-instance `Generation` counter guards `Weapons`' stored references against terminating a tracer that self-released at max lifetime and was recycled to a newer shot. Hit effects are still one-shot `Instantiate`s, spawned detached with a timed destroy.
 
 ### Buffer overflow
 The 16-slot circular buffers mean that if a weapon fires more than 16 bullets before any are resolved, the oldest spawn data gets silently overwritten (oldest visual is orphaned; gameplay result on the server is already determined). In practice this cannot happen at normal fire rates and bullet speeds — at 900 RPM and a 0.25 s bullet flight time, at most ~4 bullets are ever in flight from one weapon simultaneously.

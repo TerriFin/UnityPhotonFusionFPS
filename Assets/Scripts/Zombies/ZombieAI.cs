@@ -17,49 +17,26 @@ namespace SimpleFPS
 	[DisallowMultipleComponent]
 	public sealed class ZombieAI : MonoBehaviour
 	{
-		[Header("Idle Spread")]
-		public float InitialIdleWanderDelayMax = 2f;
-		public float IdleWanderIntervalMin = 10f;
-		public float IdleWanderIntervalMax = 14f;
-		public float IdleWanderRetryDelayMin = 1f;
-		public float IdleWanderRetryDelayMax = 2f;
-		public float IdleWanderRadius = 10f;
-		public float IdleWanderAvoidZombieRadius = 8f;
-		public int IdleWanderCandidateCount = 5;
-		public float IdleWanderNavMeshSampleDistance = 8f;
-		public float IdleWanderStuckTimeout = 3f;
-		public float IdleWanderStuckMinProgress = 0.25f;
+		// Designer-facing knobs. Everything else that used to be a serialized field here is now a constant below:
+		// those values were internal mechanics (probe distances, commit timers, stuck-recovery intervals, …) that
+		// were tuned once and add nothing as per-prefab settings. The constants carry the tuned prefab values.
+		[Header("Idle Wander")]
+		public float IdleWanderIntervalMin = 3f;
+		public float IdleWanderIntervalMax = 7f;
+		public float IdleWanderRadius = 20f;
+		public float IdleWanderAvoidZombieRadius = 16f;
 
 		[Header("Targeting")]
-		public float AttackRetargetInterval = 2.5f;
-		public float HuntingRetargetInterval = 5f;
-		public float HuntingRetargetIntervalJitter = 1f;
-		public float HuntingInitialRetargetStaggerMax = 3f;
+		public float AttackRetargetInterval = 1f;
+		public float HuntingRetargetInterval = 6f;
 		[Range(0f, 1f)]
 		[Tooltip("While the current target is still directly seen/felt, another visible survivor only steals the zombie's attention when its distance is below this fraction of the current target's distance. 0.5 = must be at least twice as close. 1 = old behavior (closest always wins).")]
 		public float TargetSwitchDistanceFactor = 0.5f;
-		[Tooltip("After getting an explicit investigation point, new noise/impact/alert stimuli are ignored for this many seconds so two shooters cannot ping-pong the zombie. After it elapses the investigation re-triggers freely; sustained fire keeps re-aiming the zombie at the newest shot on this cadence. Seeing a survivor always overrides instantly.")]
-		public float InvestigationCommitDuration = 5f;
-		[Tooltip("A zombie within this flat distance of its current investigation point accepts a fresh stimulus immediately (the commit timer is bypassed) — the current point is essentially spent, so the next shot should re-aim it without waiting.")]
-		public float InvestigationRetriggerDistance = 3f;
 
 		[Header("Movement")]
-		public float StoppingDistance = 1.35f;
-		[FormerlySerializedAs("DirectFallbackDistance")]
-		public float DirectMoveDistance = 0.25f;
-		public float MaxYawDegreesPerTick = 7f;
-		public float ReachablePointSampleDistance = 6f;
-		[FormerlySerializedAs("AttackMoveStoppingDistance")]
-		public float ExplicitGoalStoppingDistance = 0.2f;
-		public float ExplicitGoalHeightTolerance = 0.75f;
-		// When the navmesh can get the zombie no closer to its goal (it "reached" the nearest navigable point, or
-		// there is no complete path) but the goal is still this close and in direct line of sight, the zombie steps
-		// straight toward it to close the final gap instead of staring. Recovers targets standing on the thin
-		// navmesh strip against a wall, where the path cannot quite reach them. Line of sight keeps it from walking
-		// into geometry; keep this modest so it only bridges genuine navmesh-edge gaps, not real detours. (It only
-		// fires when there is no usable navmesh route at all — if the zombie could path around, it would, and this
-		// never runs — so the line-of-sight gate is the real safety, not the distance.)
-		public float CloseGapDirectMaxDistance = 4f;
+		// Also the arrival distance for explicit hunt/attack goals (the two were always tuned to the same value).
+		public float StoppingDistance = 0.66f;
+		public float MaxYawDegreesPerTick = 6f;
 
 		[Header("Climbing")]
 		// Zombies steer directly toward explicit goals, but may only climb broad registered climb surfaces: generated
@@ -69,68 +46,91 @@ namespace SimpleFPS
 		public bool UseClimbSurfaces = true;
 		public bool UseTerrainShortcutClimbs = true;
 		public bool UseRescueClimbs = true;
-		public float ClimbSpeedMultiplier = 0.5f;
-		[FormerlySerializedAs("ClimbStartDistance")]
-		[FormerlySerializedAs("ClimbObstacleProbeDistance")]
-		public float ClimbSurfaceEngageDistance = 1.25f;
-		public float ClimbCommitDuration = 0.75f;
-		public float ClimbMantleMaxSnapHeight = 2.0f;
-		public float ClimbDirectApproachDistance = 18f;
-		public float ExplicitGoalClimbRefreshInterval = 0.2f;
-		public float ClimbRouteSideTolerance = 1.5f;
-		public float ClimbMinRise = 0.75f;
-		public float RescueMinTargetHeight = 0.75f;
-		public float RescueLandingHeightTolerance = 2.5f;
-		public float RescueLandingFlatTolerance = 2.5f;
-		public float ClimbMantleMaxHorizontalSnapDistance = 1.5f;
-		// A committed climb is abandoned if it makes no upward progress for this long (genuinely stuck/blocked). A
-		// slow-but-rising climb keeps going — this is NOT a fixed clock, so a tall ledge that takes several seconds to
-		// scale is not cut off mid-climb (which caused rise-then-drop oscillation).
-		public float ClimbStuckTimeout = 1.5f;
-		// Absolute safety cap on a single committed climb, however much progress it is making.
-		[FormerlySerializedAs("ClimbLinkMaxDuration")]
-		public float ClimbMaxDuration = 15f;
-		// After a climb gives up without cresting, do not re-engage a climb for this long. Stops a zombie that cannot
-		// complete a climb from oscillating (rise, drop, re-engage) on the same spot — it walks/re-plans instead.
-		public float ClimbCooldown = 2f;
+		public float ClimbSpeedMultiplier = 0.45f;
+		public float ClimbMantleMaxSnapHeight = 1.75f;
 
 		[Header("Road Direct Movement")]
 		[FormerlySerializedAs("UseEmergencyObstacleClimbs")]
 		public bool UseRoadDirectMovement = true;
 		public float RoadDirectMaxDistance = 18f;
-		public float RoadDirectMaxObstacleHeight = 5f;
-		public float RoadDirectClimbMaxZombieHeightAboveTarget = 0.75f;
-		[FormerlySerializedAs("EmergencyClimbMinRise")]
-		public float RoadDirectClimbMinRise = 0.2f;
-		[FormerlySerializedAs("EmergencyClimbProbeDistance")]
-		public float RoadDirectClimbProbeDistance = 1.25f;
-		[FormerlySerializedAs("EmergencyClimbMaxHeight")]
-		public float RoadDirectClimbMaxHeight = 2.25f;
-		[FormerlySerializedAs("EmergencyClimbLandingInset")]
-		public float RoadDirectClimbLandingInset = 0.75f;
-		[FormerlySerializedAs("EmergencyClimbMinSurfaceNormalY")]
-		public float RoadDirectClimbMinSurfaceNormalY = 0.45f;
-		public float RoadDirectWalkableLandingSampleDistance = 1f;
-		public float RoadDirectWalkableLandingPathTolerance = 0.75f;
-		[FormerlySerializedAs("EmergencyIdlePerchIslandRadius")]
-		public float StuckSmallIslandRadius = 4f;
 
-		[Header("Alerts")]
-		public int MaxAlertRecipients = 8;
-		public float AlertCooldown = 2f;
+		// --- Internal tuning constants (previously inspector fields; values are the tuned prefab values). ---
 
-		[Header("Idle Off-NavMesh Recovery")]
-		public float StuckSampleRadius = 0.6f;
-		public float StuckMinHeightAboveNavMesh = 0.6f;
-		public float StuckCheckInterval = 0.5f;
-		// Expensive island-connectivity verification (IsOnSmallElevatedNavMeshIsland: ~29 NavMesh.SamplePosition
-		// calls plus a CalculatePath) is split from the cheap off-mesh/prop checks. It runs only when the cheap
-		// checks are inconclusive AND the navigator shows evidence of failure (no usable path / unreachable / no
-		// active route), and then no more often than this jittered interval. Grounded zombies with a working path
-		// never pay for it. Keep this >= StuckCheckInterval.
-		public float ElevatedIslandCheckInterval = 1.5f;
-		public float StuckRandomWanderDurationMin = 1f;
-		public float StuckRandomWanderDurationMax = 2.5f;
+		// Idle wander internals.
+		private const float InitialIdleWanderDelayMax = 2f;
+		private const float IdleWanderRetryDelayMin = 1f;
+		private const float IdleWanderRetryDelayMax = 2f;
+		private const int IdleWanderCandidateCount = 3;
+		private const float IdleWanderNavMeshSampleDistance = 8f;
+		private const float IdleWanderStuckTimeout = 3f;
+		private const float IdleWanderStuckMinProgress = 0.25f;
+
+		// Targeting internals.
+		private const float HuntingRetargetIntervalJitter = 2f;
+		private const float HuntingInitialRetargetStaggerMax = 3f;
+		// After getting an explicit investigation point, new noise/impact/alert stimuli are ignored for this many
+		// seconds so two shooters cannot ping-pong the zombie. Within InvestigationRetriggerDistance of the point
+		// the commit timer is bypassed (the point is spent). Seeing a survivor always overrides instantly.
+		private const float InvestigationCommitDuration = 5f;
+		private const float InvestigationRetriggerDistance = 3f;
+
+		// Movement internals.
+		private const float DirectMoveDistance = 0.75f;
+		private const float ExplicitGoalHeightTolerance = 0.75f;
+		// When the navmesh can get the zombie no closer to its goal (it "reached" the nearest navigable point, or
+		// there is no complete path) but the goal is still this close and in direct line of sight, the zombie steps
+		// straight toward it to close the final gap instead of staring. Recovers targets standing on the thin
+		// navmesh strip against a wall, where the path cannot quite reach them. The line-of-sight gate is the real
+		// safety, not the distance.
+		private const float CloseGapDirectMaxDistance = 4f;
+
+		// Climb execution internals.
+		private const float ClimbSurfaceEngageDistance = 1.25f;
+		private const float ClimbCommitDuration = 0.75f;
+		private const float ClimbDirectApproachDistance = 18f;
+		private const float ExplicitGoalClimbRefreshInterval = 0.2f;
+		private const float ClimbRouteSideTolerance = 1.6f;
+		private const float ClimbMinRise = 0.75f;
+		private const float RescueMinTargetHeight = 0.75f;
+		private const float RescueLandingHeightTolerance = 2.5f;
+		private const float RescueLandingFlatTolerance = 2.5f;
+		private const float ClimbMantleMaxHorizontalSnapDistance = 1.5f;
+		// A committed climb is abandoned if it makes no upward progress for this long (genuinely stuck/blocked). A
+		// slow-but-rising climb keeps going — this is NOT a fixed clock, so a tall ledge that takes several seconds
+		// to scale is not cut off mid-climb (which caused rise-then-drop oscillation).
+		private const float ClimbStuckTimeout = 1.5f;
+		// Absolute safety cap on a single committed climb, however much progress it is making.
+		private const float ClimbMaxDuration = 15f;
+		// After a climb gives up without cresting, do not re-engage a climb for this long. Stops a zombie that
+		// cannot complete a climb from oscillating (rise, drop, re-engage) on the same spot.
+		private const float ClimbCooldown = 2f;
+
+		// Road-direct climb internals.
+		private const float RoadDirectMaxObstacleHeight = 5f;
+		private const float RoadDirectClimbMaxZombieHeightAboveTarget = 0.75f;
+		private const float RoadDirectClimbMinRise = 0.2f;
+		private const float RoadDirectClimbProbeDistance = 1.25f;
+		private const float RoadDirectClimbMaxHeight = 2.25f;
+		private const float RoadDirectClimbLandingInset = 0.75f;
+		private const float RoadDirectClimbMinSurfaceNormalY = 0.45f;
+		private const float RoadDirectWalkableLandingSampleDistance = 1f;
+		private const float RoadDirectWalkableLandingPathTolerance = 0.75f;
+		private const float StuckSmallIslandRadius = 4f;
+
+		// Alert internals.
+		private const int MaxAlertRecipients = 16;
+		private const float AlertCooldown = 2f;
+
+		// Off-NavMesh stuck-recovery internals. The expensive island-connectivity verification
+		// (IsOnSmallElevatedNavMeshIsland) is split from the cheap off-mesh/prop checks: it runs only when the
+		// cheap checks are inconclusive AND the navigator shows evidence of failure, and then no more often than
+		// the jittered ElevatedIslandCheckInterval (kept >= StuckCheckInterval).
+		private const float StuckSampleRadius = 0.6f;
+		private const float StuckMinHeightAboveNavMesh = 0.6f;
+		private const float StuckCheckInterval = 0.5f;
+		private const float ElevatedIslandCheckInterval = 1.5f;
+		private const float StuckRandomWanderDurationMin = 1f;
+		private const float StuckRandomWanderDurationMax = 2.5f;
 
 		public EZombieAIState State { get; private set; }
 		public float LastAttackTime { get; private set; } = -1f;
@@ -383,7 +383,7 @@ namespace SimpleFPS
 			if (shouldPrioritizeClimb == false && ShouldHoldMeleePosition(_target, targetPosition))
 				return BuildLookInput(targetPosition);
 
-			return BuildExplicitGoalMoveInput(targetPosition, ExplicitGoalStoppingDistance, dynamicTarget: true);
+			return BuildExplicitGoalMoveInput(targetPosition, StoppingDistance, dynamicTarget: true);
 		}
 
 		private NetworkedInput UpdateHunting()
@@ -419,7 +419,7 @@ namespace SimpleFPS
 			if (shouldPrioritizeClimb == false && ShouldHoldMeleePosition(_target, targetPosition))
 				return BuildLookInput(targetPosition);
 
-			return BuildExplicitGoalMoveInput(targetPosition, ExplicitGoalStoppingDistance, dynamicTarget: true);
+			return BuildExplicitGoalMoveInput(targetPosition, StoppingDistance, dynamicTarget: true);
 		}
 
 		// A hunting zombie commits to one player and keeps hunting that player's team until the team is wiped
@@ -1780,7 +1780,7 @@ namespace SimpleFPS
 			float startSampleDistance = navigator != null
 				? Mathf.Max(0.25f, navigator.SampleMaxDistance)
 				: Mathf.Max(0.25f, StuckSampleRadius);
-			float candidateSampleDistance = Mathf.Max(0.25f, IdleWanderNavMeshSampleDistance, ReachablePointSampleDistance);
+			float candidateSampleDistance = Mathf.Max(0.25f, IdleWanderNavMeshSampleDistance);
 
 			if (NavMesh.SamplePosition(origin, out var startHit, startSampleDistance, areaMask) == false)
 				return false;
@@ -2037,7 +2037,7 @@ namespace SimpleFPS
 			if (target == null)
 				return false;
 
-			var survivor = target.GetComponent<Survivor>();
+			var survivor = Survivor.GetFrom(target);
 			return survivor != null && survivor.Health != null && survivor.Health.IsAlive;
 		}
 

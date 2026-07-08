@@ -266,7 +266,7 @@ namespace SimpleFPS
 
 		private static bool IsZombie(NetworkObject target)
 		{
-			return target != null && target.GetComponent<ZombieCharacter>() != null;
+			return target != null && ZombieCharacter.GetFrom(target) != null;
 		}
 
 		private static bool IsLiveZombie(NetworkObject target)
@@ -274,7 +274,7 @@ namespace SimpleFPS
 			if (target == null)
 				return false;
 
-			ZombieCharacter zombie = target.GetComponent<ZombieCharacter>();
+			ZombieCharacter zombie = ZombieCharacter.GetFrom(target);
 			return zombie != null && zombie.Health != null && zombie.Health.IsAlive;
 		}
 	}

@@ -80647,7 +80647,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 273883981725572060, guid: 310084b1b12b8db4c8eb685d3679568b, type: 3}
       propertyPath: m_SizeDelta.y
-      value: 290.15375
+      value: 199.69702
       objectReference: {fileID: 0}
     - target: {fileID: 273883981725572060, guid: 310084b1b12b8db4c8eb685d3679568b, type: 3}
       propertyPath: m_AnchoredPosition.x
@@ -138393,7 +138393,7 @@ MonoBehaviour:
   RuntimeTextureSize: {x: 1024, y: 1024}
   LogSetupStatus: 0
   MapKey: 53
-  RevealMode: 2
+  RevealMode: 0
   Spectator: {fileID: 0}
 --- !u!114 &2056786219
 MonoBehaviour:

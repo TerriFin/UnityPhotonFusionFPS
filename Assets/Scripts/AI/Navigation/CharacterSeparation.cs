@@ -24,15 +24,15 @@ namespace SimpleFPS
 		private static readonly SpatialHash2D<CharacterSeparation> SpatialHash = new(4f);
 		private static readonly List<CharacterSeparation> QueryResults = new(32);
 
-		[Header("Identity")]
-		public CharacterSeparationKind Kind = CharacterSeparationKind.Survivor;
+		// Inferred from which Activate overload runs — never a per-prefab setting.
+		public CharacterSeparationKind Kind { get; private set; } = CharacterSeparationKind.Survivor;
 
-		[Header("Separation")]
-		public float Radius = 0.8f;
-		public float DesiredDistance = 0.65f;
-		public float PushSpeed = 1.5f;
-		public int MaxNeighbors = 8;
-		public float RefreshInterval = 0.1f;
+		// Uniform tuning shared by every character (survivors and zombies were always configured identically).
+		private const float Radius = 0.8f;
+		private const float DesiredDistance = 0.65f;
+		private const float PushSpeed = 1.5f;
+		private const int MaxNeighbors = 8;
+		private const float RefreshInterval = 0.1f;
 
 		private Survivor _survivor;
 		private ZombieCharacter _zombie;
@@ -50,6 +50,7 @@ namespace SimpleFPS
 		{
 			_survivor = survivor;
 			_zombie = null;
+			Kind = CharacterSeparationKind.Survivor;
 			_lastOwnerRef = _survivor != null ? _survivor.OwnerRef : PlayerRef.None;
 			_lastRaidClientAllianceActive = CharacterFactionUtility.IsRaidClientAllianceActive(_survivor);
 			ActivateShared();
@@ -59,6 +60,7 @@ namespace SimpleFPS
 		{
 			_zombie = zombie;
 			_survivor = null;
+			Kind = CharacterSeparationKind.Zombie;
 			_lastOwnerRef = PlayerRef.None;
 			_lastRaidClientAllianceActive = false;
 			ActivateShared();
@@ -114,15 +116,6 @@ namespace SimpleFPS
 				RefreshCollisionPairs();
 				InvalidateSeparationCache();
 			}
-		}
-
-		private void OnValidate()
-		{
-			Radius = Mathf.Max(0.01f, Radius);
-			DesiredDistance = Mathf.Clamp(DesiredDistance, 0.01f, Radius);
-			PushSpeed = Mathf.Max(0f, PushSpeed);
-			MaxNeighbors = Mathf.Max(1, MaxNeighbors);
-			RefreshInterval = Mathf.Max(0f, RefreshInterval);
 		}
 
 		private void ActivateShared()

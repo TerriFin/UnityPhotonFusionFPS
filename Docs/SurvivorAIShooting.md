@@ -92,6 +92,8 @@ This matters when a pack surrounds the survivor. Several zombies sit at near-equ
 
 `UrgentTargetSwitchDistanceRatio` is the close-ambush escape hatch. At the default `0.5`, an enemy at half the current target distance or closer bypasses stickiness immediately, so survivors do not stay glued to a far target while a closer enemy attacks from behind.
 
+Emergency zombies (a zombie inside `SurvivorCombatAI.GetEmergencyZombieDistance()`) interact with stickiness at the category level only. When an emergency zombie exists, the preferred target becomes the closest zombie even if a survivor target is closer — and because stickiness never applies across categories, a survivor-targeting AI switches to that zombie immediately. Between zombies, however, the emergency case goes through the same hysteresis/urgent-ratio rules as everything else. It used to bypass them, which re-created the exact pack-flicker fire starvation described above the moment several zombies entered emergency range: the emergency target re-rolled to a marginally different zombie every sensor tick and each re-roll reset the first-shot delay. This was a major reason surrounded survivors stopped shooting during overtime sieges.
+
 ## AI Weapon Selection
 
 `SurvivorAIShooting` does not spend ammo directly. It emits the same weapon-switch and fire input buttons the player would use.

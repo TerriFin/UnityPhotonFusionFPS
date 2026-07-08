@@ -30,6 +30,7 @@ namespace SimpleFPS
 		private readonly List<Survivor> _selectionRemoval = new();
 		private Vector2 _dragStart;
 		private bool _dragging;
+		private bool _dragStartedOnMap;
 		private Vector3 _areaDragStartWorld;
 		private float _currentAreaRadius;
 		private bool _areaDragging;
@@ -125,9 +126,10 @@ namespace SimpleFPS
 			if (_areaDragging)
 				return;
 
-			if (mouse.leftButton.wasPressedThisFrame && pointerBlocked == false && pointerOnMap)
+			if (mouse.leftButton.wasPressedThisFrame && pointerBlocked == false)
 			{
 				_dragStart = mousePosition;
+				_dragStartedOnMap = pointerOnMap;
 				_dragging = true;
 				SetSelectionBoxVisible(false);
 			}
@@ -146,10 +148,11 @@ namespace SimpleFPS
 
 				if (distance >= DragThreshold)
 					SelectDragRect(gameplay, runner, mapView, _dragStart, mousePosition, eventCamera);
-				else if (pointerBlocked == false && pointerOnMap)
+				else if (_dragStartedOnMap && pointerBlocked == false && pointerOnMap)
 					HandleClick(gameplay, runner, mousePosition, eventCamera);
 
 				_dragging = false;
+				_dragStartedOnMap = false;
 			}
 
 			if (pointerBlocked || pointerOnMap == false)

@@ -587,13 +587,13 @@ namespace SimpleFPS
 				if (obj == null)
 					continue;
 
-				if (obj.GetComponent<ZombieCharacter>() != null)
+				if (ZombieCharacter.GetFrom(obj) != null)
 				{
 					seesZombie = true;
 					continue;
 				}
 
-				var otherSurvivor = obj.GetComponent<Survivor>();
+				var otherSurvivor = Survivor.GetFrom(obj);
 				if (otherSurvivor != null &&
 				    otherSurvivor.Health != null &&
 				    otherSurvivor.Health.IsAlive &&

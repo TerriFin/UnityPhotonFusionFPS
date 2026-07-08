@@ -884,10 +884,10 @@ namespace SimpleFPS
 				var obj = _directEnemiesScratch[i].Object;
 				if (obj == null)
 					continue;
-				if (obj.GetComponent<ZombieCharacter>() != null)
+				if (ZombieCharacter.GetFrom(obj) != null)
 					continue;
 
-				var other = obj.GetComponent<Survivor>();
+				var other = Survivor.GetFrom(obj);
 				if (other == null || other.Health == null || other.Health.IsAlive == false)
 					continue;
 				if (CharacterFactionUtility.CanSurvivorAutoAttack(_survivor, obj) == false)
@@ -1126,7 +1126,7 @@ namespace SimpleFPS
 
 			if (_combat.TryGetDirectTarget(out KnownEnemyInfo enemy, out bool hasLineOfFire) == false ||
 			    enemy.Object == null ||
-			    enemy.Object.GetComponent<Survivor>() == null)
+			    Survivor.GetFrom(enemy.Object) == null)
 			{
 				return false;
 			}
@@ -1383,7 +1383,7 @@ namespace SimpleFPS
 
 		private static bool IsLostCombatInvestigationTarget(KnownEnemyInfo enemy)
 		{
-			return enemy.Object != null && enemy.Object.GetComponent<Survivor>() != null;
+			return enemy.Object != null && Survivor.GetFrom(enemy.Object) != null;
 		}
 
 		private static bool IsRememberedEnemyAlive(NetworkObject enemy)
@@ -1391,11 +1391,11 @@ namespace SimpleFPS
 			if (enemy == null)
 				return false;
 
-			var survivor = enemy.GetComponent<Survivor>();
+			var survivor = Survivor.GetFrom(enemy);
 			if (survivor != null)
 				return survivor.Health != null && survivor.Health.IsAlive;
 
-			var zombie = enemy.GetComponent<ZombieCharacter>();
+			var zombie = ZombieCharacter.GetFrom(enemy);
 			if (zombie != null)
 				return zombie.Health != null && zombie.Health.IsAlive;
 

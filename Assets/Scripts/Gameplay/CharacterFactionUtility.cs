@@ -46,10 +46,10 @@ namespace SimpleFPS
 			if (attacker == null || target == null)
 				return false;
 
-			if (target.GetComponent<ZombieCharacter>() != null)
+			if (ZombieCharacter.GetFrom(target) != null)
 				return true;
 
-			var targetSurvivor = target.GetComponent<Survivor>();
+			var targetSurvivor = Survivor.GetFrom(target);
 			if (targetSurvivor == null)
 				return false;
 
@@ -84,10 +84,14 @@ namespace SimpleFPS
 			if (source == null)
 				return true;
 
-			if (source.GetComponent<ZombieCharacter>() != null)
+			if (ZombieCharacter.GetFrom(source) != null)
 				return true;
 
-			var sourceSurvivor = source.GetComponent<Survivor>() ?? source.GetComponentInParent<Survivor>();
+			// Explicit fallback instead of ?? — a missing-component lookup can return Unity's fake-null
+			// placeholder in the editor, which ?? would treat as found and skip the parent search.
+			var sourceSurvivor = Survivor.GetFrom(source);
+			if (sourceSurvivor == null)
+				sourceSurvivor = source.GetComponentInParent<Survivor>();
 			if (sourceSurvivor != null)
 			{
 				if (IsNeutralSurvivor(listener))

@@ -64,6 +64,11 @@ The alliance must not replace or rewrite `Survivor.OwnerRef`, `Object.InputAutho
 Keeping ownership separate is what allows the clients to compete for positioning, loot, recruits, and survival
 while direct combat between them is temporarily disabled.
 
+The raid client rescue mechanic is the explicit exception, and it is not part of the passive combat alliance:
+when a non-host client is wiped while the raid host is alive, `Gameplay` may transfer one valid non-possessed
+allied survivor (or a later allied recruit) into that client's roster so the human can keep playing. That transfer
+is documented separately in `Docs/RaidModeClientRescue.md`.
+
 ## Implemented Integration Points
 
 The implementation uses these existing and updated paths:

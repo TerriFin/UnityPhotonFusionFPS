@@ -72,11 +72,11 @@ defensively reset in `Spawned()` so instance reuse can never leak corpse state i
 
 ## Deferred (noted, not implemented)
 
-- **Tracer visual pooling.** `Weapons.RenderProjectiles` still `Instantiate`/`Destroy`s one `ProjectileVisual`
-  per pellet per shot on every client. Bounded by fire rates, but mass AI firefights would benefit from a
-  per-prefab pool. Requires `ProjectileVisual` to support reset/reuse — a contained follow-up.
-- **Zombie AI/animation fidelity tiers** (audit item 9) — distance-based AI cadence and animator culling. The
-  biggest remaining scale ceiling, but a design change rather than a cleanup.
+- ~~**Tracer visual pooling.**~~ Done July 2026 — per-prefab pool in `ProjectileVisual` with generation-token
+  safety; see `Docs/OptimizationAndKnobPass2.md`.
+- **Zombie AI fidelity tiers** (audit item 9) — distance-based AI *decision* cadence remains the biggest
+  remaining scale lever (a design change). The animation half was addressed in July 2026 via
+  `AnimatorCullingMode.CullUpdateTransforms` plus the zombie settled-KCC skip (same doc as above).
 
 ## Verification
 

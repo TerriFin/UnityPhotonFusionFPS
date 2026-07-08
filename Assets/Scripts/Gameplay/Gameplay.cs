@@ -294,17 +294,32 @@ namespace SimpleFPS
 				return false;
 			if (CharacterFactionUtility.IsPlayerOwnedSurvivor(recruiter) == false)
 				return false;
-			if (PlayerData.TryGet(recruiter.OwnerRef, out var playerData) == false)
+
+			PlayerRef owner = recruiter.OwnerRef;
+			bool raidRescueRecruitment = TryFindWaitingRaidRescuePlayer(owner, neutral.transform.position, out PlayerRef rescueOwner, out _);
+			if (raidRescueRecruitment)
+			{
+				owner = rescueOwner;
+			}
+
+			if (PlayerData.TryGet(owner, out var playerData) == false)
 				return false;
 			if (playerData.CharacterCount >= CharacterMask128.Capacity)
 				return false;
 
 			_neutralSurvivors.Remove(neutral);
 
-			PlayerRef owner = recruiter.OwnerRef;
 			int oldCharacterCount = playerData.CharacterCount;
-			int newCharacterIndex = Mathf.Clamp(recruiter.CharacterIndex + 1, 0, oldCharacterCount);
-			ShiftCharacterIndicesForRecruitment(owner, newCharacterIndex, oldCharacterCount);
+			int newCharacterIndex;
+			if (raidRescueRecruitment)
+			{
+				newCharacterIndex = oldCharacterCount;
+			}
+			else
+			{
+				newCharacterIndex = Mathf.Clamp(recruiter.CharacterIndex + 1, 0, oldCharacterCount);
+				ShiftCharacterIndicesForRecruitment(owner, newCharacterIndex, oldCharacterCount);
+			}
 
 			AssignInputAuthorityToHierarchy(neutral, owner);
 			neutral.OwnerRef = owner;
@@ -315,12 +330,23 @@ namespace SimpleFPS
 			playerData.CharacterCount = oldCharacterCount + 1;
 			if (playerData.ActiveCharacterIndex >= newCharacterIndex)
 				playerData.ActiveCharacterIndex++;
+			if (raidRescueRecruitment)
+				playerData.ActiveCharacterIndex = newCharacterIndex;
 			playerData.IsAlive = true;
 			PlayerData.Set(owner, playerData);
 
 			neutral.SetNonCombatAISettings(recruiter.NonCombatAISettings);
 			neutral.SetCombatAISettings(recruiter.CombatAISettings);
-			ApplyRecruitmentOrder(neutral, recruiter);
+			if (raidRescueRecruitment)
+			{
+				neutral.SetIdleAI();
+				neutral.ResetVerticalLook();
+				UpdatePlayerObject(owner, playerData);
+			}
+			else
+			{
+				ApplyRecruitmentOrder(neutral, recruiter);
+			}
 			neutral.SetRetreatMode(recruiter.RetreatMode);
 			return true;
 		}
@@ -569,6 +595,8 @@ namespace SimpleFPS
 			}
 
 			victimData.IsAlive = victimData.HasAnyAliveCharacter;
+			if (victimData.IsAlive == false)
+				TryRescueRaidClientAfterTeamWipe(ownerRef, ref victimData, characterIndex);
 			PlayerData.Set(ownerRef, victimData);
 
 			UpdatePlayerObject(ownerRef, victimData);
@@ -675,6 +703,262 @@ namespace SimpleFPS
 			}
 
 			neutral.SetIdleAI();
+		}
+
+		private bool TryRescueRaidClientAfterTeamWipe(PlayerRef eliminatedPlayer, ref PlayerData eliminatedData, int deadCharacterIndex)
+		{
+			if (CanReceiveRaidRescue(eliminatedPlayer, eliminatedData) == false)
+				return false;
+
+			Vector3 origin = default;
+			bool hasOrigin = TryGetSurvivorPosition(eliminatedPlayer, deadCharacterIndex, out origin);
+			if (TryFindClosestRaidRescueCandidate(eliminatedPlayer, origin, hasOrigin, out Survivor candidate) == false)
+				return false;
+
+			return TryTransferRaidRescueSurvivor(candidate, eliminatedPlayer, ref eliminatedData);
+		}
+
+		private bool TryFindWaitingRaidRescuePlayer(PlayerRef recruiterOwner, Vector3 origin, out PlayerRef rescueOwner, out PlayerData rescueData)
+		{
+			rescueOwner = PlayerRef.None;
+			rescueData = default;
+
+			if (RaidModeRules.IsClientAllianceActive(this) == false)
+				return false;
+			if (recruiterOwner.IsRealPlayer == false || RaidModeRules.IsRaidControlledPlayer(this, recruiterOwner))
+				return false;
+
+			bool found = false;
+			float bestDistanceSqr = float.MaxValue;
+
+			foreach (var pair in PlayerData)
+			{
+				PlayerRef candidateOwner = pair.Key;
+				PlayerData candidateData = pair.Value;
+				if (candidateOwner == recruiterOwner)
+					continue;
+				if (CanReceiveRaidRescue(candidateOwner, candidateData) == false)
+					continue;
+				if (RaidModeRules.ArePlayerTeamsAllied(this, recruiterOwner, candidateOwner) == false)
+					continue;
+
+				float distanceSqr = TryGetClosestTeamSurvivorDistanceSqr(candidateOwner, origin, out float candidateDistanceSqr)
+					? candidateDistanceSqr
+					: float.MaxValue;
+				if (found && distanceSqr >= bestDistanceSqr)
+					continue;
+
+				found = true;
+				bestDistanceSqr = distanceSqr;
+				rescueOwner = candidateOwner;
+				rescueData = candidateData;
+			}
+
+			return found;
+		}
+
+		private bool CanReceiveRaidRescue(PlayerRef player, PlayerData data)
+		{
+			if (RaidModeRules.IsClientAllianceActive(this) == false)
+				return false;
+			if (player.IsRealPlayer == false || data.IsConnected == false)
+				return false;
+			if (RaidModeRules.IsRaidControlledPlayer(this, player))
+				return false;
+			if (data.HasAnyAliveCharacter || data.IsAlive)
+				return false;
+			if (data.CharacterCount <= 0 || data.CharacterCount >= CharacterMask128.Capacity)
+				return false;
+
+			return true;
+		}
+
+		private bool TryFindClosestRaidRescueCandidate(PlayerRef eliminatedPlayer, Vector3 origin, bool hasOrigin, out Survivor closest)
+		{
+			closest = null;
+			float closestDistanceSqr = float.MaxValue;
+
+			foreach (var pair in PlayerData)
+			{
+				PlayerRef donor = pair.Key;
+				PlayerData donorData = pair.Value;
+				if (IsValidRaidRescueDonor(eliminatedPlayer, donor, donorData) == false)
+					continue;
+				if (_characterCache.TryGetValue(donor, out var survivors) == false)
+					continue;
+
+				foreach (var survivorPair in survivors)
+				{
+					Survivor candidate = survivorPair.Value;
+					if (IsValidRaidRescueCandidate(candidate, donorData) == false)
+						continue;
+
+					float distanceSqr = hasOrigin ? FlatDistanceSqr(origin, candidate.transform.position) : 0f;
+					if (distanceSqr >= closestDistanceSqr)
+						continue;
+
+					closest = candidate;
+					closestDistanceSqr = distanceSqr;
+				}
+			}
+
+			return closest != null;
+		}
+
+		private bool IsValidRaidRescueDonor(PlayerRef eliminatedPlayer, PlayerRef donor, PlayerData donorData)
+		{
+			if (donor.IsRealPlayer == false || donor == eliminatedPlayer)
+				return false;
+			if (donorData.IsConnected == false || donorData.IsAlive == false)
+				return false;
+			if (RaidModeRules.IsRaidControlledPlayer(this, donor))
+				return false;
+
+			return RaidModeRules.ArePlayerTeamsAllied(this, eliminatedPlayer, donor);
+		}
+
+		private bool IsValidRaidRescueCandidate(Survivor candidate, PlayerData donorData)
+		{
+			if (candidate == null || candidate.Object == null || candidate.Object.IsValid == false)
+				return false;
+			if (candidate.Health == null || candidate.Health.IsAlive == false)
+				return false;
+			if (candidate.CharacterIndex < 0 || candidate.CharacterIndex >= donorData.CharacterCount)
+				return false;
+			if (donorData.IsCharacterAlive(candidate.CharacterIndex) == false)
+				return false;
+			if (candidate.CharacterIndex == donorData.ActiveCharacterIndex)
+				return false;
+
+			return HasAnotherAliveCharacter(donorData, candidate.CharacterIndex);
+		}
+
+		private bool TryTransferRaidRescueSurvivor(Survivor survivor, PlayerRef rescueOwner, ref PlayerData rescueData)
+		{
+			if (survivor == null || rescueOwner.IsRealPlayer == false)
+				return false;
+			if (rescueData.CharacterCount >= CharacterMask128.Capacity)
+				return false;
+
+			PlayerRef donor = survivor.OwnerRef;
+			int donorIndex = survivor.CharacterIndex;
+			if (donor == rescueOwner || PlayerData.TryGet(donor, out PlayerData donorData) == false)
+				return false;
+			if (IsValidRaidRescueCandidate(survivor, donorData) == false)
+				return false;
+
+			int rescueIndex = rescueData.CharacterCount;
+			RemoveSurvivorFromPlayerTeam(donor, donorIndex, ref donorData);
+			PlayerData.Set(donor, donorData);
+			UpdatePlayerObject(donor, donorData);
+
+			AssignInputAuthorityToHierarchy(survivor, rescueOwner);
+			survivor.OwnerRef = rescueOwner;
+			survivor.CharacterIndex = rescueIndex;
+			RegisterSurvivor(survivor);
+
+			rescueData.SetCharacterAlive(rescueIndex, true);
+			rescueData.CharacterCount = rescueIndex + 1;
+			rescueData.ActiveCharacterIndex = rescueIndex;
+			rescueData.IsAlive = true;
+
+			survivor.SetIdleAI();
+			survivor.ResetVerticalLook();
+			return true;
+		}
+
+		private void RemoveSurvivorFromPlayerTeam(PlayerRef owner, int removedIndex, ref PlayerData data)
+		{
+			int oldCharacterCount = data.CharacterCount;
+			data.AliveCharacterMask = RemoveCharacterFromMask(data.AliveCharacterMask, removedIndex, oldCharacterCount);
+			data.CharacterCount = Mathf.Max(0, oldCharacterCount - 1);
+
+			if (data.ActiveCharacterIndex == removedIndex)
+			{
+				data.ActiveCharacterIndex = FindNextAliveCharacter(data.AliveCharacterMask, data.CharacterCount, removedIndex, 1);
+			}
+			else if (data.ActiveCharacterIndex > removedIndex)
+			{
+				data.ActiveCharacterIndex--;
+			}
+
+			data.IsAlive = data.HasAnyAliveCharacter;
+			ShiftCharacterIndicesAfterRemoval(owner, removedIndex, oldCharacterCount);
+		}
+
+		private void ShiftCharacterIndicesAfterRemoval(PlayerRef owner, int removedIndex, int oldCharacterCount)
+		{
+			if (_characterCache.TryGetValue(owner, out var survivors) == false)
+				return;
+
+			survivors.Remove(removedIndex);
+			for (int i = removedIndex + 1; i < oldCharacterCount; i++)
+			{
+				if (survivors.TryGetValue(i, out var survivor) == false || survivor == null)
+					continue;
+
+				survivors.Remove(i);
+				survivor.CharacterIndex = i - 1;
+				survivors[i - 1] = survivor;
+			}
+		}
+
+		private static CharacterMask128 RemoveCharacterFromMask(CharacterMask128 oldMask, int removedIndex, int oldCharacterCount)
+		{
+			var newMask = new CharacterMask128();
+			for (int i = 0; i < oldCharacterCount; i++)
+			{
+				if (i == removedIndex || oldMask.Contains(i) == false)
+					continue;
+
+				newMask.Set(i > removedIndex ? i - 1 : i, true);
+			}
+
+			return newMask;
+		}
+
+		private static bool HasAnotherAliveCharacter(PlayerData data, int removedIndex)
+		{
+			for (int i = 0; i < data.CharacterCount; i++)
+			{
+				if (i != removedIndex && data.IsCharacterAlive(i))
+					return true;
+			}
+
+			return false;
+		}
+
+		private bool TryGetSurvivorPosition(PlayerRef owner, int characterIndex, out Vector3 position)
+		{
+			position = default;
+			Survivor survivor = GetSurvivor(owner, characterIndex);
+			if (survivor == null)
+				return false;
+
+			position = survivor.transform.position;
+			return true;
+		}
+
+		private bool TryGetClosestTeamSurvivorDistanceSqr(PlayerRef owner, Vector3 origin, out float closestDistanceSqr)
+		{
+			closestDistanceSqr = float.MaxValue;
+			if (_characterCache.TryGetValue(owner, out var survivors) == false)
+				return false;
+
+			bool found = false;
+			foreach (var pair in survivors)
+			{
+				Survivor survivor = pair.Value;
+				if (survivor == null || survivor.Object == null || survivor.Object.IsValid == false)
+					continue;
+
+				found = true;
+				float distanceSqr = FlatDistanceSqr(origin, survivor.transform.position);
+				if (distanceSqr < closestDistanceSqr)
+					closestDistanceSqr = distanceSqr;
+			}
+
+			return found;
 		}
 
 		private static void AssignInputAuthorityToHierarchy(Survivor survivor, PlayerRef owner)

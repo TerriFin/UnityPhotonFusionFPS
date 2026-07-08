@@ -173,7 +173,7 @@ namespace SimpleFPS
 				if (obj == null)
 					continue;
 
-				var candidate = obj.GetComponent<Survivor>();
+				var candidate = Survivor.GetFrom(obj);
 				if (candidate == null || candidate == survivor)
 					continue;
 				if (IsRecruitTargetValid(candidate) == false)

@@ -273,7 +273,7 @@ namespace SimpleFPS
 
 		private static bool IsZombieTarget(KnownEnemyInfo enemy)
 		{
-			return enemy.Object != null && enemy.Object.GetComponent<ZombieCharacter>() != null;
+			return enemy.Object != null && ZombieCharacter.GetFrom(enemy.Object) != null;
 		}
 
 		private static Vector3 GetEnemyPosition(KnownEnemyInfo enemy)
