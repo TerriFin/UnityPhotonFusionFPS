@@ -941,8 +941,6 @@ namespace SimpleFPS
 		// generated map. HeightGenerator is already resolved by CollectSpawnPoints. See ZombieClimbSurfaces.
 		private void RefreshClimbSurfaces()
 		{
-			RefreshRoadGridSnapshot();
-
 			if (BuildTerrainClimbSurfaces == false)
 				return;
 
@@ -960,25 +958,6 @@ namespace SimpleFPS
 				LandingInset = TerrainClimbLandingInset,
 				ShortcutMinPathSavings = TerrainClimbShortcutMinPathSavings,
 			});
-		}
-
-		private void RefreshRoadGridSnapshot()
-		{
-			RoadGridGenerator roadGenerator = null;
-			if (BuildingGenerator != null)
-				roadGenerator = BuildingGenerator.RoadGenerator;
-			if (roadGenerator == null)
-				roadGenerator = GetComponent<RoadGridGenerator>();
-			if (roadGenerator == null)
-				roadGenerator = FindObjectOfType<RoadGridGenerator>();
-
-			if (roadGenerator != null && roadGenerator.TryGetWorldGridSnapshot(out WorldGridSnapshot snapshot) && snapshot.IsValid)
-			{
-				ZombieClimbSurfaces.SetRoadGrid(snapshot);
-				return;
-			}
-
-			ZombieClimbSurfaces.ClearRoadGrid();
 		}
 
 		private NetworkRunner GetRunner()

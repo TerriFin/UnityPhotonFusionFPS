@@ -72,7 +72,6 @@ namespace SimpleFPS
 		public readonly Vector3 LandingPoint;
 		public readonly Vector3 ClimbDirection;
 		public readonly float DistanceToFace;
-		public readonly bool IsRescue;
 		public readonly bool RequiresClimb;
 
 		public ZombieClimbCandidate(
@@ -81,7 +80,6 @@ namespace SimpleFPS
 			Vector3 landingPoint,
 			Vector3 climbDirection,
 			float distanceToFace,
-			bool isRescue,
 			bool requiresClimb)
 		{
 			Surface = surface;
@@ -89,7 +87,6 @@ namespace SimpleFPS
 			LandingPoint = landingPoint;
 			ClimbDirection = climbDirection;
 			DistanceToFace = distanceToFace;
-			IsRescue = isRescue;
 			RequiresClimb = requiresClimb;
 		}
 	}
@@ -116,8 +113,6 @@ namespace SimpleFPS
 		private static float _builtWidthFactor;
 		private static float _builtLandingInset;
 		private static float _builtShortcutMinPathSavings;
-		private static WorldGridSnapshot _roadGrid;
-		private static bool _hasRoadGrid;
 
 		// Spatial index over the generated terrain surfaces (the large, static, per-ledge-tile set spread across the
 		// whole map). TryFindDirectClimb only needs surfaces near the origin→goal route, so instead of scanning every
@@ -275,24 +270,6 @@ namespace SimpleFPS
 			return ((long)cellX << 32) ^ (uint)cellZ;
 		}
 
-		public static void SetRoadGrid(WorldGridSnapshot snapshot)
-		{
-			_roadGrid = snapshot;
-			_hasRoadGrid = snapshot.IsValid;
-		}
-
-		public static void ClearRoadGrid()
-		{
-			_roadGrid = default;
-			_hasRoadGrid = false;
-		}
-
-		public static bool TryGetRoadCell(Vector3 worldPosition, out WorldGridCell cell)
-		{
-			cell = default;
-			return _hasRoadGrid && _roadGrid.TryGetCell(worldPosition, out cell);
-		}
-
 		public static void Register(Object owner, List<ZombieClimbSurface> surfaces)
 		{
 			if (owner == null)
@@ -335,20 +312,13 @@ namespace SimpleFPS
 		public static bool TryFindDirectClimb(
 			Vector3 origin,
 			Vector3 goal,
-			bool allowShortcut,
-			bool allowRescue,
 			float pathSavings,
 			float maxShortcutDistanceToFace,
-			float maxRescueDistanceToFace,
 			float sideTolerance,
 			float minClimbHeight,
-			float rescueLandingHeightTolerance,
-			float rescueLandingFlatTolerance,
 			out ZombieClimbCandidate candidate)
 		{
 			candidate = default;
-			if (allowShortcut == false && allowRescue == false)
-				return false;
 
 			Vector3 flatToGoal = goal - origin;
 			flatToGoal.y = 0f;
@@ -358,24 +328,21 @@ namespace SimpleFPS
 
 			Vector3 routeDirection = flatToGoal / directDistance;
 			float maxShortcutDistance = Mathf.Max(0.1f, maxShortcutDistanceToFace);
-			float maxRescueDistance = Mathf.Max(0.1f, maxRescueDistanceToFace);
 			float tolerance = Mathf.Max(0f, sideTolerance);
 			float minRise = Mathf.Max(0.05f, minClimbHeight);
-			float heightTolerance = Mathf.Max(0.05f, rescueLandingHeightTolerance);
-			float flatTolerance = Mathf.Max(0.05f, rescueLandingFlatTolerance);
 			float bestScore = float.MaxValue;
 			bool found = false;
 
 			if (_hasTerrainGrid)
 			{
-				FindBestInTerrainGrid(origin, routeDirection, goal, directDistance, allowShortcut, allowRescue,
-					pathSavings, maxShortcutDistance, maxRescueDistance, tolerance, minRise, heightTolerance, flatTolerance,
+				FindBestInTerrainGrid(origin, routeDirection, goal, directDistance,
+					pathSavings, maxShortcutDistance, tolerance, minRise,
 					ref candidate, ref bestScore, ref found);
 			}
 			else
 			{
-				FindBestInList(_terrainSurfaces, origin, goal, routeDirection, directDistance, allowShortcut, allowRescue,
-					pathSavings, maxShortcutDistance, maxRescueDistance, tolerance, minRise, heightTolerance, flatTolerance,
+				FindBestInList(_terrainSurfaces, origin, goal, routeDirection, directDistance,
+					pathSavings, maxShortcutDistance, tolerance, minRise,
 					ref candidate, ref bestScore, ref found);
 			}
 
@@ -394,8 +361,7 @@ namespace SimpleFPS
 				for (int s = 0; s < registration.Surfaces.Length; s++)
 				{
 					TryEvaluateSurface(registration.Surfaces[s], origin, goal, routeDirection, directDistance,
-						allowShortcut, allowRescue, pathSavings, maxShortcutDistance, maxRescueDistance,
-						tolerance, minRise, heightTolerance, flatTolerance,
+						pathSavings, maxShortcutDistance, tolerance, minRise,
 						ref candidate, ref bestScore, ref found);
 				}
 			}
@@ -409,24 +375,18 @@ namespace SimpleFPS
 			Vector3 goal,
 			Vector3 routeDirection,
 			float directDistance,
-			bool allowShortcut,
-			bool allowRescue,
 			float pathSavings,
 			float maxShortcutDistance,
-			float maxRescueDistance,
 			float sideTolerance,
 			float minClimbHeight,
-			float rescueLandingHeightTolerance,
-			float rescueLandingFlatTolerance,
 			ref ZombieClimbCandidate bestCandidate,
 			ref float bestScore,
 			ref bool found)
 		{
 			for (int i = 0; i < surfaces.Count; i++)
 			{
-				TryEvaluateSurface(surfaces[i], origin, goal, routeDirection, directDistance, allowShortcut, allowRescue,
-					pathSavings, maxShortcutDistance, maxRescueDistance, sideTolerance, minClimbHeight,
-					rescueLandingHeightTolerance, rescueLandingFlatTolerance,
+				TryEvaluateSurface(surfaces[i], origin, goal, routeDirection, directDistance,
+					pathSavings, maxShortcutDistance, sideTolerance, minClimbHeight,
 					ref bestCandidate, ref bestScore, ref found);
 			}
 		}
@@ -440,15 +400,10 @@ namespace SimpleFPS
 			Vector3 routeDirection,
 			Vector3 goal,
 			float directDistance,
-			bool allowShortcut,
-			bool allowRescue,
 			float pathSavings,
 			float maxShortcutDistance,
-			float maxRescueDistance,
 			float sideTolerance,
 			float minClimbHeight,
-			float rescueLandingHeightTolerance,
-			float rescueLandingFlatTolerance,
 			ref ZombieClimbCandidate bestCandidate,
 			ref float bestScore,
 			ref bool found)
@@ -462,7 +417,7 @@ namespace SimpleFPS
 			// A crossing farther along the route than this is always rejected (distanceToFace > maxDistance or
 			// > directDistance + sideTolerance), so there is no need to sweep beyond it — a far goal does not pull in
 			// the whole map.
-			float maxAlong = Mathf.Min(directDistance + sideTolerance, Mathf.Max(maxShortcutDistance, maxRescueDistance));
+			float maxAlong = Mathf.Min(directDistance + sideTolerance, maxShortcutDistance);
 			float walkLength = Mathf.Max(0f, maxAlong);
 			int steps = Mathf.Max(1, Mathf.CeilToInt(walkLength / cellSize));
 
@@ -485,8 +440,7 @@ namespace SimpleFPS
 						for (int b = 0; b < bucket.Count; b++)
 						{
 							TryEvaluateSurface(_terrainSurfaces[bucket[b]], origin, goal, routeDirection, directDistance,
-								allowShortcut, allowRescue, pathSavings, maxShortcutDistance, maxRescueDistance,
-								sideTolerance, minClimbHeight, rescueLandingHeightTolerance, rescueLandingFlatTolerance,
+								pathSavings, maxShortcutDistance, sideTolerance, minClimbHeight,
 								ref bestCandidate, ref bestScore, ref found);
 						}
 					}
@@ -500,15 +454,10 @@ namespace SimpleFPS
 			Vector3 goal,
 			Vector3 routeDirection,
 			float directDistance,
-			bool allowShortcut,
-			bool allowRescue,
 			float pathSavings,
 			float maxShortcutDistance,
-			float maxRescueDistance,
 			float sideTolerance,
 			float minClimbHeight,
-			float rescueLandingHeightTolerance,
-			float rescueLandingFlatTolerance,
 			ref ZombieClimbCandidate bestCandidate,
 			ref float bestScore,
 			ref bool found)
@@ -516,13 +465,11 @@ namespace SimpleFPS
 			if (surface.IsValid == false)
 				return;
 
-			bool canShortcutBase = allowShortcut &&
-			                       (surface.Usage & ZombieClimbSurfaceUsage.TerrainShortcut) != 0 &&
+			// Shortcut faces only. The old Rescue usage was superseded by ZombieAI's climb pursuit (physics-probed,
+			// goal-height-capped); Rescue-only registrations are inert.
+			bool canShortcutBase = (surface.Usage & ZombieClimbSurfaceUsage.TerrainShortcut) != 0 &&
 			                       pathSavings >= surface.ShortcutMinPathSavings;
-			bool canRescueBase = allowRescue &&
-			                     (surface.Usage & ZombieClimbSurfaceUsage.Rescue) != 0 &&
-			                     Mathf.Abs(surface.TopY - goal.y) <= rescueLandingHeightTolerance;
-			if (canShortcutBase == false && canRescueBase == false)
+			if (canShortcutBase == false)
 				return;
 
 			Vector3 originFromCenter = origin - surface.Center;
@@ -530,12 +477,12 @@ namespace SimpleFPS
 			float originDepth = Vector3.Dot(originFromCenter, surface.ClimbDirection);
 			float routeDepth = Vector3.Dot(routeDirection, surface.ClimbDirection);
 
-			bool canShortcutClimb = canShortcutBase && goal.y > origin.y + minClimbHeight;
-			TryEvaluateUpwardCrossing(surface, origin, goal, routeDirection, directDistance,
-				canShortcutClimb, canRescueBase, originDepth, routeDepth, maxShortcutDistance, maxRescueDistance,
-				sideTolerance, minClimbHeight, rescueLandingFlatTolerance, ref bestCandidate, ref bestScore, ref found);
+			bool canShortcutClimb = goal.y > origin.y + minClimbHeight;
+			TryEvaluateUpwardCrossing(surface, origin, routeDirection, directDistance,
+				canShortcutClimb, originDepth, routeDepth, maxShortcutDistance,
+				sideTolerance, minClimbHeight, ref bestCandidate, ref bestScore, ref found);
 
-			bool canShortcutDrop = canShortcutBase && goal.y < origin.y - minClimbHeight;
+			bool canShortcutDrop = goal.y < origin.y - minClimbHeight;
 			TryEvaluateDownwardCrossing(surface, origin, routeDirection, directDistance,
 				canShortcutDrop, originDepth, routeDepth, maxShortcutDistance, sideTolerance, minClimbHeight,
 				ref bestCandidate, ref bestScore, ref found);
@@ -544,23 +491,19 @@ namespace SimpleFPS
 		private static void TryEvaluateUpwardCrossing(
 			ZombieClimbSurface surface,
 			Vector3 origin,
-			Vector3 goal,
 			Vector3 routeDirection,
 			float directDistance,
 			bool canShortcut,
-			bool canRescue,
 			float originDepth,
 			float routeDepth,
 			float maxShortcutDistance,
-			float maxRescueDistance,
 			float sideTolerance,
 			float minClimbHeight,
-			float rescueLandingFlatTolerance,
 			ref ZombieClimbCandidate bestCandidate,
 			ref float bestScore,
 			ref bool found)
 		{
-			if (canShortcut == false && canRescue == false)
+			if (canShortcut == false)
 				return;
 
 			float rise = surface.TopY - origin.y;
@@ -573,20 +516,16 @@ namespace SimpleFPS
 			if (originDepth > sideTolerance)
 				return;
 
-			float maxDistance = canShortcut ? maxShortcutDistance : maxRescueDistance;
 			float distanceToFace = Mathf.Max(0f, -originDepth / routeDepth);
-			if (distanceToFace > maxDistance || distanceToFace > directDistance + sideTolerance)
+			if (distanceToFace > maxShortcutDistance || distanceToFace > directDistance + sideTolerance)
 				return;
 
 			if (TryBuildCrossingCandidate(surface, origin, routeDirection, distanceToFace, sideTolerance,
-				    surface.ClimbDirection, surface.TopY, true, canRescue && canShortcut == false,
+				    surface.ClimbDirection, surface.TopY, true,
 				    out ZombieClimbCandidate candidate) == false)
 				return;
 
-			if (candidate.IsRescue && FlatDistanceSqr(candidate.LandingPoint, goal) > rescueLandingFlatTolerance * rescueLandingFlatTolerance)
-				return;
-
-			float score = distanceToFace + (canRescue ? 0f : 0.25f);
+			float score = distanceToFace + 0.25f;
 			if (score >= bestScore)
 				return;
 
@@ -624,7 +563,7 @@ namespace SimpleFPS
 				return;
 
 			if (TryBuildCrossingCandidate(surface, origin, routeDirection, distanceToFace, sideTolerance,
-				    -surface.ClimbDirection, surface.BaseY, false, false, out ZombieClimbCandidate candidate) == false)
+				    -surface.ClimbDirection, surface.BaseY, false, out ZombieClimbCandidate candidate) == false)
 				return;
 
 			float score = distanceToFace + 0.5f;
@@ -645,7 +584,6 @@ namespace SimpleFPS
 			Vector3 landingDirection,
 			float landingY,
 			bool requiresClimb,
-			bool isRescue,
 			out ZombieClimbCandidate candidate)
 		{
 			candidate = default;
@@ -669,16 +607,8 @@ namespace SimpleFPS
 				landingPoint,
 				landingDirection,
 				distanceToFace,
-				isRescue,
 				requiresClimb);
 			return true;
-		}
-
-		private static float FlatDistanceSqr(Vector3 a, Vector3 b)
-		{
-			a.y = 0f;
-			b.y = 0f;
-			return (a - b).sqrMagnitude;
 		}
 
 		private static void AddTerrainSurface(

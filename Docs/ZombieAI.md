@@ -152,13 +152,20 @@ Rules:
   re-aiming it at the newest shot every ~5 s. Exception: a zombie within `InvestigationRetriggerDistance`
   (default 3 m, flat) of its current point accepts a fresh stimulus **immediately** — that point is essentially
   spent, and this only applies while investigating (an actively chasing zombie never diverts to stimuli).
-  Directly spotting a survivor overrides everything instantly, and stimuli are still ignored during an active
-  surface climb so a retarget cannot drop the zombie off a wall.
+  Directly spotting a survivor overrides everything instantly, and stimuli are still ignored during any
+  active climb so a retarget cannot drop the zombie off a wall.
 - *Relaxed reached:* standing flat-on-top of the point while the navigator reports arrival counts as
   investigated even when the point itself hangs above reach — bullet-impact stimuli aim at the shooter's
   *muzzle*, ~1.5 m above ground, which the height-aware reached check alone would never accept (zombies froze
   on the stimulus spot before this).
 - If the point is reached without finding a survivor, switch to Idle there.
+- **Give up on unreachable points.** If the zombie makes no flat+vertical progress toward the point of at
+  least `InvestigationMinProgress` for `InvestigationGiveUpTimeout` (10 s), it abandons the point and
+  returns to Idle wandering. The clock deliberately runs even while climbing: a productive climb resets it
+  through real distance improvement, a stalled climb dies via `ClimbStuckTimeout`, and only a capped
+  wall-climb yo-yo (unreachable interior point) accumulates the full 10 s — exactly the case that must give
+  up. This is the pre-overtime "return to wandering" guarantee; overtime Hunting has no investigation path
+  and never gives up.
 - Do not return to the original idle position.
 - Do not periodically reconsider the investigation point.
 
@@ -207,64 +214,83 @@ Rules:
 - Use overtime stats.
 - Ignore alerts because all zombies already have hunting knowledge.
 
-## Explicit-Goal Routing
+## Explicit-Goal Routing (V6 — reactive wall climbing)
 
-Investigating, Attacking, and Hunting all have a concrete world-space goal. Normal walking still uses `CharacterNavigator` and NavMesh corners. Climbing is not represented as NavMesh links or special NavMesh areas. Zombies use registered **climb surfaces** for terrain/building-style traversal, plus a separate road-only direct chase mode for nearby visible survivors.
+Investigating, Attacking, and Hunting all have a concrete world-space goal. V6's rule is one sentence: **always move toward the goal — walk the NavMesh while pathfinding can get closer, and when it cannot, walk straight at the goal and climb whatever wall the body touches, capped by the roof rule.** Climbing is a *reaction to contact*, never a decision made from landing probes or reachability verdicts — every earlier inference-based design failed on exactly those (see `Docs/ZombieAIDesignHistory.md`, V1–V5). No manual components are required for anything; zombies can climb basically any surface.
 
-How it works:
+Per tick, in order:
 
-1. **Normal route first for non-road goals.** The navigator calculates the ordinary walking path to the explicit goal. If walking is the best option, the zombie follows path corners exactly like before. NavMesh corner advancement uses full 3D distance so vertically stacked switchback-ramp corners are not skipped from the floor below. The navigator's close-range reached check also requires a clear NavMesh segment, so it keeps routing around railings and platform dividers instead of stopping through them.
-2. **Terrain ledge shortcuts.** `ZombieOrchestrator` builds broad climbable face segments from `WorldHeightSnapshot` for every non-walkable ledge. When the direct line to the goal crosses one of those generated faces and the normal NavMesh path is at least `TerrainClimbShortcutMinPathSavings` metres longer than direct movement, the zombie ignores the ramp detour and takes the generated ledge face instead. While still outside `ClimbSurfaceEngageDistance`, it closes on the direct-line approach point at that face; once close enough, it climbs or drops through the face toward the survivor/goal. This applies to investigation targets too, so sound and bullet-impact stimuli can still pull zombies over ledges instead of sending them across the map to the nearest ramp. Walkable ledges and ramp road tiles are skipped because ordinary NavMesh already handles them.
-3. **Road direct chase.** When a zombie has a directly sensed survivor target, or an explicit visible investigation/last-known goal, the goal resolves to a road cell in `WorldGridSnapshot`, and flat distance is within `RoadDirectMaxDistance`, the zombie ignores path corners and walks directly toward it. The zombie itself does not have to be on a road cell, so it can step from a nearby prop/navmesh island back into street-prop chase behavior. The direct sensor hit is trusted as the visibility gate; non-sensed explicit points still use a world ray, so a blocker such as a pole or wall prevents road-direct and lets normal pathing go around. In this road-only mode it may climb local blockers such as cars, trucks, crates, and street fence lips up to `RoadDirectMaxObstacleHeight` metres. Before committing to a road-direct mantle, the AI rejects landings that already have an efficient normal NavMesh path from the zombie. This keeps ramps, slopes, and other walkable height transitions as ordinary walking instead of short climb/mantle snaps. A candidate street-obstacle landing must either be on the same support object as the goal or make flat-distance progress toward the goal, which prevents zombies from vaulting onto a wrong smaller car that is farther from the survivor. If the zombie is already stranded on a different prop support than the goal, candidate landings on that wrong support are rejected so it first walks/drops toward the useful ground or target prop. If the zombie becomes higher than the goal by more than `RoadDirectClimbMaxZombieHeightAboveTarget`, road direct chase keeps walking but stops climbing, so it drops back down instead of living on the prop.
-4. **Rescue climbs.** Props and buildings can register climb surfaces through `ZombieClimbableSurface`. These are normally `Rescue` surfaces: zombies ignore them during ordinary movement, but once an explicit survivor target is elevated and the navigator has already reached the closest reachable ground (or reports the target unreachable), the zombie may climb a nearby registered face whose top height matches the target within `RescueLandingHeightTolerance` and whose landing point is within `RescueLandingFlatTolerance` of the target. Use these for props on building/ledge tiles where street direct chase is intentionally unavailable.
-5. **Explicit-goal stuck fallback.** If a zombie is already stranded off NavMesh or on a tiny elevated NavMesh island and has an explicit goal (survivor, overtime target, sound, or bullet-impact investigation), it first checks whether a complete NavMesh path to the goal exists. A complete route always wins, even on a small elevated platform. Only when no complete path exists does it walk directly toward the goal to step/drop back to useful ground and re-evaluate through the normal road/surface/path rules. If the goal has no useful flat direction, it falls back to the idle random unstuck direction.
-6. **Idle stuck fallback.** If there is no visible survivor and an idle zombie is off NavMesh or on a tiny elevated NavMesh island (`StuckSmallIslandRadius`), it walks in a random direction for a short time. This is deliberately simple: it is just a way to fall off a prop and return to normal thinking.
+1. **Reached** (flat + height) → melee/look.
+2. **Active climb continues.** Surface climbs (terrain registry) keep their landing logic; wall climbs run cap/crest/stall checks (below). The navigator stays cleared during climbs.
+3. **Navigator update** (`SetDynamicDestination`/`SetDestination` + `Tick`). A one-tick path-loss transient (the navigator drops its path when a midpoint chain's last corner is consumed) is bridged by a single forced repath so it cannot masquerade as "cannot get closer".
+4. **Terrain shortcut surfaces** (generated registry — deterministic data, kept verbatim from earlier versions; the one mechanism that has never failed). Ledge shortcut climbs and drop-downs, exactly as before.
+5. **Path mode** — pathfinding can get closer (a usable steering corner exists): walk the corners. NavMesh routes are preferred over climbing by contract. One exception: the **near-goal vault** — within `VaultTriggerMaxDistance` (6 m) of the goal, a LOW obstacle blocking the direct line (wall ray hits at chest height, a parallel ray at vault height misses) is hopped instead of pathed around: the car or fence between the zombie and the survivor.
+6. **Direct mode** — pathfinding cannot get closer, derived purely from existing navigator signals (zero new NavMesh queries): destination unreachable, no path (off-mesh start, or arrived at the nearest navigable point short of the goal), or flat-arrived at a steering corner that 3D corner advancement can never consume while genuinely off the mesh (standing on a prop above one's own path). Walk straight at the goal; on wall contact → **wall climb**.
+7. **Jam reflex** — the sole never-still safety net, applied to every move input: a nonzero move input producing ~zero real velocity for `JamTimeout` (0.75 s) means the body is physically blocked → random sidestep for 1–2.5 s, then resume. Raw physics, deliberately goal-agnostic, never reset by goal/state changes (anything reset by the route-clear path is silently capped at the 1 s attack-retarget cadence).
 
-If no generated or prefab-authored climb surfaces exist, zombies still use ordinary NavMesh walking and melee. Street props are handled by road direct chase only when there is a nearby visible survivor.
+### Wall climbs
+
+**Trigger** (direct mode always; path mode only as the near-goal vault): one short ray at `WallProbeHeight` (0.55) in the movement direction, length `WallProbeDistance` (0.6). The hit must be a real wall (`normal.y < WallMaxNormalY` — ramps and slopes belong to the navigator) that actually blocks us (`dot(-normal, moveDir) >= WallMinFacingDot` — no grazing triggers), and the zombie must be meaningfully below the cap.
+
+**The one cap formula** (the roof rule + the vault allowance), computed at climb start:
+
+```text
+capY = max(goal.y + AboveGoalTolerance, climbStartFeetY + VaultMaxHeight)
+```
+
+Survivor on a roof → cap sits above the roof lip → full ascent. Survivor inside floor 2 → cap = floor2 + 1.5 → window-height entries where openings exist, **never the roof**. Same-level goal beyond a car → cap = feet + 2.25 → hops it; a building face toward a same-level goal caps out harmlessly and can never be scaled.
+
+**Movement**: `WantsToClimb` + flat input toward the goal — the body presses into the face and rises (existing `ZombieCharacter` execution, unchanged); the lateral input component slides it along the wall toward under-the-goal.
+
+**Termination** (all geometric, per tick):
+- *Roof cap*: feet ≥ capY → gravity resumes + `ClimbCooldown`, so the fall / jam-sidestep / re-climb loop shifts position instead of vibrating at the cap band. Besieging an unreachable interior target yo-yos on the wall — dumb but alive, by design; pre-overtime the investigation give-up ends it, overtime persists.
+- *Crest*: the wall ray stops hitting → one forward-down probe (`CrestProbeForwardDistance`/`CrestProbeDownDistance`) finds the just-crested surface (must be standable: `normal.y >= CrestLandingMinNormalY`) → existing networked mantle. This is the only landing probe left in the system, taken from a spot the body has physically reached — it cannot start inside hollow prop shells the way ground-based landing inference did. A deep opening with no floor keeps rising through the commit grace, then drops with cooldown. Thin walls resolve to the far-side ground = a visual vault over the top.
+- *Stall / duration*: the existing progress-based stuck timeout and rise-scaled duration cap, unchanged.
+
+The investigation give-up timer is deliberately **not** paused while climbing: a productive climb resets it through real distance improvement, a stalled climb dies via `ClimbStuckTimeout`, and only the capped yo-yo accumulates the 10 s — exactly the case that must give up.
 
 ### Authoring contract (no cheese)
 
-A zombie reaches a survivor given that every survivor-reachable elevated place has either ordinary NavMesh access, a registered climb surface whose landing height matches that place, or is a street obstacle within road direct chase range and visibility. Terrain ledges are automatic. Reusable tall props and buildings still opt in once at the prefab/root level with `ZombieClimbableSurface`; ordinary street cars/crates/fence lips are expected to be handled by road direct chase without per-prop authoring.
+Walls have no hooks/overhangs — always climbable to the top. Where a NavMesh route to the target exists it is preferred over climbing (path mode owns those ticks). Survivor-reachable places need either a walking route or wall faces at-or-below the survivor's height with standable tops within crest-probe reach. No per-prop or per-building components, ever. `ZombieClimbableSurface` remains only as an optional authored *shortcut* face (usage `TerrainShortcut`).
 
 ### Surface / authoring setup
 
-- Terrain ledge climb surfaces are generated automatically from `WorldHeightSnapshot` by `ZombieClimbSurfaces.BuildTerrain`, called by `ZombieOrchestrator.RefreshClimbSurfaces`. The generated face sits on the ledge tile center line where the low and high halves meet; corner ledges generate two half-length faces for their actual exposed sides.
+- Terrain ledge climb surfaces are generated automatically from `WorldHeightSnapshot` by `ZombieClimbSurfaces.BuildTerrain`, called by `ZombieOrchestrator.RefreshClimbSurfaces`. The generated face sits on the ledge tile center line; corner ledges generate two half-length faces for their exposed sides.
 - Walkable ledges (stairs / gentle ramps flagged `AllowsTraversalWithoutRoad`) get no climb surface because both factions can already walk them.
-- Perch props such as crates, dumpsters, fences, balconies, and roof access points on building/ledge tiles can add `ZombieClimbableSurface` on the reusable prefab root when they need reliable rescue climbing. Street cars/trucks normally do not need this component.
-- Roof-capable building prefabs should add `ZombieClimbableSurface` on the building root if players can reach the roof and zombies must be able to follow. Keep those surfaces `Rescue` unless the building exterior should also be used as a normal shortcut.
-- `ZombieClimbableSurface` builds four climb faces from child collider bounds by default. If a prefab's collider bounds are too broad or too narrow, enable `UseManualLocalBounds` and size the local box to the climbable volume.
+- `ZombieClimbableSurface` builds four climb faces from child collider bounds by default (manual local bounds available). Only the `TerrainShortcut` usage does anything; `Rescue` registrations are ignored.
 
-Configurable terrain-surface knobs live on `ZombieOrchestrator` (`BuildTerrainClimbSurfaces`, `TerrainClimbShortcutMinPathSavings`, `TerrainClimbSurfaceWidthFactor`, `TerrainClimbLandingInset`). On `ZombieAI` only the capability toggles and feel values are inspector knobs (`UseClimbSurfaces`, `UseTerrainShortcutClimbs`, `UseRescueClimbs`, `ClimbSpeedMultiplier`, `ClimbMantleMaxSnapHeight`, `UseRoadDirectMovement`, `RoadDirectMaxDistance`); every other climb/road-direct value (engage distances, probe geometry, landing insets, commit/stuck/cooldown timers, tolerances) is a code constant in `ZombieAI.cs` carrying the tuned value. `ClimbDirectApproachDistance` (constant 18) limits nearby rescue climb searches, while terrain shortcut ledges are searched along the full direct segment to the explicit goal. `ExplicitGoalClimbRefreshInterval` (constant 0.2) throttles the expensive surface scan / approach-validation step per zombie and is jittered so hordes do not all refresh on the same tick. `TerrainClimbLandingInset`, `ZombieClimbableSurface.LandingInset`, and the road-direct landing inset constant control how far inward the mantle endpoint is placed.
+Configurable terrain-surface knobs live on `ZombieOrchestrator` (`BuildTerrainClimbSurfaces`, `TerrainClimbShortcutMinPathSavings`, `TerrainClimbSurfaceWidthFactor`, `TerrainClimbLandingInset`). On `ZombieAI` only the capability toggles and feel values are inspector knobs (`UseClimbSurfaces`, `UseTerrainShortcutClimbs`, `UseWallClimbs`, `ClimbSpeedMultiplier`, `ClimbMantleMaxSnapHeight`); everything else is a code constant in `ZombieAI.cs` carrying the tuned value.
 
 ## Climb Execution
 
-Once `BuildExplicitGoalMoveInput` commits to a registered climb surface or road direct chase commits to a street-obstacle mantle, `ZombieAI.WantsToClimb` drives the ascent and `ZombieCharacter` turns it into movement:
+Once `BuildExplicitGoalMoveInput` commits to a registered climb surface, or a reactive wall climb starts on wall contact, `ZombieAI.WantsToClimb` drives the ascent and `ZombieCharacter` turns it into movement:
 
 - While climbing, `ZombieCharacter` disables gravity, scales horizontal speed by `ClimbSpeedMultiplier`, and applies an upward KCC impulse. The zombie presses horizontally into the cliff face and rises.
-- The climb goal is the surface landing point: the direct-route contact point projected to the surface top and inset slightly onto the landing side. Once the zombie is within `ClimbMantleMaxSnapHeight` vertically and `ClimbMantleMaxHorizontalSnapDistance` horizontally, it mantles directly onto that point.
+- **Surface climbs** aim at the registry landing point: the direct-route contact point projected to the surface top and inset onto the landing side. Once the zombie is within `ClimbMantleMaxSnapHeight` vertically and `ClimbMantleMaxHorizontalSnapDistance` horizontally, it mantles directly onto that point. **Wall climbs** have no landing in advance — they end by cap, crest probe + mantle, stall, or duration (see Explicit-Goal Routing).
 - `ZombieCharacter.MantleTo` spreads the hoist over `MantleAnimationDuration` (default `0.25s`, ease-out cubic) so the body visibly clambers up instead of teleporting. `MantleAnimationDuration = 0` reverts to the instant `KCC.SetPosition` behaviour.
 - A short commit timer (`ClimbCommitDuration`) keeps the climb impulse from flickering off across a state transition that happens mid-climb (Investigating -> Attacking when the zombie crests the ledge and finally sees the survivor, for example). Resetting it on the state change would drop the zombie back below the ledge and loop.
+- **An active climb survives goal movement while the goal stays above the zombie.** Attack retargeting re-fires `StartAttack` for the *same* survivor at its new position every `AttackRetargetInterval`, and sight loss hands off to `StartInvestigation` — both clear the explicit-goal route. `ShouldPreserveActiveClimbForTarget` keeps the climb whenever the new goal is still more than a step above the zombie (a target strolling along the ledge top used to drop climbers off the wall mid-ascent, who then fell, re-approached, and climbed the same face again). Only a goal that moved *below* the zombie falls back to the old landing-proximity rule and cancels the ascent.
 - While actively climbing, investigation stimuli from shots/noise do not clear the current climb. The zombie finishes the ledge commitment first, then resumes normal target evaluation.
 - While Attacking or Hunting, a zombie already inside `ZombieStats.AttackRange` holds position and faces the target during attack cooldown instead of pushing forward, so a packed crowd does not try to scale the wall behind a survivor it can already hit. This hold is skipped for a target above the zombie that still requires climbing. A zombie actively climbing can melee a survivor directly above it (capped by the larger of attack range and `ClimbMantleMaxSnapHeight`) without canceling the climb, so a survivor on the ledge lip cannot make it hang helplessly below.
 
 A full terrain step is `HeightLevelWorldUnits` tall; the zombie scales most of it by sustained climb impulse against the cliff face, then mantles the last part onto the surface landing point.
 
-Movement / climb values. Since the July 2026 knob reduction only the first group is inspector-editable on
-`ZombieAI`; the second group are `private const` fields in `ZombieAI.cs` (change them in code — they carry the
-values that were tuned on the BlockZombie prefab):
+The absolute climb cap scales with the committed rise: `max(ClimbMaxDuration, rise / climbSpeed * 1.5)`. At ~1 m/s climb speed a fixed 15 s cap would truncate any ≥ ~13 m building-wall ascent mid-climb and reintroduce the historic rise/drop oscillation; the progress-based `ClimbStuckTimeout` remains the real abort signal.
+
+Movement / climb values. Only the first group is inspector-editable on `ZombieAI`; the second group are
+`private const` fields in `ZombieAI.cs` (change them in code — they carry the tuned values):
 
 ```text
 Inspector knobs (defaults = tuned prefab values):
-StoppingDistance: 0.66           (also the explicit hunt/attack arrival distance — the old separate
-                                  ExplicitGoalStoppingDistance knob was merged into it)
+StoppingDistance: 0.66           (also the explicit hunt/attack arrival distance)
 MaxYawDegreesPerTick: 6
 UseClimbSurfaces: true
 UseTerrainShortcutClimbs: true
-UseRescueClimbs: true
+UseWallClimbs: true              (was UseClimbPursuit / UseRescueClimbs; FormerlySerializedAs migrates)
 ClimbSpeedMultiplier: 0.45       (climb rises at MoveSpeed x this; raise for a faster climb)
 ClimbMantleMaxSnapHeight: 1.75
-UseRoadDirectMovement: true
-RoadDirectMaxDistance: 18
+LogTraversalDebug: false         (debug: logs this zombie's routing gates — climb kind/cap, cooldown, jam,
+                                  navigator signals — twice a second while it has an explicit goal)
 
 Constants in ZombieAI.cs:
 DirectMoveDistance: 0.75
@@ -272,29 +298,32 @@ IdleWanderNavMeshSampleDistance: 8   (also serves as the reachable-point sample 
 IdleWanderStuckTimeout: 3
 IdleWanderStuckMinProgress: 0.25
 ExplicitGoalHeightTolerance: 0.75
-CloseGapDirectMaxDistance: 4
 ClimbSurfaceEngageDistance: 1.25
 ClimbDirectApproachDistance: 18
 ExplicitGoalClimbRefreshInterval: 0.2
 ClimbRouteSideTolerance: 1.6
 ClimbMinRise: 0.75
-RescueMinTargetHeight: 0.75
-RescueLandingHeightTolerance: 2.5
-RescueLandingFlatTolerance: 2.5
 ClimbStuckTimeout: 1.5
-ClimbMaxDuration: 15
+ClimbMaxDuration: 15             (floor; the real cap scales with the committed rise, see above)
 ClimbCooldown: 2
 ClimbCommitDuration: 0.75
 ClimbMantleMaxHorizontalSnapDistance: 1.5
-RoadDirectMaxObstacleHeight: 5
-RoadDirectClimbMaxZombieHeightAboveTarget: 0.75
-RoadDirectClimbMinRise: 0.2
-RoadDirectClimbProbeDistance: 1.25
-RoadDirectClimbMaxHeight: 2.25
-RoadDirectClimbLandingInset: 0.75
-RoadDirectClimbMinSurfaceNormalY: 0.45
-RoadDirectWalkableLandingSampleDistance: 1
-RoadDirectWalkableLandingPathTolerance: 0.75
+WallProbeHeight: 0.55            (wall-touch ray height)
+WallProbeDistance: 0.6           (wall-touch ray length — climbing engages on contact, not at range)
+WallMaxNormalY: 0.45             (hits flatter than this are ramps/slopes — the navigator's business)
+WallMinFacingDot: 0.5            (the wall must actually block the movement direction, no grazing triggers)
+AboveGoalTolerance: 1.5          (the roof rule: never rise past goal height + this)
+VaultMaxHeight: 2.25             (small-vault allowance of the cap formula; also the path-mode low-obstacle
+                                  height gate)
+VaultTriggerMaxDistance: 6       (path mode vaults low obstacles only this close to the goal)
+CrestProbeForwardDistance: 0.6
+CrestProbeDownDistance: 1.5
+CrestLandingMinNormalY: 0.45     (only mantle onto standable tops)
+JamVelocityThreshold: 0.15       (jam reflex: input active but flat velocity below this = physically blocked)
+JamTimeout: 0.75                 (blocked this long -> random sidestep for 1-2.5 s)
+SupportProbeDistance: 6          (support-collider down-ray length, used by idle stuck recovery)
+InvestigationGiveUpTimeout: 10
+InvestigationMinProgress: 0.25
 StuckSmallIslandRadius: 4
 MaxAlertRecipients: 16
 AlertCooldown: 2

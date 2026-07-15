@@ -39,20 +39,26 @@ namespace SimpleFPS
 		public float MaxYawDegreesPerTick = 6f;
 
 		[Header("Climbing")]
-		// Zombies steer directly toward explicit goals, but may only climb broad registered climb surfaces: generated
-		// terrain ledge faces and prefab-authored rescue faces on props/buildings. See Docs/ZombieAI.md.
+		// V6 reactive traversal: climbing is a REACTION to touching a wall while moving at the goal in direct mode
+		// (pathfinding cannot get closer), never a decision made from landing probes or reachability verdicts.
+		// Registered climb surfaces (generated terrain ledge faces / authored shortcut faces) stay as deterministic
+		// shortcut data. See Docs/ZombieAI.md.
 		[FormerlySerializedAs("CanClimbUnreachableTargets")]
 		[FormerlySerializedAs("CanClimbDirectGoals")]
 		public bool UseClimbSurfaces = true;
 		public bool UseTerrainShortcutClimbs = true;
-		public bool UseRescueClimbs = true;
+		// Reactive wall climbs: in direct mode, a wall touched while moving toward the goal is climbed, capped at
+		// max(goal height + AboveGoalTolerance, start + VaultMaxHeight). Successor of pursuit/rescue/chase climbs.
+		[FormerlySerializedAs("UseRescueClimbs")]
+		[FormerlySerializedAs("UseClimbPursuit")]
+		public bool UseWallClimbs = true;
 		public float ClimbSpeedMultiplier = 0.45f;
 		public float ClimbMantleMaxSnapHeight = 1.75f;
 
-		[Header("Road Direct Movement")]
-		[FormerlySerializedAs("UseEmergencyObstacleClimbs")]
-		public bool UseRoadDirectMovement = true;
-		public float RoadDirectMaxDistance = 18f;
+		[Header("Debug")]
+		// Logs this zombie's explicit-goal routing gates twice a second while it has an explicit goal. Enable on a
+		// misbehaving zombie in the editor to see which traversal branch owns it and why.
+		public bool LogTraversalDebug;
 
 		// --- Internal tuning constants (previously inspector fields; values are the tuned prefab values). ---
 
@@ -73,16 +79,15 @@ namespace SimpleFPS
 		// the commit timer is bypassed (the point is spent). Seeing a survivor always overrides instantly.
 		private const float InvestigationCommitDuration = 5f;
 		private const float InvestigationRetriggerDistance = 3f;
+		// Give-up: an investigation that makes no flat+vertical progress toward its point for this long (while not
+		// actively climbing) is abandoned back to Idle wandering. This is the pre-overtime "return to wandering"
+		// guarantee for unreachable points; overtime hunting has no investigation path and never gives up.
+		private const float InvestigationGiveUpTimeout = 10f;
+		private const float InvestigationMinProgress = 0.25f;
 
 		// Movement internals.
 		private const float DirectMoveDistance = 0.75f;
 		private const float ExplicitGoalHeightTolerance = 0.75f;
-		// When the navmesh can get the zombie no closer to its goal (it "reached" the nearest navigable point, or
-		// there is no complete path) but the goal is still this close and in direct line of sight, the zombie steps
-		// straight toward it to close the final gap instead of staring. Recovers targets standing on the thin
-		// navmesh strip against a wall, where the path cannot quite reach them. The line-of-sight gate is the real
-		// safety, not the distance.
-		private const float CloseGapDirectMaxDistance = 4f;
 
 		// Climb execution internals.
 		private const float ClimbSurfaceEngageDistance = 1.25f;
@@ -91,9 +96,6 @@ namespace SimpleFPS
 		private const float ExplicitGoalClimbRefreshInterval = 0.2f;
 		private const float ClimbRouteSideTolerance = 1.6f;
 		private const float ClimbMinRise = 0.75f;
-		private const float RescueMinTargetHeight = 0.75f;
-		private const float RescueLandingHeightTolerance = 2.5f;
-		private const float RescueLandingFlatTolerance = 2.5f;
 		private const float ClimbMantleMaxHorizontalSnapDistance = 1.5f;
 		// A committed climb is abandoned if it makes no upward progress for this long (genuinely stuck/blocked). A
 		// slow-but-rising climb keeps going — this is NOT a fixed clock, so a tall ledge that takes several seconds
@@ -105,16 +107,38 @@ namespace SimpleFPS
 		// cannot complete a climb from oscillating (rise, drop, re-engage) on the same spot.
 		private const float ClimbCooldown = 2f;
 
-		// Road-direct climb internals.
-		private const float RoadDirectMaxObstacleHeight = 5f;
-		private const float RoadDirectClimbMaxZombieHeightAboveTarget = 0.75f;
-		private const float RoadDirectClimbMinRise = 0.2f;
-		private const float RoadDirectClimbProbeDistance = 1.25f;
-		private const float RoadDirectClimbMaxHeight = 2.25f;
-		private const float RoadDirectClimbLandingInset = 0.75f;
-		private const float RoadDirectClimbMinSurfaceNormalY = 0.45f;
-		private const float RoadDirectWalkableLandingSampleDistance = 1f;
-		private const float RoadDirectWalkableLandingPathTolerance = 0.75f;
+		// Reactive wall-climb internals (V6). The wall-touch ray is a physical contact test, not a landing search:
+		// there is deliberately NO probing for where a climb will end. The climb rises until it caps (roof rule),
+		// crests (wall ray clears -> one crest probe -> mantle), stalls (progress timeout), or times out.
+		private const float WallProbeHeight = 0.55f;
+		private const float WallProbeDistance = 0.6f;
+		// Walls only: reject touch hits on ramps/slopes (normal.y >= this is walkable-ish ground, not a wall) and
+		// grazing hits on walls being walked past (facing dot below threshold).
+		private const float WallMaxNormalY = 0.45f;
+		private const float WallMinFacingDot = 0.5f;
+		// The roof rule + small-vault allowance in one cap, computed at climb start:
+		//   capY = max(goal.y + AboveGoalTolerance, climbStartFeetY + VaultMaxHeight)
+		// Survivor on a roof pulls the cap above the roof lip (full ascent); a survivor inside floor 2 caps climbs
+		// at window height (never the roof); a same-level goal beyond a car/fence gets the small vault; a taller
+		// building face toward a same-level goal caps out at VaultMaxHeight and can never be scaled.
+		private const float AboveGoalTolerance = 1.5f;
+		private const float VaultMaxHeight = 2.25f;
+		// Path mode normally never climbs (NavMesh routes are preferred by contract), with one exception: within
+		// this flat distance of the goal, a LOW obstacle (wall ray hits, parallel ray at vault height misses)
+		// blocking the direct line is vaulted instead of pathed around (hop the car between you and the survivor).
+		private const float VaultTriggerMaxDistance = 6f;
+		// Crest: when the wall-touch ray stops hitting mid-climb, one forward-down probe finds the surface just
+		// crested and mantles onto it. Landing must be standable (normal.y >= CrestLandingMinNormalY).
+		private const float CrestProbeForwardDistance = 0.6f;
+		private const float CrestProbeDownDistance = 1.5f;
+		private const float CrestLandingMinNormalY = 0.45f;
+		// Jam reflex — the sole never-still safety net: a nonzero move input producing ~zero real velocity for
+		// JamTimeout arms a short random sidestep. Raw physical blockage detection, deliberately goal-agnostic
+		// (goal-progress trackers are banned by design), never reset by goal/state changes.
+		private const float JamVelocityThreshold = 0.15f;
+		private const float JamTimeout = 0.75f;
+		// Down-ray length used to find the support collider under a position (used by idle stuck recovery).
+		private const float SupportProbeDistance = 6f;
 		private const float StuckSmallIslandRadius = 4f;
 
 		// Alert internals.
@@ -154,6 +178,10 @@ namespace SimpleFPS
 		// climb itself keeps driving to this landing until it crests or times out.
 		private bool _climbingSurface;
 		private Vector3 _climbLanding;
+		// Set while the zombie is in a reactive wall climb (V6). No landing is known in advance: the climb ends by
+		// cap (_wallClimbCapY, the roof rule), crest (wall ray clears -> crest probe -> mantle), stall, or timeout.
+		private bool _climbingWall;
+		private float _wallClimbCapY;
 		private float _climbUntil;
 		private float _climbStuckUntil;
 		private float _climbHighestY;
@@ -175,6 +203,20 @@ namespace SimpleFPS
 		private Vector3 _idleWanderProgressPosition;
 		private float _nextIdleWanderProgressCheckTime;
 		private float _idleWanderStuckSince = -1f;
+		// Jam reflex state (the sole never-still safety net). Deliberately NEVER reset by goal/state changes
+		// (ClearExplicitGoalRoute runs every AttackRetargetInterval for a sensed target, which would cap any timer
+		// here at 1 s); it self-rebaselines after a gap in move ticks instead.
+		private float _jamStuckSince = -1f;
+		private float _nextJamCheckTime;
+		private float _jamSidestepUntil;
+		// Path-loss transient filter: AdvanceCorner drops HasPath when a midpoint path's last corner is consumed;
+		// one forced repath bridges the <=0.35 s window that would otherwise read as direct mode mid-route.
+		private bool _hadPathLastTick;
+		// Investigation give-up state (pre-overtime return-to-wandering guarantee).
+		private float _investigationBestDistance;
+		private float _investigationNoProgressSince = -1f;
+		private float _nextInvestigationProgressCheckTime;
+		private float _nextTraversalDebugLogTime;
 
 		// Smallest rise that still counts as a mantle (floors the snap height so Mathf.Max never returns 0).
 		private const float MantleMinRise = 0.08f;
@@ -187,9 +229,6 @@ namespace SimpleFPS
 		private const float ClimbCandidateGoalRefreshDistance = 3f;
 		private const float ClimbCandidatePositionRefreshDistance = 3f;
 		private const float ShortcutBlockerProbeHeight = 0.8f;
-		private const float RoadDirectLineOfSightHeight = 1.5f;
-		private const float RoadDirectObstacleProbeHeight = 0.55f;
-		private const float RoadDirectLandingMinGoalProgress = 0.05f;
 		private const int ShortcutBlockerHitBufferSize = 16;
 
 		private readonly RaycastHit[] _shortcutBlockerHits = new RaycastHit[ShortcutBlockerHitBufferSize];
@@ -245,7 +284,7 @@ namespace SimpleFPS
 				return;
 			if (stimulusTick < _lastStimulusTick)
 				return;
-			if (_climbingSurface || ShouldIgnoreInvestigationStimulus())
+			if (_climbingSurface || _climbingWall || ShouldIgnoreInvestigationStimulus())
 				return;
 
 			_lastStimulusTick = stimulusTick;
@@ -327,7 +366,51 @@ namespace SimpleFPS
 				return default;
 			}
 
+			// Give-up: an unreachable point (roof noise with no climbable approach, sealed interior) must not hold
+			// the zombie forever — pre-overtime it returns to Idle wandering instead. Progress is flat + vertical
+			// distance to the point, so an active staged climb counts as progress.
+			if (ShouldGiveUpInvestigation())
+			{
+				ReturnToIdle();
+				return default;
+			}
+
 			return BuildExplicitGoalMoveInput(_investigationTarget, StoppingDistance);
+		}
+
+		private bool ShouldGiveUpInvestigation()
+		{
+			float now = Time.timeSinceLevelLoad;
+			if (now < _nextInvestigationProgressCheckTime)
+				return false;
+
+			_nextInvestigationProgressCheckTime = now + Mathf.Max(0.1f, StuckCheckInterval);
+
+			// Deliberately NOT paused while climbing: under V6's capped wall climbs a zombie besieging an
+			// unreachable interior point is climbing most of the time (the fall/shuffle/climb yo-yo), and pausing
+			// the clock during climbs would make this give-up never fire. A productive climb resets the timer
+			// through real distance improvement below; a stalled climb dies in ClimbStuckTimeout on its own; only
+			// the capped yo-yo accumulates the timeout — exactly the case that must give up.
+			float distance = GetGoalProgressDistance(_investigationTarget);
+			if (distance <= _investigationBestDistance - Mathf.Max(0.01f, InvestigationMinProgress))
+			{
+				_investigationBestDistance = distance;
+				_investigationNoProgressSince = -1f;
+				return false;
+			}
+
+			if (_investigationNoProgressSince < 0f)
+			{
+				_investigationNoProgressSince = now;
+				return false;
+			}
+
+			return now - _investigationNoProgressSince >= Mathf.Max(0.5f, InvestigationGiveUpTimeout);
+		}
+
+		private float GetGoalProgressDistance(Vector3 goal)
+		{
+			return FlatDistance(transform.position, goal) + Mathf.Abs(transform.position.y - goal.y);
 		}
 
 		private NetworkedInput UpdateAttacking()
@@ -376,10 +459,6 @@ namespace SimpleFPS
 				if (shouldPrioritizeClimb == false)
 					return BuildLookInput(targetPosition);
 			}
-			if (TryBuildRoadDirectTargetInput(targetPosition, true, out NetworkedInput roadInput))
-				return roadInput;
-			if (TryBuildVisibleStuckTargetInput(targetPosition, true, out NetworkedInput stuckInput))
-				return stuckInput;
 			if (shouldPrioritizeClimb == false && ShouldHoldMeleePosition(_target, targetPosition))
 				return BuildLookInput(targetPosition);
 
@@ -411,11 +490,6 @@ namespace SimpleFPS
 				if (shouldPrioritizeClimb == false)
 					return BuildLookInput(targetPosition);
 			}
-			bool targetDirectlySensed = sensed.Object == _target;
-			if (targetDirectlySensed && TryBuildRoadDirectTargetInput(targetPosition, true, out NetworkedInput roadInput))
-				return roadInput;
-			if (targetDirectlySensed && TryBuildVisibleStuckTargetInput(targetPosition, true, out NetworkedInput stuckInput))
-				return stuckInput;
 			if (shouldPrioritizeClimb == false && ShouldHoldMeleePosition(_target, targetPosition))
 				return BuildLookInput(targetPosition);
 
@@ -499,6 +573,10 @@ namespace SimpleFPS
 			_target = null;
 			State = EZombieAIState.Investigating;
 			_investigationStartTime = Time.timeSinceLevelLoad;
+			// A fresh (or re-triggered) point restarts the give-up budget.
+			_investigationBestDistance = GetGoalProgressDistance(target);
+			_investigationNoProgressSince = -1f;
+			_nextInvestigationProgressCheckTime = Time.timeSinceLevelLoad + Mathf.Max(0.1f, StuckCheckInterval);
 			ClearExplicitGoalRoute(ShouldPreserveActiveClimbForTarget(target));
 
 			if (fromAlert == false)
@@ -511,17 +589,32 @@ namespace SimpleFPS
 			if (navigator == null)
 				return BuildLookInput(goal);
 
-			if (TryBuildStuckExplicitGoalMoveInput(goal, out NetworkedInput stuckInput))
-				return stuckInput;
+			if (LogTraversalDebug && Time.timeSinceLevelLoad >= _nextTraversalDebugLogTime)
+			{
+				_nextTraversalDebugLogTime = Time.timeSinceLevelLoad + 0.5f;
+				Debug.Log(
+					$"[ZombieAI] {name} state={State} flat={FlatDistance(transform.position, goal):F2} " +
+					$"dy={goal.y - transform.position.y:F2} " +
+					$"climbSurface={_climbingSurface} climbWall={_climbingWall} capY={_wallClimbCapY:F2} " +
+					$"climbCooldown={Mathf.Max(0f, _climbCooldownUntil - Time.timeSinceLevelLoad):F1} " +
+					$"jam={(_jamStuckSince >= 0f ? Time.timeSinceLevelLoad - _jamStuckSince : 0f):F1} " +
+					$"sidestep={Mathf.Max(0f, _jamSidestepUntil - Time.timeSinceLevelLoad):F1} " +
+					$"navPath={navigator.HasPath} navReached={navigator.IsDestinationReached} " +
+					$"navUnreachable={navigator.IsDestinationUnreachable}",
+					this);
+			}
 
 			if (HasReachedExplicitGoal(goal, stoppingDistance))
 			{
 				_climbingSurface = false;
+				_climbingWall = false;
 				return BuildLookInput(goal);
 			}
 
-			if (TryBuildRoadDirectTargetInput(goal, false, out NetworkedInput roadInput))
-				return roadInput;
+			// Active climbs (surface or wall) are finished before anything else gets a vote; the navigator stays
+			// cleared for their duration.
+			if (TryContinueActiveClimb(goal, out NetworkedInput climbInput))
+				return climbInput;
 
 			// A live hunt/attack target moves every tick; SetDynamicDestination updates the goal in place and lets
 			// the navigator repath on its interval instead of recalculating the instant the target drifts. A fixed
@@ -532,210 +625,294 @@ namespace SimpleFPS
 				navigator.SetDestination(goal);
 			navigator.Tick(transform.position);
 
-			if (TryContinueActiveClimb(out NetworkedInput climbInput))
-				return climbInput;
-
-			if (_climbingSurface)
+			// Path-loss transient: AdvanceCorner drops HasPath when a midpoint path's last corner is consumed and
+			// the rebuild otherwise waits for the next repath (<= 0.35 s). Without bridging it, that window reads
+			// as "pathfinding cannot get closer" and can commit a spurious wall climb mid-route at every midpoint
+			// boundary. An off-mesh zombie never had a path, so this cannot loop.
+			if (_hadPathLastTick && navigator.HasPath == false &&
+			    navigator.IsDestinationReached == false && navigator.IsDestinationUnreachable == false)
 			{
-				float now = Time.timeSinceLevelLoad;
-
-				// Reset the stuck timer whenever we gain height, so a slow-but-rising climb is never cut off; only a
-				// climb that stops making upward progress (blocked) gives up. An absolute cap backstops it.
-				if (transform.position.y > _climbHighestY + 0.02f)
-				{
-					_climbHighestY = transform.position.y;
-					_climbStuckUntil = now + Mathf.Max(0.25f, ClimbStuckTimeout);
-				}
-
-				if (HasCrestedClimb(_climbLanding))
-				{
-					_climbingSurface = false;
-				}
-				else if (now >= _climbStuckUntil || now >= _climbUntil)
-				{
-					// Stuck (no progress) or hit the safety cap — sit out a cooldown so we do not immediately
-					// re-engage and oscillate.
-					_climbingSurface = false;
-					_climbCooldownUntil = now + Mathf.Max(0f, ClimbCooldown);
-				}
-				else
-				{
-					return BuildClimbInput(_climbLanding);
-				}
+				navigator.ForceRepath();
+				navigator.Tick(transform.position);
 			}
+			_hadPathLastTick = navigator.HasPath;
 
+			// Deterministic shortcut data keeps first claim: generated terrain ledge faces (and authored shortcut
+			// faces) are climbed/dropped through the registry exactly as before.
 			if (TryGetCachedDirectClimbCandidate(goal, navigator, out ZombieClimbCandidate climbCandidate))
-				return BuildClimbCandidateMoveInput(goal, climbCandidate);
+				return ApplyJamReflex(BuildClimbCandidateMoveInput(goal, climbCandidate));
 
-			if (navigator.TryGetSteeringTarget(transform.position, out Vector3 steer))
+			// Path mode: pathfinding can still get closer — walk the corners. One exception: a LOW obstacle
+			// blocking the direct line to a goal at most VaultTriggerMaxDistance away is hopped (the car or fence
+			// between zombie and survivor) instead of pathed around.
+			if (IsPathModeUsable(navigator, goal, stoppingDistance, out NetworkedInput pathInput))
 			{
-				float steerStoppingDistance = GetPathSteeringStoppingDistance(navigator, stoppingDistance);
-				Vector3 flatToSteer = steer - transform.position;
-				flatToSteer.y = 0f;
-				if (flatToSteer.sqrMagnitude <= steerStoppingDistance * steerStoppingDistance)
-					return BuildLookInput(goal);
+				if (FlatDistanceSqr(transform.position, goal) <= VaultTriggerMaxDistance * VaultTriggerMaxDistance &&
+				    TryStartWallClimb(goal, true, out NetworkedInput vaultInput))
+					return vaultInput;
 
-				Vector3 steerDirection = flatToSteer.normalized;
-				return BuildMoveInputFromDirection(steerDirection);
+				return ApplyJamReflex(pathInput);
 			}
 
-			// No usable navmesh steering toward the goal: the navigator reached the closest navigable point short of
-			// the real target, or found no complete path. If the goal is close and in clear line of sight, close the
-			// final gap on foot instead of staring (target on a thin navmesh strip against a wall).
-			if (TryBuildCloseGapDirectInput(goal, stoppingDistance, out NetworkedInput gapInput))
-				return gapInput;
+			// Direct mode: pathfinding cannot get closer. Always move toward the goal; a wall touched on the way
+			// is climbed, capped by the roof rule. This is the whole V6 traversal answer for props, roofs, and
+			// everything else the NavMesh cannot represent.
+			if (TryStartWallClimb(goal, false, out NetworkedInput wallClimbInput))
+				return wallClimbInput;
 
-			return BuildLookInput(goal);
-		}
-
-		// Last-resort approach for a directly visible, nearby goal the navmesh cannot route to. Only fires when the
-		// goal is within CloseGapDirectMaxDistance and in clear line of sight (so the straight line is unobstructed
-		// and stepping off the navmesh edge will not walk the zombie into geometry), and only while it has not yet
-		// reached the goal. Without this a hunting zombie just stares when its target stands on a thin navmesh strip
-		// against a wall that NavMesh.CalculatePath cannot quite reach.
-		private bool TryBuildCloseGapDirectInput(Vector3 goal, float stoppingDistance, out NetworkedInput input)
-		{
-			input = default;
-			if (HasReachedExplicitGoal(goal, stoppingDistance))
-				return false;
-
-			float maxDistance = Mathf.Max(0f, CloseGapDirectMaxDistance);
-			if (maxDistance <= 0f)
-				return false;
-			if (FlatDistanceSqr(transform.position, goal) > maxDistance * maxDistance)
-				return false;
-			if (HasRoadDirectLineOfSight(goal) == false)
-				return false;
-
-			input = BuildDirectGoalMoveInput(goal);
-			return input.MoveDirection != Vector2.zero;
-		}
-
-		private bool TryBuildRoadDirectTargetInput(Vector3 targetPosition, bool targetDirectlySensed, out NetworkedInput input)
-		{
-			input = default;
-			if (UseRoadDirectMovement == false)
-				return false;
-
-			float maxDistance = Mathf.Max(0.5f, RoadDirectMaxDistance);
-			if (FlatDistanceSqr(transform.position, targetPosition) > maxDistance * maxDistance)
-				return false;
-			if (IsOnRoadDirectTile(targetPosition) == false)
-				return false;
-			if (targetDirectlySensed == false && HasRoadDirectLineOfSight(targetPosition) == false)
-				return false;
-
-			ClearNavigator();
-
-			if (_climbingSurface)
+			NetworkedInput directInput = BuildDirectGoalMoveInput(goal);
+			if (directInput.MoveDirection == Vector2.zero)
 			{
-				if (transform.position.y - targetPosition.y > Mathf.Max(0f, RoadDirectClimbMaxZombieHeightAboveTarget))
+				// Goal directly overhead/below with no flat direction: random-walk to shift position.
+				return BuildStuckRandomMoveInput();
+			}
+
+			return ApplyJamReflex(directInput);
+		}
+
+		// "Pathfinding cannot get closer" — derived purely from existing navigator signals, zero NavMesh queries:
+		// unreachable (<= 12 m flat with no complete path), no path at all (off-mesh start, reached-short — the
+		// navigator clears its path once it arrives at the nearest navigable point), or flat-arrived at a steering
+		// corner that 3D corner advancement can never consume (the path runs underneath the prop the zombie stands
+		// on) while genuinely off the mesh. When path mode IS usable, this also produces its move input.
+		private bool IsPathModeUsable(CharacterNavigator navigator, Vector3 goal, float stoppingDistance, out NetworkedInput pathInput)
+		{
+			pathInput = default;
+
+			if (navigator.IsDestinationUnreachable)
+				return false;
+			if (navigator.HasPath == false)
+				return false;
+
+			if (navigator.TryGetSteeringTarget(transform.position, out Vector3 steer) == false)
+				return false;
+
+			float steerStoppingDistance = GetPathSteeringStoppingDistance(navigator, stoppingDistance);
+			Vector3 flatToSteer = steer - transform.position;
+			flatToSteer.y = 0f;
+			if (flatToSteer.sqrMagnitude <= steerStoppingDistance * steerStoppingDistance)
+			{
+				// Flat-arrived at a corner. Far below us while we stand off the mesh means the corner can never
+				// 3D-advance (zombie on a prop above its own path) — pathfinding cannot get closer from here.
+				if (transform.position.y - steer.y > Mathf.Max(0.1f, StuckMinHeightAboveNavMesh) &&
+				    IsElevatedOffNavMesh())
+					return false;
+
+				// On-mesh flat-arrival at a corner is a transient (the next repath advances it): hold with a look
+				// input rather than fighting the navigator.
+				pathInput = BuildLookInput(goal);
+				return true;
+			}
+
+			pathInput = BuildMoveInputFromDirection(flatToSteer.normalized);
+			return true;
+		}
+
+		// Reactive wall climb trigger — the V6 traversal core. One short touch ray in the movement direction; a
+		// hit that is a real wall (steep, facing us) while we are meaningfully below the cap starts a committed
+		// climb. There is deliberately NO landing search and NO reachability verdict: every failure of this ray
+		// degrades into movement (walk, fall, sidestep), never a freeze. requireLowObstacle is path mode's vault
+		// variant: a second parallel ray at vault height must MISS (the obstacle is low enough to hop over), so a
+		// tall building wall is never climbed while a walking route to the goal exists.
+		private bool TryStartWallClimb(Vector3 goal, bool requireLowObstacle, out NetworkedInput input)
+		{
+			input = default;
+			if (UseWallClimbs == false)
+				return false;
+			if (_climbingSurface || _climbingWall || Time.timeSinceLevelLoad < _climbCooldownUntil)
+				return false;
+
+			Vector3 direction = GetFlatDirectionTo(goal, transform.forward);
+			if (direction.sqrMagnitude <= 0.001f)
+				return false;
+
+			// The one cap formula: the roof rule (never rise past the goal's height allowance — a survivor inside
+			// floor 2 caps climbs at window height, never the roof) plus the small-vault allowance (a same-level
+			// goal beyond a car/fence still gets the hop, but a building face toward it caps out harmlessly).
+			float capY = Mathf.Max(goal.y + AboveGoalTolerance, transform.position.y + VaultMaxHeight);
+			if (transform.position.y >= capY - ClimbStopRise)
+				return false;
+
+			Vector3 origin = transform.position + Vector3.up * WallProbeHeight;
+			if (TryRaycastWorld(origin, direction, WallProbeDistance, out RaycastHit wallHit) == false)
+				return false;
+			// Walls only: a walkable-ish surface (ramp, slope, rubble) is the navigator's business.
+			if (wallHit.normal.y >= WallMaxNormalY)
+				return false;
+			// And only walls actually blocking us: grazing a face being walked past must not yank us up it.
+			Vector3 flatNormal = wallHit.normal;
+			flatNormal.y = 0f;
+			if (flatNormal.sqrMagnitude > 0.0001f &&
+			    Vector3.Dot(-flatNormal.normalized, direction) < WallMinFacingDot)
+				return false;
+
+			if (requireLowObstacle &&
+			    TryRaycastWorld(transform.position + Vector3.up * (VaultMaxHeight + 0.1f), direction,
+				    WallProbeDistance, out _))
+				return false;
+
+			float now = Time.timeSinceLevelLoad;
+			_climbingWall = true;
+			_wallClimbCapY = capY;
+			_climbHighestY = transform.position.y;
+			_climbStuckUntil = now + Mathf.Max(0.25f, ClimbStuckTimeout);
+			_climbUntil = now + GetClimbDurationCap(capY - transform.position.y);
+			ClearNavigator();
+			input = BuildWallClimbInput(goal);
+			return true;
+		}
+
+		// Drives an active wall climb: flat input toward the goal (pressing into the face; any lateral component
+		// slides the body along the wall toward under-the-goal) while the climb impulse rises. Terminates on the
+		// roof cap, on crest (touch ray clears -> crest probe -> mantle), on stalled rise, or on the duration cap.
+		// Every exit that is not a mantle sets ClimbCooldown, so the fall / jam-sidestep / re-climb loop shifts the
+		// approach spot instead of vibrating at the cap band.
+		private NetworkedInput BuildWallClimbInput(Vector3 goal)
+		{
+			float now = Time.timeSinceLevelLoad;
+
+			if (transform.position.y > _climbHighestY + 0.02f)
+			{
+				_climbHighestY = transform.position.y;
+				_climbStuckUntil = now + Mathf.Max(0.25f, ClimbStuckTimeout);
+			}
+
+			// Roof rule: never rise above the cap computed at climb start.
+			if (transform.position.y >= _wallClimbCapY)
+			{
+				EndWallClimb(true);
+				return BuildDirectGoalMoveInput(goal);
+			}
+
+			// Stalled (no upward progress) or over the rise-scaled duration cap.
+			if (now >= _climbStuckUntil || now >= _climbUntil)
+			{
+				EndWallClimb(true);
+				return BuildDirectGoalMoveInput(goal);
+			}
+
+			Vector3 direction = GetFlatDirectionTo(goal, transform.forward);
+			if (direction.sqrMagnitude <= 0.001f)
+				direction = FlattenDirection(transform.forward);
+
+			Vector3 origin = transform.position + Vector3.up * WallProbeHeight;
+			bool wallAhead = TryRaycastWorld(origin, direction, WallProbeDistance, out RaycastHit wallHit) &&
+			                 wallHit.normal.y < WallMaxNormalY;
+			if (wallAhead == false)
+			{
+				// The wall ended at chest height: we are at the lip (or an opening). One probe just past it finds
+				// the surface we crested — mantle onto it (the ONLY remaining landing probe, taken from a spot we
+				// have physically reached, so it cannot start inside hollow shells the way ground-based landing
+				// inference did). A deep opening with no floor keeps rising through the commit grace, then drops.
+				if (TryProbeCrestLanding(direction, out Vector3 landing))
 				{
-					_climbingSurface = false;
+					EndWallClimb(false);
 					_climbCommitUntil = 0f;
-					input = BuildDirectGoalMoveInput(targetPosition);
-					return true;
+					_zombie.MantleTo(landing);
+					return default;
 				}
 
-				if (TryContinueActiveClimb(out input))
-					return true;
+				if (now >= _climbCommitUntil)
+				{
+					EndWallClimb(true);
+					return BuildDirectGoalMoveInput(goal);
+				}
+
+				WantsToClimb = true;
+				return BuildMoveInputFromDirection(direction);
 			}
 
-			Vector3 direction = GetFlatDirectionTo(targetPosition, transform.forward);
-			bool blockedByRejectedClimb = false;
-			if (CanRoadDirectClimbToward(targetPosition) &&
-			    TryStartRoadDirectObstacleClimb(direction, targetPosition, out input, out blockedByRejectedClimb))
-			{
-				return true;
-			}
-			if (blockedByRejectedClimb)
+			_climbCommitUntil = now + Mathf.Max(0.05f, ClimbCommitDuration);
+			WantsToClimb = true;
+			return BuildMoveInputFromDirection(direction);
+		}
+
+		private void EndWallClimb(bool withCooldown)
+		{
+			_climbingWall = false;
+			if (withCooldown)
+				_climbCooldownUntil = Time.timeSinceLevelLoad + Mathf.Max(0f, ClimbCooldown);
+		}
+
+		private bool TryProbeCrestLanding(Vector3 direction, out Vector3 landing)
+		{
+			landing = default;
+			Vector3 origin = transform.position + Vector3.up * WallProbeHeight +
+			                 direction * Mathf.Max(0.1f, CrestProbeForwardDistance);
+			if (TryRaycastWorld(origin, Vector3.down, CrestProbeDownDistance, out RaycastHit hit) == false)
+				return false;
+			// Only mantle onto standable ground; a beveled lip or steep top is left to fall away from.
+			if (hit.normal.y < CrestLandingMinNormalY)
 				return false;
 
-			input = direction.sqrMagnitude > 0.001f
-				? BuildMoveInputFromDirection(direction)
-				: BuildLookInput(targetPosition);
+			landing = hit.point;
 			return true;
 		}
 
-		private bool TryBuildVisibleStuckTargetInput(Vector3 targetPosition, bool targetDirectlySensed, out NetworkedInput input)
+		// The sole never-still safety net: a nonzero move input producing ~zero real velocity for JamTimeout means
+		// the body is physically blocked (a face the climb gates rejected, a prop section, a crowd knot) — sidestep
+		// in a random direction briefly, then resume. Raw physics, deliberately goal-agnostic (goal-progress
+		// tracking is banned by design), and NEVER reset by goal/state changes: ClearExplicitGoalRoute runs every
+		// AttackRetargetInterval for a sensed target, which would cap any timer cleared there at 1 s. It
+		// re-baselines itself after a gap in move ticks instead.
+		private NetworkedInput ApplyJamReflex(NetworkedInput input)
 		{
-			input = default;
-			if (targetDirectlySensed == false && HasRoadDirectLineOfSight(targetPosition) == false)
-				return false;
-			// Use the throttled stuck cache instead of probing IsElevatedOffNavMesh + IsOnSmallElevatedNavMeshIsland
-			// fresh here. This method is hit every 64 Hz tick while attacking/hunting a directly sensed target on a
-			// non-road tile, and the island probe alone is ~29 NavMesh.SamplePosition calls plus a CalculatePath. The
-			// cache answers the same "stuck on an elevated island?" question and refreshes on StuckCheckInterval. The
-			// HasCompleteNavMeshPathToGoalHeight gate below still prevents going direct when a real path exists, so the
-			// cache's slightly broader trigger (it also includes IsOnSmallPropSupport) cannot cause an incorrect
-			// straight-line move while the zombie can still navigate normally.
-			if (IsStuckElevatedCached() == false)
-				return false;
-			if (HasCompleteNavMeshPathToGoalHeight(
-				    transform.position,
-				    targetPosition,
-				    Mathf.Max(0.1f, ExplicitGoalHeightTolerance)))
-				return false;
+			float now = Time.timeSinceLevelLoad;
+			if (now < _jamSidestepUntil)
+				return BuildStuckRandomMoveInput();
 
-			if (_climbingSurface && transform.position.y - targetPosition.y > Mathf.Max(0f, RoadDirectClimbMaxZombieHeightAboveTarget))
+			if (input.MoveDirection == Vector2.zero || IsClimbing)
 			{
-				_climbingSurface = false;
-				_climbCommitUntil = 0f;
+				_jamStuckSince = -1f;
+				return input;
 			}
 
-			ClearNavigator();
-			input = BuildDirectGoalMoveInput(targetPosition);
-			return true;
+			// Gap in move ticks (another branch owned recent frames, or a mantle suspended input): re-baseline so
+			// a stale timer cannot trip an instant sidestep.
+			float tickGapAllowance = Mathf.Max(0.05f, Time.fixedDeltaTime * 4f);
+			if (now - _nextJamCheckTime > tickGapAllowance)
+				_jamStuckSince = -1f;
+			_nextJamCheckTime = now;
+
+			Vector3 velocity = _zombie != null && _zombie.KCC != null ? _zombie.KCC.RealVelocity : Vector3.zero;
+			velocity.y = 0f;
+			if (velocity.sqrMagnitude > JamVelocityThreshold * JamVelocityThreshold)
+			{
+				_jamStuckSince = -1f;
+				return input;
+			}
+
+			if (_jamStuckSince < 0f)
+			{
+				_jamStuckSince = now;
+				return input;
+			}
+
+			if (now - _jamStuckSince >= Mathf.Max(0.1f, JamTimeout))
+			{
+				float min = Mathf.Max(0.1f, StuckRandomWanderDurationMin);
+				float max = Mathf.Max(min, StuckRandomWanderDurationMax);
+				_jamSidestepUntil = now + Random.Range(min, max);
+				_stuckWanderEndTime = 0f; // fresh random direction for the sidestep burst
+				_jamStuckSince = -1f;
+				return BuildStuckRandomMoveInput();
+			}
+
+			return input;
 		}
 
-		private bool TryBuildStuckExplicitGoalMoveInput(Vector3 goal, out NetworkedInput input)
+		// Continues whichever climb kind is active. Wall climbs drive through BuildWallClimbInput (cap/crest/
+		// stall); surface climbs keep the exact registry landing logic they have always had.
+		private bool TryContinueActiveClimb(Vector3 goal, out NetworkedInput input)
 		{
 			input = default;
-			if (_climbingSurface || IsClimbing)
-				return false;
-			if (IsStuckElevatedCached() == false)
-				return false;
-			if (HasCompleteNavMeshPathToGoalHeight(
-				    transform.position,
-				    goal,
-				    Mathf.Max(0.1f, ExplicitGoalHeightTolerance)))
-				return false;
 
-			ClearNavigator();
-			input = BuildDirectGoalMoveInput(goal);
-			if (input.MoveDirection != Vector2.zero)
+			if (_climbingWall)
+			{
+				input = BuildWallClimbInput(goal);
 				return true;
+			}
 
-			input = BuildStuckRandomMoveInput();
-			return input.MoveDirection != Vector2.zero;
-		}
-
-		private bool CanRoadDirectClimbToward(Vector3 targetPosition)
-		{
-			return transform.position.y - targetPosition.y <= Mathf.Max(0f, RoadDirectClimbMaxZombieHeightAboveTarget);
-		}
-
-		private static bool IsOnRoadDirectTile(Vector3 position)
-		{
-			return ZombieClimbSurfaces.TryGetRoadCell(position, out WorldGridCell cell) &&
-			       (cell.IsRoad || cell.IsHeightChangeRoad);
-		}
-
-		private bool HasRoadDirectLineOfSight(Vector3 targetPosition)
-		{
-			Vector3 origin = transform.position + Vector3.up * RoadDirectLineOfSightHeight;
-			Vector3 target = targetPosition + Vector3.up * RoadDirectLineOfSightHeight;
-			Vector3 direction = target - origin;
-			float distance = direction.magnitude;
-			if (distance < 0.05f)
-				return true;
-
-			return TryRaycastWorld(origin, direction / distance, distance, out _) == false;
-		}
-
-		private bool TryContinueActiveClimb(out NetworkedInput input)
-		{
-			input = default;
 			if (_climbingSurface == false)
 				return false;
 
@@ -770,7 +947,7 @@ namespace SimpleFPS
 			if (candidate.RequiresClimb && distanceToStart <= climbEngageDistance)
 				return StartSurfaceClimb(candidate);
 
-			if (candidate.IsRescue == false && distanceToStart > climbEngageDistance)
+			if (distanceToStart > climbEngageDistance)
 				return BuildDirectGoalMoveInput(GetShortcutApproachPoint(candidate));
 
 			return BuildDirectGoalMoveInput(goal);
@@ -845,8 +1022,7 @@ namespace SimpleFPS
 			                     navigator != null &&
 			                     (hasCompletePath || navigator.HasPath == false || navigator.IsDestinationUnreachable) &&
 			                     pathSavings > 0f;
-			bool allowRescue = UseRescueClimbs && IsRescueClimbAllowed(goal, navigator);
-			if (allowShortcut == false && allowRescue == false)
+			if (allowShortcut == false)
 				return false;
 
 			float shortcutSearchDistance = Mathf.Max(ClimbDirectApproachDistance, directDistance + ClimbRouteSideTolerance);
@@ -854,40 +1030,21 @@ namespace SimpleFPS
 			if (ZombieClimbSurfaces.TryFindDirectClimb(
 				position,
 				goal,
-				allowShortcut,
-				allowRescue,
 				pathSavings,
 				shortcutSearchDistance,
-				ClimbDirectApproachDistance,
 				ClimbRouteSideTolerance,
 				ClimbMinRise,
-				RescueLandingHeightTolerance,
-				RescueLandingFlatTolerance,
 				out candidate) == false)
 			{
 				return false;
 			}
 
-			return candidate.IsRescue || IsShortcutApproachClear(position, candidate, navigator);
+			return IsShortcutApproachClear(position, candidate, navigator);
 		}
 
 		private float GetCurrentDistanceToClimbStart(ZombieClimbCandidate candidate)
 		{
-			Vector3 start = candidate.IsRescue ? candidate.ContactPoint : GetShortcutApproachPoint(candidate);
-			return FlatDistance(transform.position, start);
-		}
-
-		private bool IsRescueClimbAllowed(Vector3 goal, CharacterNavigator navigator)
-		{
-			if (goal.y - transform.position.y < Mathf.Max(0.05f, RescueMinTargetHeight))
-				return false;
-			if (navigator == null)
-				return true;
-			if (navigator.IsDestinationReached || navigator.IsDestinationUnreachable)
-				return true;
-
-			float maxDistance = Mathf.Max(0.5f, ClimbDirectApproachDistance);
-			return navigator.HasPath == false && FlatDistanceSqr(transform.position, goal) <= maxDistance * maxDistance;
+			return FlatDistance(transform.position, GetShortcutApproachPoint(candidate));
 		}
 
 		private NetworkedInput StartSurfaceClimb(ZombieClimbCandidate candidate)
@@ -898,7 +1055,7 @@ namespace SimpleFPS
 			_climbLanding = candidate.LandingPoint;
 			_climbHighestY = transform.position.y;
 			_climbStuckUntil = now + Mathf.Max(0.25f, ClimbStuckTimeout);
-			_climbUntil = now + Mathf.Max(0.5f, ClimbMaxDuration);
+			_climbUntil = now + GetClimbDurationCap(candidate.LandingPoint.y - transform.position.y);
 			return BuildClimbInput(_climbLanding);
 		}
 
@@ -955,11 +1112,14 @@ namespace SimpleFPS
 			return true;
 		}
 
+		// Used only by the small-elevated-island probe's non-island-map fallback (V6 traversal itself never asks
+		// reachability questions — climbing is a reaction to touching a wall, not a verdict).
 		private bool HasCompleteNavMeshPathToGoalHeight(Vector3 start, Vector3 goal, float maxGoalHeightDelta)
 		{
 			var navigator = _zombie != null ? _zombie.Navigator : null;
 			int areaMask = navigator != null ? navigator.AreaMask : NavMesh.AllAreas;
 			float sampleDistance = navigator != null ? Mathf.Max(0.25f, navigator.SampleMaxDistance) : Mathf.Max(0.25f, StuckSampleRadius);
+			float goalSampleDistance = sampleDistance;
 			if (NavMesh.SamplePosition(start, out var startHit, sampleDistance, areaMask) == false)
 				return false;
 
@@ -970,10 +1130,10 @@ namespace SimpleFPS
 			if (areaMask == NavMesh.AllAreas &&
 			    NavMeshIslandMap.TryGetIslandAt(startHit.position, 0.5f, 0.5f, out int startIsland))
 			{
-				// Mirrors TrySampleNavMeshGoalAtHeight's search: NavMesh near the goal within sampleDistance
+				// Mirrors TrySampleNavMeshGoalAtHeight's search: NavMesh near the goal within goalSampleDistance
 				// horizontally and maxGoalHeightDelta vertically. No qualifying NavMesh → no path, same as the
 				// sampling failing.
-				if (NavMeshIslandMap.TryGetIslandAt(goal, sampleDistance, maxGoalHeightDelta, out int goalIsland))
+				if (NavMeshIslandMap.TryGetIslandAt(goal, goalSampleDistance, maxGoalHeightDelta, out int goalIsland))
 				{
 					if (goalIsland == startIsland)
 						return true;
@@ -993,7 +1153,7 @@ namespace SimpleFPS
 				}
 			}
 
-			if (TrySampleNavMeshGoalAtHeight(goal, sampleDistance, maxGoalHeightDelta, areaMask, out Vector3 sampledGoal) == false)
+			if (TrySampleNavMeshGoalAtHeight(goal, goalSampleDistance, maxGoalHeightDelta, areaMask, out Vector3 sampledGoal) == false)
 				return false;
 			if (_scratchNavMeshPath == null)
 				_scratchNavMeshPath = new NavMeshPath();
@@ -1049,310 +1209,29 @@ namespace SimpleFPS
 			return found;
 		}
 
-		private bool TryStartRoadDirectObstacleClimb(
-			Vector3 desiredDirection,
-			Vector3 goal,
-			out NetworkedInput input,
-			out bool blockedByRejectedClimb,
-			float maxObstacleDistance = float.PositiveInfinity)
+		// The absolute climb cap must scale with the wall: at ~1 m/s climb speed a fixed 15 s cap truncates any
+		// >= ~13 m ascent mid-wall, producing the classic rise/drop/cooldown oscillation at building scale. The
+		// progress-based stuck timeout remains the real abort signal; this only backstops it.
+		private float GetClimbDurationCap(float rise)
 		{
-			input = default;
-			blockedByRejectedClimb = false;
-			if (UseRoadDirectMovement == false ||
-			    _climbingSurface ||
-			    Time.timeSinceLevelLoad < _climbCooldownUntil)
-			{
-				return false;
-			}
+			float baseCap = Mathf.Max(0.5f, ClimbMaxDuration);
+			if (rise <= 0f)
+				return baseCap;
 
-			Vector3 primaryDirection = FlattenDirection(desiredDirection);
-			Vector3 directDirection = GetFlatDirectionTo(goal, primaryDirection.sqrMagnitude > 0.001f
-				? primaryDirection
-				: transform.forward);
-
-			bool found = TryFindRoadDirectObstacleLanding(primaryDirection, maxObstacleDistance, out Vector3 landing);
-			if (found == false && Vector3.Dot(primaryDirection, directDirection) < 0.98f)
-				found = TryFindRoadDirectObstacleLanding(directDirection, maxObstacleDistance, out landing);
-			if (found == false && ShouldSearchLocalRoadDirectClimb(goal))
-				found = TryFindBestLocalRoadDirectObstacleLanding(goal, maxObstacleDistance, out landing);
-			if (found == false)
-				return false;
-			if (ShouldRejectRoadDirectLanding(goal, landing))
-			{
-				blockedByRejectedClimb = true;
-				return false;
-			}
-
-			float now = Time.timeSinceLevelLoad;
-			_climbingSurface = true;
-			_climbLanding = landing;
-			_climbHighestY = transform.position.y;
-			_climbStuckUntil = now + Mathf.Max(0.25f, ClimbStuckTimeout);
-			_climbUntil = now + Mathf.Max(0.5f, ClimbMaxDuration);
-			input = BuildClimbInput(_climbLanding);
-			return true;
+			float moveSpeed = _zombie != null ? _zombie.Stats.MoveSpeed : 2.2f;
+			float climbSpeed = Mathf.Max(0.2f, moveSpeed * Mathf.Max(0f, ClimbSpeedMultiplier));
+			return Mathf.Max(baseCap, rise / climbSpeed * 1.5f);
 		}
 
-		private bool ShouldRejectRoadDirectLanding(Vector3 goal, Vector3 landing)
-		{
-			if (DoesRoadDirectLandingProgressTowardGoal(goal, landing) == false)
-				return true;
-
-			if (IsStuckElevatedCached() == false)
-				return false;
-
-			if (TryGetRoadDirectSupportRoot(transform.position, out Transform currentSupport) == false ||
-			    TryGetRoadDirectSupportRoot(goal, out Transform goalSupport) == false ||
-			    TryGetRoadDirectSupportRoot(landing, out Transform landingSupport) == false)
-				return false;
-
-			if (currentSupport == goalSupport)
-				return false;
-
-			return landingSupport != goalSupport;
-		}
-
-		private bool DoesRoadDirectLandingProgressTowardGoal(Vector3 goal, Vector3 landing)
-		{
-			if (TryGetRoadDirectSupportRoot(goal, out Transform goalSupport) &&
-			    TryGetRoadDirectSupportRoot(landing, out Transform landingSupport) &&
-			    landingSupport == goalSupport)
-			{
-				return true;
-			}
-
-			float currentDistance = FlatDistance(transform.position, goal);
-			float landingDistance = FlatDistance(landing, goal);
-			return landingDistance < currentDistance - RoadDirectLandingMinGoalProgress;
-		}
-
-		private bool TryGetRoadDirectSupportCollider(Vector3 position, out Collider support)
+		private bool TryGetSupportCollider(Vector3 position, out Collider support)
 		{
 			support = null;
 			Vector3 origin = position + Vector3.up * 0.35f;
-			float distance = Mathf.Max(1f, RoadDirectMaxObstacleHeight + 1f);
-			if (TryRaycastWorld(origin, Vector3.down, distance, out RaycastHit hit) == false)
+			if (TryRaycastWorld(origin, Vector3.down, SupportProbeDistance, out RaycastHit hit) == false)
 				return false;
 
 			support = hit.collider;
 			return support != null;
-		}
-
-		private bool TryGetRoadDirectSupportRoot(Vector3 position, out Transform root)
-		{
-			root = null;
-			if (TryGetRoadDirectSupportCollider(position, out Collider support) == false)
-				return false;
-
-			root = support.transform.parent != null ? support.transform.parent : support.transform;
-			return root != null;
-		}
-
-		private bool ShouldSearchLocalRoadDirectClimb(Vector3 goal)
-		{
-			if (goal.y - transform.position.y <= ClimbStopRise)
-				return false;
-
-			float radius = Mathf.Max(0.5f, RoadDirectClimbProbeDistance + RoadDirectClimbLandingInset + 0.5f);
-			return FlatDistanceSqr(transform.position, goal) <= radius * radius;
-		}
-
-		private bool TryFindBestLocalRoadDirectObstacleLanding(
-			Vector3 goal,
-			float maxObstacleDistance,
-			out Vector3 bestLanding)
-		{
-			bestLanding = default;
-			bool found = false;
-			float bestScore = float.PositiveInfinity;
-			const int samples = 8;
-
-			for (int i = 0; i < samples; i++)
-			{
-				float angle = i * Mathf.PI * 2f / samples;
-				Vector3 direction = new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle));
-				if (TryFindRoadDirectObstacleLanding(direction, maxObstacleDistance, out Vector3 candidate) == false)
-					continue;
-
-				float heightDelta = candidate.y - goal.y;
-				float score = FlatDistanceSqr(candidate, goal) + heightDelta * heightDelta;
-				if (score >= bestScore)
-					continue;
-
-				bestScore = score;
-				bestLanding = candidate;
-				found = true;
-			}
-
-			return found;
-		}
-
-		private bool TryFindRoadDirectObstacleLanding(Vector3 desiredDirection, float maxObstacleDistance, out Vector3 landing)
-		{
-			landing = default;
-			Vector3 direction = FlattenDirection(desiredDirection);
-			if (direction.sqrMagnitude <= 0.001f)
-				return false;
-
-			float probeDistance = Mathf.Max(0.1f, RoadDirectClimbProbeDistance);
-			float maxHeight = Mathf.Max(MantleMinRise, RoadDirectClimbMaxHeight, RoadDirectMaxObstacleHeight);
-			Vector3 position = transform.position;
-			float highProbeHeight = Mathf.Max(0.1f, RoadDirectObstacleProbeHeight);
-			if (TryFindRoadDirectObstacleLandingFromProbe(position, direction, probeDistance, maxHeight, highProbeHeight,
-				    maxObstacleDistance, out landing))
-			{
-				return true;
-			}
-
-			float lowProbeHeight = Mathf.Max(0.1f, RoadDirectClimbMinRise);
-			if (lowProbeHeight < highProbeHeight - 0.05f &&
-			    TryFindRoadDirectObstacleLandingFromProbe(position, direction, probeDistance, maxHeight, lowProbeHeight,
-				    maxObstacleDistance, out landing))
-			{
-				return true;
-			}
-
-			return false;
-		}
-
-		private bool TryFindRoadDirectObstacleLandingFromProbe(
-			Vector3 position,
-			Vector3 direction,
-			float probeDistance,
-			float maxHeight,
-			float probeHeight,
-			float maxObstacleDistance,
-			out Vector3 landing)
-		{
-			landing = default;
-			float originBackoff = Mathf.Min(0.35f, probeDistance * 0.5f);
-			Vector3 obstacleOrigin = position - direction * originBackoff + Vector3.up * Mathf.Max(0.1f, probeHeight);
-			if (TryRaycastWorld(obstacleOrigin, direction, probeDistance + originBackoff, out RaycastHit obstacleHit) == false)
-				return false;
-
-			float obstacleDistanceFromPosition = Mathf.Max(0f, obstacleHit.distance - originBackoff);
-			float allowedObstacleDistance = float.IsPositiveInfinity(maxObstacleDistance)
-				? probeDistance
-				: Mathf.Max(0.05f, maxObstacleDistance);
-			if (obstacleDistanceFromPosition > allowedObstacleDistance)
-				return false;
-			if (HasRoadDirectClimbApproachSupport(position, direction, obstacleDistanceFromPosition) == false)
-				return false;
-
-			float landingInset = Mathf.Max(0.05f, RoadDirectClimbLandingInset);
-			float edgeProbeInset = Mathf.Min(landingInset, 0.15f);
-			if (TryFindRoadDirectObstacleLandingAtOffset(position, obstacleHit.point, direction, edgeProbeInset, maxHeight,
-				    out landing))
-				return true;
-			if (landingInset > edgeProbeInset + 0.01f &&
-			    TryFindRoadDirectObstacleLandingAtOffset(position, obstacleHit.point, direction, landingInset, maxHeight,
-				    out landing))
-				return true;
-
-			return false;
-		}
-
-		private bool HasRoadDirectClimbApproachSupport(Vector3 position, Vector3 direction, float obstacleDistance)
-		{
-			if (obstacleDistance <= 0.25f)
-				return true;
-
-			float allowedDrop = Mathf.Max(0.15f, RoadDirectClimbMinRise);
-			float rayStartHeight = Mathf.Max(0.2f, RoadDirectObstacleProbeHeight);
-			float rayDistance = rayStartHeight + allowedDrop + 0.1f;
-			float maxSampleDistance = Mathf.Max(0.1f, obstacleDistance - 0.1f);
-			int sampleCount = obstacleDistance > 0.75f ? 2 : 1;
-
-			for (int i = 0; i < sampleCount; i++)
-			{
-				float sampleDistance = sampleCount == 1
-					? maxSampleDistance
-					: Mathf.Lerp(maxSampleDistance * 0.5f, maxSampleDistance, (float)i / (sampleCount - 1));
-				Vector3 probeOrigin = position + direction * sampleDistance + Vector3.up * rayStartHeight;
-				if (TryRaycastWorld(probeOrigin, Vector3.down, rayDistance, out RaycastHit hit) == false)
-					return false;
-				if (position.y - hit.point.y > allowedDrop)
-					return false;
-			}
-
-			return true;
-		}
-
-		private bool TryFindRoadDirectObstacleLandingAtOffset(
-			Vector3 position,
-			Vector3 obstaclePoint,
-			Vector3 direction,
-			float inset,
-			float maxHeight,
-			out Vector3 landing)
-		{
-			landing = default;
-			Vector3 topProbeOrigin = obstaclePoint + direction * Mathf.Max(0.05f, inset) +
-			                         Vector3.up * (maxHeight + 0.05f);
-			float downDistance = maxHeight + 0.3f;
-			if (TryRaycastWorld(topProbeOrigin, Vector3.down, downDistance, out RaycastHit topHit) == false)
-				return false;
-
-			float minSurfaceNormalY = Mathf.Clamp(RoadDirectClimbMinSurfaceNormalY, 0.05f, 1f);
-			if (topHit.normal.y < minSurfaceNormalY)
-				return false;
-
-			float rise = topHit.point.y - position.y;
-			if (rise < Mathf.Max(MantleMinRise, RoadDirectClimbMinRise) || rise > maxHeight)
-				return false;
-
-			Vector3 flatToLanding = topHit.point - position;
-			flatToLanding.y = 0f;
-			if (flatToLanding.sqrMagnitude > 0.001f && Vector3.Dot(flatToLanding.normalized, direction) < 0.2f)
-				return false;
-
-			landing = topHit.point;
-			if (HasEfficientWalkablePath(position, landing))
-				return false;
-
-			return true;
-		}
-
-		private bool HasEfficientWalkablePath(Vector3 start, Vector3 goal)
-		{
-			var navigator = _zombie != null ? _zombie.Navigator : null;
-			int areaMask = navigator != null ? navigator.AreaMask : NavMesh.AllAreas;
-			float startSampleDistance = navigator != null
-				? Mathf.Max(0.25f, navigator.SampleMaxDistance)
-				: Mathf.Max(0.25f, StuckSampleRadius);
-			float goalSampleDistance = Mathf.Max(0.25f, RoadDirectWalkableLandingSampleDistance);
-
-			if (NavMesh.SamplePosition(start, out var startHit, startSampleDistance, areaMask) == false)
-				return false;
-			if (NavMesh.SamplePosition(goal, out var goalHit, goalSampleDistance, areaMask) == false)
-				return false;
-
-			if (_scratchNavMeshPath == null)
-				_scratchNavMeshPath = new NavMeshPath();
-			if (NavMesh.CalculatePath(startHit.position, goalHit.position, areaMask, _scratchNavMeshPath) == false)
-				return false;
-			if (_scratchNavMeshPath.status != NavMeshPathStatus.PathComplete ||
-			    _scratchNavMeshPath.corners == null ||
-			    _scratchNavMeshPath.corners.Length == 0)
-			{
-				return false;
-			}
-
-			float pathLength = GetNavMeshPathLength(_scratchNavMeshPath);
-			float directDistance = Vector3.Distance(startHit.position, goalHit.position);
-			return pathLength <= directDistance + Mathf.Max(0f, RoadDirectWalkableLandingPathTolerance);
-		}
-
-		private static float GetNavMeshPathLength(NavMeshPath path)
-		{
-			if (path == null || path.corners == null || path.corners.Length < 2)
-				return 0f;
-
-			float length = 0f;
-			for (int i = 1; i < path.corners.Length; i++)
-				length += Vector3.Distance(path.corners[i - 1], path.corners[i]);
-
-			return length;
 		}
 
 		private bool TryRaycastWorld(Vector3 origin, Vector3 direction, float distance, out RaycastHit hit)
@@ -1506,9 +1385,16 @@ namespace SimpleFPS
 			// The commit expires naturally after ClimbCommitDuration, and BuildClimbInput resets it
 			// explicitly after a successful mantle (so a zombie that has already landed on the
 			// surface does not keep climbing the next tick).
+			// Deliberately does NOT touch the jam reflex: it measures raw physical blockage, which no goal change
+			// invalidates. Anything reset here is effectively capped at AttackRetargetInterval (1 s), because the
+			// attack retarget re-fires StartAttack for the SAME survivor every interval while they stay sensed —
+			// that cadence once silently disabled a 3 s stall timer (see Docs/ZombieAIDesignHistory.md, V5 round 7).
 			InvalidateClimbCandidateCache();
 			if (preserveActiveClimb == false)
+			{
 				_climbingSurface = false;
+				_climbingWall = false;
+			}
 			ClearNavigator();
 		}
 
@@ -1613,7 +1499,7 @@ namespace SimpleFPS
 
 		private bool IsOnSmallPropSupport()
 		{
-			if (TryGetRoadDirectSupportCollider(transform.position, out Collider support) == false)
+			if (TryGetSupportCollider(transform.position, out Collider support) == false)
 				return false;
 
 			Bounds bounds = support.bounds;
@@ -1713,7 +1599,7 @@ namespace SimpleFPS
 			float verticalGap = targetPosition.y - transform.position.y;
 			if (verticalGap <= ClimbStopRise)
 				return false;
-			if (_climbingSurface || IsClimbing)
+			if (_climbingSurface || _climbingWall || IsClimbing)
 				return true;
 
 			float range = _zombie != null ? Mathf.Max(0.1f, _zombie.Stats.AttackRange) : 0.1f;
@@ -1722,8 +1608,25 @@ namespace SimpleFPS
 
 		private bool ShouldPreserveActiveClimbForTarget(Vector3 targetPosition)
 		{
+			// Wall climbs have no landing to compare against: preserve while the goal is still above us (finish
+			// the wall; dropping mid-face just means re-approaching the same face), cancel outright when the goal
+			// moved below — the roof cap would end the climb within a tick anyway, this just skips the climb tick.
+			if (_climbingWall)
+				return targetPosition.y - transform.position.y > ClimbStopRise;
+
 			if (_climbingSurface == false)
 				return false;
+
+			// Finish the wall as long as the goal is still ABOVE us. The old rule preserved the climb only when
+			// the new goal was basically at this climb's landing, which dropped climbers off the wall whenever
+			// the target strolled along the ledge above (the attack retarget re-fires StartAttack for the SAME
+			// survivor at its new position every AttackRetargetInterval) or ducked out of sight (sight-loss →
+			// StartInvestigation with a last-known point on the ledge). Mid-wall the drop is never right — the
+			// zombie just falls, re-approaches, and climbs the same face again. A goal that moved BELOW the
+			// zombie (target dropped down) falls through to the old landing-proximity rule, so pointless ascents
+			// still get cancelled.
+			if (targetPosition.y - transform.position.y > ClimbStopRise)
+				return true;
 
 			float attackRange = _zombie != null ? Mathf.Max(0.1f, _zombie.Stats.AttackRange) : 0.1f;
 			float maxFlatDistance = Mathf.Max(attackRange, ClimbSurfaceEngageDistance, ClimbMantleMaxSnapHeight) + 1f;

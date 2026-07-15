@@ -80647,7 +80647,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 273883981725572060, guid: 310084b1b12b8db4c8eb685d3679568b, type: 3}
       propertyPath: m_SizeDelta.y
-      value: 199.69702
+      value: 314.13617
       objectReference: {fileID: 0}
     - target: {fileID: 273883981725572060, guid: 310084b1b12b8db4c8eb685d3679568b, type: 3}
       propertyPath: m_AnchoredPosition.x
@@ -131732,9 +131732,9 @@ MonoBehaviour:
   SurvivorPrefab: {fileID: 7289181853176218816, guid: 44131b8a4a20e85489614616f24f7063, type: 3}
   GameDuration: 450
   DoubleDamageDuration: 0
-  StartingCharacterCount: 12
+  StartingCharacterCount: 20
   RaidMode: 1
-  RaidModeClientStartingCharacterCount: 12
+  RaidModeClientStartingCharacterCount: 5
   SpawnClusterRadius: 1
   TeamColorPalette: {fileID: 11400000, guid: 32a93ca88ef4bbb4281ef7963c103b7c, type: 2}
   ZombieOrchestrator: {fileID: 1951015474}
@@ -138393,7 +138393,7 @@ MonoBehaviour:
   RuntimeTextureSize: {x: 1024, y: 1024}
   LogSetupStatus: 0
   MapKey: 53
-  RevealMode: 0
+  RevealMode: 2
   Spectator: {fileID: 0}
 --- !u!114 &2056786219
 MonoBehaviour:
