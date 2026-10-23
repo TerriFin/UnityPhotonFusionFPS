@@ -86,7 +86,8 @@ Public API:
 
 ```csharp
 public bool TryGetClosestKnownEnemy(out KnownEnemyInfo enemy);
-public bool TryGetClosestDirectEnemy(out KnownEnemyInfo enemy);
+public bool TryGetClosestDirectEnemy(out KnownEnemyInfo enemy, int minTick = int.MinValue);
+public bool TryGetDirectEnemy(NetworkObject target, out KnownEnemyInfo enemy, int minTick = int.MinValue);
 public bool TryGetClosestVisiblePickup(out KnownPickupInfo pickup);
 public void GetVisiblePickups(List<KnownPickupInfo> results);
 public bool TryGetLookRotationDelta(float maxYawDegreesPerTick, out Vector2 lookRotationDelta);
@@ -95,6 +96,10 @@ public void RecordBulletImpact(Vector3 impactPosition, Vector3 approximateShoote
 ```
 
 ## Detection Modes
+
+The optional `minTick` excludes older observations before target selection without deleting their memory.
+Zombies pass a freshness cutoff for both closest-target selection and current-target stickiness. Callers
+that omit it retain the existing full-memory behavior, including survivor AI.
 
 ### Proximity Awareness
 

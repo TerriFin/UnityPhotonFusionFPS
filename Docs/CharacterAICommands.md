@@ -245,6 +245,17 @@ When a group command resolves to a static-destination assignment (move or assign
   - `ValidateLaneOffsetPath` (default `true`) — after the offset target is sampled onto the NavMesh, `CharacterNavigator` does one cheap `NavMesh.Raycast` from the survivor to that offset target. If that straight NavMesh segment is blocked, it ignores the lane offset for that steering query and uses the original path corner.
   - `MoveStoppingDistanceIncreasePerExtraSurvivor` (default `0.2 m`) — move orders increase their arrival radius by this much for each extra survivor beyond the first ordered survivor.
   - `MoveStoppingDistanceMax` (default `3 m`) — cap for that group-scaled move arrival radius. The cap never shrinks a survivor below its base `DefaultMoveStoppingDistance`.
+  - `MoveOrderWaypointSnapRadius` (default `12 m`) — see "Move-order waypoint fallback" below. `0` disables it.
+
+### Move-order waypoint fallback (roofed buildings)
+
+A map move order resolves through a top-down raycast (`GameMapCameraController.TryMapViewportToWorld`), so clicking a roofed building yields a point **on the roof** — the team used to walk to the nearest street mesh and stand next to the building. `Gameplay.ResolveMoveOrderDestination` now corrects this on state authority at both order entry points (host-local `RequestMapMoveOrder` and `RPC_RequestMapMoveOrder`), so order markers, lane spread, and stopping-distance relaxation all see the corrected destination:
+
+- The destination's NavMesh island is checked against `NavMeshIslandMap.MainIslandId`. **Main island** (streets, plazas, connected walkable roofs) → order passes through untouched.
+- **Disconnected island** (inaccessible rooftops — the island map's verified islands) **or no mesh at the point** → the order shifts to the nearest authored `PatrolWaypoint` by **XZ distance** within `MoveOrderWaypointSnapRadius`. Height is ignored on purpose (a building's stacked floor waypoints all mean "go into this building"); ties between stacked waypoints prefer the **lowest** — ground-floor entry, by design decision.
+- No waypoint in range, or no island map yet (nothing baked) → the original destination passes through: survivors park outside, exactly the old behavior. Buildings without waypoints regress nothing.
+
+The assigned-area order deliberately does not use this: its center is height-map-snapped (`SnapAssignedAreaCenterToHeightMap`), and waypoints inside the circle already join the patrol set (`Docs/SurvivorAssignedAreaAI.md`).
 - The assignment helper writes the lane values onto `CharacterNavigator` each time it installs a new input source. The navigator carries them as runtime state (the prefab adds the navigator via `AddComponent` at startup, so these aren't authored per-prefab — retuning the Gameplay settings is the only place the values are edited).
 - `CharacterNavigator.TryGetSteeringTarget` applies the lateral offset perpendicular to the current path segment direction, caps it by `MaxLaneOffset`, then `NavMesh.SamplePosition` clamps it back onto walkable mesh. Where the corridor narrows the offset gets clamped or rejected and the group files through; once the corridor widens again they spread back out automatically.
 - Move-order arrival uses the per-order stopping distance, including the group-scaled value, plus the navigator's vertical reach tolerance. This lets larger groups accept a loose cluster around the point without falsely completing a move on the ground below an elevated target.

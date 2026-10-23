@@ -26,7 +26,19 @@ namespace SimpleFPS
 		public float IdleWanderRadius = 20f;
 		public float IdleWanderAvoidZombieRadius = 16f;
 
+		[Header("Waypoint Wander")]
+		// Idle wander candidates that land near an authored PatrolWaypoint snap to it, pulling idle zombies into
+		// buildings and other points of interest the flat random sampler never discovers. Crowding is the
+		// anti-black-hole boundary: a waypoint whose surroundings already hold MaxZombiesNearWaypoint zombies
+		// stops attracting, and a zombie standing inside such a crowd stops snapping entirely for the sweep —
+		// the existing away-from-zombies wander bias then walks it out of the building.
+		public bool UseWaypointWander = true;
+		public float WanderWaypointSnapRadius = 6f;
+		public float WaypointCrowdRadius = 10f;
+		public int MaxZombiesNearWaypoint = 4;
+
 		[Header("Targeting")]
+		[Tooltip("Attack alert refresh interval. Target observations refresh every tick without restarting navigation.")]
 		public float AttackRetargetInterval = 1f;
 		public float HuntingRetargetInterval = 6f;
 		[Range(0f, 1f)]
@@ -203,9 +215,7 @@ namespace SimpleFPS
 		private Vector3 _idleWanderProgressPosition;
 		private float _nextIdleWanderProgressCheckTime;
 		private float _idleWanderStuckSince = -1f;
-		// Jam reflex state (the sole never-still safety net). Deliberately NEVER reset by goal/state changes
-		// (ClearExplicitGoalRoute runs every AttackRetargetInterval for a sensed target, which would cap any timer
-		// here at 1 s); it self-rebaselines after a gap in move ticks instead.
+		// Jam recovery survives goal/state changes and re-baselines after a gap in movement ticks.
 		private float _jamStuckSince = -1f;
 		private float _nextJamCheckTime;
 		private float _jamSidestepUntil;
@@ -214,6 +224,7 @@ namespace SimpleFPS
 		private bool _hadPathLastTick;
 		// Investigation give-up state (pre-overtime return-to-wandering guarantee).
 		private float _investigationBestDistance;
+		private Vector3 _investigationProgressPosition;
 		private float _investigationNoProgressSince = -1f;
 		private float _nextInvestigationProgressCheckTime;
 		private float _nextTraversalDebugLogTime;
@@ -367,8 +378,7 @@ namespace SimpleFPS
 			}
 
 			// Give-up: an unreachable point (roof noise with no climbable approach, sealed interior) must not hold
-			// the zombie forever — pre-overtime it returns to Idle wandering instead. Progress is flat + vertical
-			// distance to the point, so an active staged climb counts as progress.
+			// the zombie forever — pre-overtime it returns to Idle wandering instead.
 			if (ShouldGiveUpInvestigation())
 			{
 				ReturnToIdle();
@@ -392,9 +402,19 @@ namespace SimpleFPS
 			// through real distance improvement below; a stalled climb dies in ClimbStuckTimeout on its own; only
 			// the capped yo-yo accumulates the timeout — exactly the case that must give up.
 			float distance = GetGoalProgressDistance(_investigationTarget);
-			if (distance <= _investigationBestDistance - Mathf.Max(0.01f, InvestigationMinProgress))
+			float minProgress = Mathf.Max(0.01f, InvestigationMinProgress);
+			var navigator = _zombie.Navigator;
+			// Walking a route may lead away from the goal (stairs or an indoor detour).
+			// Climbing and jam sidesteps still need real goal progress, so wall yo-yos can time out.
+			bool followingPath = navigator != null && navigator.HasPath &&
+				_climbingSurface == false && _climbingWall == false && now >= _jamSidestepUntil;
+			bool pathProgress = followingPath &&
+				(transform.position - _investigationProgressPosition).sqrMagnitude >= minProgress * minProgress;
+			if (followingPath == false || pathProgress)
+				_investigationProgressPosition = transform.position;
+			if (pathProgress || distance <= _investigationBestDistance - minProgress)
 			{
-				_investigationBestDistance = distance;
+				_investigationBestDistance = Mathf.Min(_investigationBestDistance, distance);
 				_investigationNoProgressSince = -1f;
 				return false;
 			}
@@ -442,10 +462,8 @@ namespace SimpleFPS
 
 			if (Time.timeSinceLevelLoad >= _nextRetargetTime)
 			{
-				if (TryGetStickyDirectEnemy(out var enemy))
-					StartAttack(enemy);
-				else if (_target != null)
-					StartInvestigation(_lastKnownTargetPosition, _lastStimulusTick, false);
+				_nextRetargetTime = Time.timeSinceLevelLoad + Mathf.Max(0.1f, AttackRetargetInterval);
+				AlertNearbyZombies(_lastKnownTargetPosition, _lastStimulusTick);
 			}
 
 			if (_target == null)
@@ -453,13 +471,13 @@ namespace SimpleFPS
 
 			Vector3 targetPosition = _lastKnownTargetPosition;
 			bool shouldPrioritizeClimb = ShouldPrioritizeClimbTowardTarget(targetPosition);
-			if (_zombie.TryAttack(_target))
+			if (_zombie.TryAttack(_target, out bool canReachTarget))
 			{
 				LastAttackTime = Time.timeSinceLevelLoad;
 				if (shouldPrioritizeClimb == false)
 					return BuildLookInput(targetPosition);
 			}
-			if (shouldPrioritizeClimb == false && ShouldHoldMeleePosition(_target, targetPosition))
+			if (shouldPrioritizeClimb == false && canReachTarget)
 				return BuildLookInput(targetPosition);
 
 			return BuildExplicitGoalMoveInput(targetPosition, StoppingDistance, dynamicTarget: true);
@@ -471,7 +489,7 @@ namespace SimpleFPS
 			// deliberately ignores neutral survivors so overtime pressure is shared evenly between
 			// players, but a zombie that senses any survivor (neutral included) on the way to its
 			// target should still attack whoever it ran into. This is temporary: the committed player
-			// is left untouched, so the zombie resumes heading to its team once the sensed enemy is lost.
+			// is left untouched. After sight is lost, a living local target remains until the next hunt refresh.
 			// Sticky: while the current target is itself directly sensed, another visible survivor only
 			// takes over when dramatically closer (TargetSwitchDistanceFactor).
 			if (TryGetStickyDirectEnemy(out var sensed))
@@ -484,13 +502,13 @@ namespace SimpleFPS
 
 			Vector3 targetPosition = _target.transform.position;
 			bool shouldPrioritizeClimb = ShouldPrioritizeClimbTowardTarget(targetPosition);
-			if (_zombie.TryAttack(_target))
+			if (_zombie.TryAttack(_target, out bool canReachTarget))
 			{
 				LastAttackTime = Time.timeSinceLevelLoad;
 				if (shouldPrioritizeClimb == false)
 					return BuildLookInput(targetPosition);
 			}
-			if (shouldPrioritizeClimb == false && ShouldHoldMeleePosition(_target, targetPosition))
+			if (shouldPrioritizeClimb == false && canReachTarget)
 				return BuildLookInput(targetPosition);
 
 			return BuildExplicitGoalMoveInput(targetPosition, StoppingDistance, dynamicTarget: true);
@@ -507,7 +525,7 @@ namespace SimpleFPS
 
 			if (targetAlive)
 			{
-				// Keep heading to the committed survivor until the next refresh tick.
+				// Keep heading to the current survivor, including a local distraction, until the next refresh.
 				if (Time.timeSinceLevelLoad < _nextRetargetTime)
 					return;
 			}
@@ -575,6 +593,7 @@ namespace SimpleFPS
 			_investigationStartTime = Time.timeSinceLevelLoad;
 			// A fresh (or re-triggered) point restarts the give-up budget.
 			_investigationBestDistance = GetGoalProgressDistance(target);
+			_investigationProgressPosition = transform.position;
 			_investigationNoProgressSince = -1f;
 			_nextInvestigationProgressCheckTime = Time.timeSinceLevelLoad + Mathf.Max(0.1f, StuckCheckInterval);
 			ClearExplicitGoalRoute(ShouldPreserveActiveClimbForTarget(target));
@@ -604,7 +623,8 @@ namespace SimpleFPS
 					this);
 			}
 
-			if (HasReachedExplicitGoal(goal, stoppingDistance))
+			// Combat stops only when melee can reach the target; distance alone can stop us across a wall.
+			if (dynamicTarget == false && HasReachedExplicitGoal(goal, stoppingDistance))
 			{
 				_climbingSurface = false;
 				_climbingWall = false;
@@ -852,9 +872,8 @@ namespace SimpleFPS
 		// The sole never-still safety net: a nonzero move input producing ~zero real velocity for JamTimeout means
 		// the body is physically blocked (a face the climb gates rejected, a prop section, a crowd knot) — sidestep
 		// in a random direction briefly, then resume. Raw physics, deliberately goal-agnostic (goal-progress
-		// tracking is banned by design), and NEVER reset by goal/state changes: ClearExplicitGoalRoute runs every
-		// AttackRetargetInterval for a sensed target, which would cap any timer cleared there at 1 s. It
-		// re-baselines itself after a gap in move ticks instead.
+		// tracking is banned by design), and never reset by goal/state changes. It re-baselines itself after a
+		// gap in move ticks instead.
 		private NetworkedInput ApplyJamReflex(NetworkedInput input)
 		{
 			float now = Time.timeSinceLevelLoad;
@@ -1385,10 +1404,7 @@ namespace SimpleFPS
 			// The commit expires naturally after ClimbCommitDuration, and BuildClimbInput resets it
 			// explicitly after a successful mantle (so a zombie that has already landed on the
 			// surface does not keep climbing the next tick).
-			// Deliberately does NOT touch the jam reflex: it measures raw physical blockage, which no goal change
-			// invalidates. Anything reset here is effectively capped at AttackRetargetInterval (1 s), because the
-			// attack retarget re-fires StartAttack for the SAME survivor every interval while they stay sensed —
-			// that cadence once silently disabled a 3 s stall timer (see Docs/ZombieAIDesignHistory.md, V5 round 7).
+			// The jam reflex measures physical blockage independently of target changes.
 			InvalidateClimbCandidateCache();
 			if (preserveActiveClimb == false)
 			{
@@ -1516,8 +1532,19 @@ namespace SimpleFPS
 		{
 			enemy = default;
 			return _zombie.Sensor != null &&
-			       _zombie.Sensor.TryGetClosestDirectEnemy(out enemy) &&
+			       _zombie.Sensor.TryGetClosestDirectEnemy(out enemy, GetOldestDirectEnemyTick()) &&
 			       IsTargetAlive(enemy.Object);
+		}
+
+		private int GetOldestDirectEnemyTick()
+		{
+			var runner = _zombie.Runner;
+			if (runner == null)
+				return int.MinValue;
+
+			// Allow scan cadence jitter, but filter stale memories BEFORE choosing the closest enemy.
+			float freshWindow = Mathf.Max(0.05f, _zombie.Sensor.SensorInterval) * 3f + 0.1f;
+			return runner.Tick - Mathf.FloorToInt(freshWindow / runner.DeltaTime);
 		}
 
 		// Sticky variant for zombies that already have a live target: while that target is still directly
@@ -1532,21 +1559,9 @@ namespace SimpleFPS
 				return false;
 			if (enemy.Object == _target || IsTargetAlive(_target) == false)
 				return true;
-			if (_zombie.Sensor == null || _zombie.Sensor.TryGetDirectEnemy(_target, out KnownEnemyInfo current) == false)
+			if (_zombie.Sensor == null ||
+			    _zombie.Sensor.TryGetDirectEnemy(_target, out KnownEnemyInfo current, GetOldestDirectEnemyTick()) == false)
 				return true;
-
-			// Stickiness only applies while the current target is actually still being seen/felt. A direct-known
-			// entry lives for MemoryDuration (~4 s) after the last real sighting, but its Tick stops refreshing
-			// the moment direct sensing breaks — so a stale tick means the zombie would be holding a ghost while
-			// another survivor is visibly shooting it. Let the closest visible enemy win, as before stickiness.
-			var runner = _zombie.Runner;
-			if (runner != null)
-			{
-				float sightingAge = (runner.Tick - current.Tick) * runner.DeltaTime;
-				float freshWindow = Mathf.Max(0.05f, _zombie.Sensor.SensorInterval) * 3f + 0.1f;
-				if (sightingAge > freshWindow)
-					return true;
-			}
 
 			// Same 3D metric TryGetClosestDirectEnemy ranks by.
 			Vector3 origin = transform.position;
@@ -1583,17 +1598,6 @@ namespace SimpleFPS
 			return Time.timeSinceLevelLoad - _investigationStartTime < Mathf.Max(0f, InvestigationCommitDuration);
 		}
 
-		private bool ShouldHoldMeleePosition(NetworkObject target, Vector3 targetPosition)
-		{
-			if (IsTargetAlive(target) == false || _zombie == null)
-				return false;
-			if (ShouldPrioritizeClimbTowardTarget(targetPosition))
-				return false;
-
-			float range = Mathf.Max(0.1f, _zombie.Stats.AttackRange);
-			return (targetPosition - transform.position).sqrMagnitude <= range * range;
-		}
-
 		private bool ShouldPrioritizeClimbTowardTarget(Vector3 targetPosition)
 		{
 			float verticalGap = targetPosition.y - transform.position.y;
@@ -1619,8 +1623,7 @@ namespace SimpleFPS
 
 			// Finish the wall as long as the goal is still ABOVE us. The old rule preserved the climb only when
 			// the new goal was basically at this climb's landing, which dropped climbers off the wall whenever
-			// the target strolled along the ledge above (the attack retarget re-fires StartAttack for the SAME
-			// survivor at its new position every AttackRetargetInterval) or ducked out of sight (sight-loss →
+			// the target strolled along the ledge above or ducked out of sight (sight-loss →
 			// StartInvestigation with a last-known point on the ledge). Mid-wall the drop is never right — the
 			// zombie just falls, re-approaches, and climbs the same face again. A goal that moved BELOW the
 			// zombie (target dropped down) falls through to the old landing-proximity rule, so pointless ascents
@@ -1646,6 +1649,13 @@ namespace SimpleFPS
 			bool hasCandidate = false;
 			int candidates = Mathf.Max(1, IdleWanderCandidateCount);
 
+			// Waypoint snapping is suppressed for the whole sweep while this zombie stands inside a crowded
+			// waypoint cluster: candidates stay plain points, and the away-from-zombies bias above walks it out
+			// of the building instead of letting it snap straight back in ("incentivized to leave").
+			bool allowWaypointSnap = UseWaypointWander && IsStandingInCrowdedWaypointCluster(origin) == false;
+			bool usedSweepWaypoint = false;
+			Vector3 sweepWaypoint = default;
+
 			for (int i = 0; i < candidates; i++)
 			{
 				Vector2 random = Random.insideUnitCircle.normalized;
@@ -1655,6 +1665,24 @@ namespace SimpleFPS
 
 				float distance = Random.Range(IdleWanderRadius * 0.35f, Mathf.Max(0.5f, IdleWanderRadius));
 				Vector3 candidate = origin + direction * distance;
+
+				// A candidate landing near an authored waypoint becomes that waypoint (buildings' interiors and
+				// upper floors are never found by flat random sampling). Each waypoint is considered once per
+				// sweep; a crowded waypoint stops attracting and the candidate stays a plain point.
+				if (allowWaypointSnap &&
+				    PatrolWaypoint.TryGetNearestInRadiusXZ(candidate, Mathf.Max(0f, WanderWaypointSnapRadius), out Vector3 waypoint))
+				{
+					if (usedSweepWaypoint && FlatDistanceSqr(waypoint, sweepWaypoint) <= 0.01f)
+						continue;
+
+					if (CountZombiesNearXZ(waypoint, WaypointCrowdRadius) < Mathf.Max(1, MaxZombiesNearWaypoint))
+					{
+						candidate = waypoint;
+						usedSweepWaypoint = true;
+						sweepWaypoint = waypoint;
+					}
+				}
+
 				if (TryResolveIdleWanderCandidate(origin, candidate, out Vector3 reachable) == false)
 					continue;
 
@@ -1672,6 +1700,39 @@ namespace SimpleFPS
 
 			point = bestPoint;
 			return true;
+		}
+
+		// The zombie stands within a crowded waypoint cluster when the nearest waypoint to it (within
+		// WaypointCrowdRadius, XZ) already has MaxZombiesNearWaypoint or more zombies around it. Crowding counts
+		// zombies, not waypoints, in a shared radius — a dense waypoint cluster shares one occupancy pool, so
+		// stacking more waypoints into a building does not raise its capacity.
+		private bool IsStandingInCrowdedWaypointCluster(Vector3 origin)
+		{
+			float crowdRadius = Mathf.Max(0.5f, WaypointCrowdRadius);
+			if (PatrolWaypoint.TryGetNearestInRadiusXZ(origin, crowdRadius, out Vector3 waypoint) == false)
+				return false;
+
+			return CountZombiesNearXZ(waypoint, crowdRadius) >= Mathf.Max(1, MaxZombiesNearWaypoint);
+		}
+
+		// Linear scan like GetAwayFromNearbyZombies — same per-sweep cost class, no new spatial structure.
+		private int CountZombiesNearXZ(Vector3 center, float radius)
+		{
+			float radiusSqr = Mathf.Max(0.5f, radius);
+			radiusSqr *= radiusSqr;
+			int count = 0;
+
+			for (int i = 0; i < ZombieCharacter.ActiveZombies.Count; i++)
+			{
+				var other = ZombieCharacter.ActiveZombies[i];
+				if (other == null || other.Health == null || other.Health.IsAlive == false)
+					continue;
+
+				if (FlatDistanceSqr(center, other.transform.position) <= radiusSqr)
+					count++;
+			}
+
+			return count;
 		}
 
 		private bool TryResolveIdleWanderCandidate(Vector3 origin, Vector3 candidate, out Vector3 reachable)
@@ -1937,7 +1998,7 @@ namespace SimpleFPS
 
 		private static bool IsTargetAlive(NetworkObject target)
 		{
-			if (target == null)
+			if (target == null || target.IsValid == false)
 				return false;
 
 			var survivor = Survivor.GetFrom(target);

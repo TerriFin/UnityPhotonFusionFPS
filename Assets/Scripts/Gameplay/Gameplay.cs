@@ -420,7 +420,7 @@ namespace SimpleFPS
 			if (HasStateAuthority)
 			{
 				if (IsFinite(destination))
-					SurvivorAICommands.ApplySelectedTeamCommand(Runner.LocalPlayer, selectedCharacterMask, SurvivorAICommand.MoveTo(destination));
+					SurvivorAICommands.ApplySelectedTeamCommand(Runner.LocalPlayer, selectedCharacterMask, SurvivorAICommand.MoveTo(ResolveMoveOrderDestination(destination)));
 				return;
 			}
 
@@ -1734,7 +1734,7 @@ namespace SimpleFPS
 			if (IsFinite(destination) == false)
 				return;
 
-			SurvivorAICommands.ApplySelectedTeamCommand(info.Source, selectedCharacterMask, SurvivorAICommand.MoveTo(destination));
+			SurvivorAICommands.ApplySelectedTeamCommand(info.Source, selectedCharacterMask, SurvivorAICommand.MoveTo(ResolveMoveOrderDestination(destination)));
 		}
 
 		[Rpc(RpcSources.All, RpcTargets.StateAuthority, Channel = RpcChannel.Reliable)]
@@ -1933,6 +1933,31 @@ namespace SimpleFPS
 		// Replace the raw map-raycast Y (which may have hit a roof, car, or other scenery) with the ground Y of
 		// the underlying height cell. This way the AI's patrol-point sampler resolves at the correct floor,
 		// even if the player dragged the circle over something the survivors cannot climb on top of.
+		// A map move order resolves through a top-down raycast, so clicking a roofed building yields a point ON
+		// the roof — a surface the island map classifies as disconnected from the walkable street network. Such
+		// an order made the team walk to the nearest street mesh and "hang out next to the building". Shift it to
+		// the nearest authored PatrolWaypoint by XZ distance (height ignored: a building's stacked floor waypoints
+		// all mean "go into this building"; stacked ties prefer the ground floor). Main-island destinations pass
+		// through untouched, as do orders with no waypoint in range (park outside — the old behavior) and orders
+		// issued before the island map has a bake.
+		private Vector3 ResolveMoveOrderDestination(Vector3 destination)
+		{
+			float snapRadius = AICommandSettings != null ? AICommandSettings.MoveOrderWaypointSnapRadius : 0f;
+			if (snapRadius <= 0f)
+				return destination;
+
+			// The query triggers the island map's lazy build; when no NavMesh is baked yet MainIslandId stays -1.
+			bool hasIsland = NavMeshIslandMap.TryGetIslandAt(destination, 1f, 1f, out int island);
+			if (NavMeshIslandMap.MainIslandId < 0)
+				return destination;
+			if (hasIsland && island == NavMeshIslandMap.MainIslandId)
+				return destination;
+
+			return PatrolWaypoint.TryGetNearestInRadiusXZ(destination, snapRadius, out Vector3 waypoint)
+				? waypoint
+				: destination;
+		}
+
 		private Vector3 SnapAssignedAreaCenterToHeightMap(Vector3 center)
 		{
 			if (_heightMapGenerator == null)

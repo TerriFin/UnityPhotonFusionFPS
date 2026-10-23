@@ -171,15 +171,16 @@ namespace SimpleFPS
 			return TryGetClosestKnownEnemy(out enemy, false);
 		}
 
-		public bool TryGetClosestDirectEnemy(out KnownEnemyInfo enemy)
+		// Optional freshness cutoff; omitted by callers that intentionally use the full memory window.
+		public bool TryGetClosestDirectEnemy(out KnownEnemyInfo enemy, int minTick = int.MinValue)
 		{
 			ExpireOldEntries();
-			return TryGetClosestKnownEnemy(out enemy, true);
+			return TryGetClosestKnownEnemy(out enemy, true, minTick);
 		}
 
 		// Targeted lookup: is this specific object currently directly sensed (vision/proximity), and with what
 		// info? Lets a chaser check whether its committed target is still visible without scanning for a new one.
-		public bool TryGetDirectEnemy(NetworkObject target, out KnownEnemyInfo enemy)
+		public bool TryGetDirectEnemy(NetworkObject target, out KnownEnemyInfo enemy, int minTick = int.MinValue)
 		{
 			enemy = default;
 			if (target == null)
@@ -199,7 +200,7 @@ namespace SimpleFPS
 					return false;
 				}
 
-				if (IsDirectCombatStimulus(candidate.Stimulus) == false)
+				if (candidate.Tick < minTick || IsDirectCombatStimulus(candidate.Stimulus) == false)
 					return false;
 
 				enemy = candidate;
@@ -291,7 +292,7 @@ namespace SimpleFPS
 			return IsLineBlocked(target) == false;
 		}
 
-		private bool TryGetClosestKnownEnemy(out KnownEnemyInfo enemy, bool directOnly)
+		private bool TryGetClosestKnownEnemy(out KnownEnemyInfo enemy, bool directOnly, int minTick = int.MinValue)
 		{
 			enemy = default;
 			float closestDistanceSqr = float.MaxValue;
@@ -307,7 +308,7 @@ namespace SimpleFPS
 					continue;
 				}
 
-				if (directOnly && IsDirectCombatStimulus(candidate.Stimulus) == false)
+				if (candidate.Tick < minTick || (directOnly && IsDirectCombatStimulus(candidate.Stimulus) == false))
 					continue;
 
 				float distanceSqr = (candidate.LastKnownPosition - origin).sqrMagnitude;

@@ -63,6 +63,43 @@ namespace SimpleFPS
 			return added;
 		}
 
+		// Nearest active waypoint to `center` by XZ distance within `radius`, ignoring height entirely: a building
+		// has multiple floors, and any of its vertically stacked waypoints marks the same "go into this building"
+		// intent. Ties between stacked waypoints (same XZ) prefer the LOWEST — ground-floor entry, since movers
+		// path from outside and interior waypoints chain upward from there. Linear scan like CollectInsideCircle:
+		// waypoint counts are authored and small.
+		public static bool TryGetNearestInRadiusXZ(Vector3 center, float radius, out Vector3 position)
+		{
+			position = default;
+			if (radius <= 0f)
+				return false;
+
+			float bestDistanceSqr = radius * radius;
+			bool found = false;
+			for (int i = 0; i < ActiveWaypoints.Count; i++)
+			{
+				var waypoint = ActiveWaypoints[i];
+				if (waypoint == null)
+					continue;
+
+				Vector3 candidate = waypoint.transform.position;
+				float dx = candidate.x - center.x;
+				float dz = candidate.z - center.z;
+				float distanceSqr = dx * dx + dz * dz;
+				if (distanceSqr > bestDistanceSqr)
+					continue;
+				// Same XZ ring (stacked floors): keep the lower waypoint.
+				if (found && distanceSqr > bestDistanceSqr - 0.01f && candidate.y >= position.y)
+					continue;
+
+				bestDistanceSqr = distanceSqr;
+				position = candidate;
+				found = true;
+			}
+
+			return found;
+		}
+
 		private void OnDrawGizmos()
 		{
 			Gizmos.color = new Color(0.2f, 0.8f, 1f, 0.9f);

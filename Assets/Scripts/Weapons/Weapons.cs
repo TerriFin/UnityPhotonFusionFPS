@@ -351,21 +351,20 @@ namespace SimpleFPS
 				float tPrev = (Runner.Tick - 1 - proj.SpawnTick) * dt;
 				float tCurr = (Runner.Tick     - proj.SpawnTick) * dt;
 
-				if (tCurr >= maxLifetime)
+				if (tPrev >= maxLifetime)
 				{
 					_activeProjectiles.RemoveAt(i);
 					continue;
 				}
 
+				// Resolve the final (possibly partial) interval before expiring the projectile.
+				tCurr = Mathf.Min(tCurr, maxLifetime);
 				Vector3 prevPos = EvaluateTrajectory(bulletSpeed, weapon.GravityScale, proj.Origin, proj.Direction, tPrev);
 				Vector3 currPos = EvaluateTrajectory(bulletSpeed, weapon.GravityScale, proj.Origin, proj.Direction, tCurr);
 				Vector3 delta   = currPos - prevPos;
 				float   stepLen = delta.magnitude;
 
-				if (stepLen < 0.001f)
-					continue;
-
-				if (TryGetProjectileHit(prevPos, delta / stepLen, stepLen, weapon.HitMask, proj.LagCompPlayer, out var hit))
+				if (stepLen > 0f && TryGetProjectileHit(prevPos, delta / stepLen, stepLen, weapon.HitMask, proj.LagCompPlayer, out var hit))
 				{
 					bool isKill = false;
 					bool isCrit = false;
@@ -389,6 +388,10 @@ namespace SimpleFPS
 
 					CharacterSensorEvents.ReportBulletImpact(hit.Point, proj.Origin, Object);
 
+					_activeProjectiles.RemoveAt(i);
+				}
+				else if (tCurr >= maxLifetime)
+				{
 					_activeProjectiles.RemoveAt(i);
 				}
 			}

@@ -129,6 +129,16 @@ Rules:
 - Intermittently choose a nearby reachable wander point.
 - Prefer wander points that move away from nearby zombies.
 - Sample wander candidates with enough vertical reach to find connected ramp/ledge surfaces above or below the zombie, then require a complete NavMesh path to the sampled point. Ramps and walkable ledges therefore spread zombies between elevations without using climb logic.
+- **Waypoint wander** (`UseWaypointWander`): a candidate landing within `WanderWaypointSnapRadius` (XZ) of an
+  authored `PatrolWaypoint` snaps to the waypoint before the reachability check — this is how idle zombies find
+  building interiors and upper floors, which flat random sampling never discovers. Each waypoint is considered
+  once per sweep. Because buildings hold waypoint clusters, a zombie that entered keeps snapping to nearby
+  waypoints on later sweeps and naturally "sticks" to points of interest. **Anti-black-hole boundary:** a
+  waypoint whose surroundings (XZ `WaypointCrowdRadius`) already hold `MaxZombiesNearWaypoint` zombies stops
+  attracting, and a zombie standing inside such a crowd gets waypoint snapping suppressed for its whole sweep —
+  the away-from-zombies bias then walks it out and keeps it from snapping straight back in. Crowding counts
+  zombies, not waypoints, in a shared radius, so stacking more waypoints into a building does not raise its
+  capacity.
 - If an idle wander destination produces no meaningful flat progress for `IdleWanderStuckTimeout`, abandon it and retry later. This prevents one bad ramp lip, crowd knot, or tiny navmesh pocket from trapping an idle zombie indefinitely.
 - Use `CharacterSeparation` only as the close-range anti-overlap layer.
 - If a survivor is detected, switch to Attacking.
@@ -159,9 +169,11 @@ Rules:
   *muzzle*, ~1.5 m above ground, which the height-aware reached check alone would never accept (zombies froze
   on the stimulus spot before this).
 - If the point is reached without finding a survivor, switch to Idle there.
-- **Give up on unreachable points.** If the zombie makes no flat+vertical progress toward the point of at
-  least `InvestigationMinProgress` for `InvestigationGiveUpTimeout` (10 s), it abandons the point and
-  returns to Idle wandering. The clock deliberately runs even while climbing: a productive climb resets it
+- **Give up on unreachable points.** Progress means moving at least `InvestigationMinProgress` along an
+  active walking route (including a midpoint route), or improving the best flat+vertical distance to the goal.
+  Walking can therefore take a detour away from the goal without timing out; small movements accumulate.
+  With no progress for `InvestigationGiveUpTimeout` (10 s), return to Idle. Jam sidesteps do not count as
+  walking progress. The clock deliberately runs even while climbing: a productive climb resets it
   through real distance improvement, a stalled climb dies via `ClimbStuckTimeout`, and only a capped
   wall-climb yo-yo (unreachable interior point) accumulates the full 10 s — exactly the case that must give
   up. This is the pre-overtime "return to wandering" guarantee; overtime Hunting has no investigation path
@@ -178,15 +190,15 @@ Rules:
 - Choose a direct target, normally the closest detected survivor.
 - **Sticky targeting:** while the current target is still directly seen/felt, another visible survivor only
   steals the zombie's attention when its distance is below `TargetSwitchDistanceFactor` (default 0.5 — must be
-  at least twice as close) of the current target's distance. Applies to both the per-tick refresh and the
-  periodic `AttackRetargetInterval` reconsideration, so two shooters at similar range no longer flip the target
-  every tick. "Still seen" requires a *fresh* sighting (within ~3 sensor intervals): a direct-known memory
-  entry survives ~4 s after sight breaks, and holding stickiness through that window made zombies chase a
-  ghost's stale position while another survivor was visibly shooting them. Once the sighting is stale — or the
-  target stops being directly sensed at all — the closest sensed survivor wins as before.
+  at least twice as close) of the current target's distance. All candidates, including the current target,
+  must have a sighting within `3 * max(0.05, SensorInterval) + 0.1` seconds **before** distance ranking.
+  Older memories remain available for investigation but cannot beat fresh enemies. The sensor's optional
+  `minTick` query argument implements this cutoff without changing survivor memory queries.
 - Move through the shared explicit-goal routing policy.
 - Alert nearby zombies to the target position.
-- Periodically reconsider direct targets using `AttackRetargetInterval`.
+- Refresh direct target information every AI tick. Only an actual target/state change clears the route;
+  observations of the same target preserve navigation and active climbs. `AttackRetargetInterval` retains
+  its serialized name and controls periodic alert refreshes, still subject to `AlertCooldown`.
 - Ignore suspicious sound and bullet-impact investigation stimuli while the current survivor target is alive.
 - Apply melee damage inside `ZombieStats.AttackRange`.
 - If the target dies and no other direct target exists, switch to Idle.
@@ -204,7 +216,13 @@ Rules:
 - On first acquisition, pick a random player that still owns at least one alive survivor and **commit** to that player, then target that player's closest survivor. Picking the player first (rather than the globally nearest survivor) shares overtime pressure evenly between players regardless of how their survivors are spread across the map. A player hiding survivors in a corner no longer offloads their share of the horde onto better-positioned teams. Even sharing comes from each newly spawned zombie's random commitment, not from constant re-rolling.
 - **Stay committed to that player.** Periodic retargets only re-pick the closest survivor *of the committed player* (so the zombie follows the nearest as survivors move or die); they do **not** re-roll the player. Re-roll the player only once the committed team has no alive survivors left (then commit to a new random player). Re-rolling the player every interval made in-transit zombies flip target teams mid-journey, so a horde caught between two holed-up teams oscillated back and forth and never arrived.
 - Exclude neutral survivors from the global pick. They are not owned by a player, so counting them would unbalance pressure. They are still attacked through normal sensing (next rule).
-- A directly sensed enemy always overrides the committed target. If a hunting zombie senses any survivor on the way to its assigned target — neutral survivors included — it attacks that survivor instead. This keeps neutrals threatened and stops zombies from walking past a survivor they can clearly see. The committed player is left untouched, so the zombie resumes heading to its team once the sensed enemy is killed or lost.
+- A directly sensed enemy overrides the hunting target, including neutral survivors. The committed player
+  is retained, but pursuit uses one shared `_target`. After losing a fresh local sighting, the zombie keeps
+  pursuing that survivor's live position until the next hunt refresh, then returns to the committed team.
+  A dead target triggers immediate replacement. Global acquisition/refresh happens only when no fresh
+  local enemy is sensed. This lingering local pursuit was explicitly restored at the user's request.
+- Hunting still ignores noise/impact investigation stimuli; this restoration changes local survivor
+  pursuit, not the separate pre-overtime Investigating state.
 - Stagger the first acquisition so the horde does not scan for survivors on one tick. A target that dies mid-hunt re-picks immediately without waiting for the stagger.
 - Add interval jitter so the horde does not permanently synchronize.
 - Keep the current target between checks unless it dies or a closer enemy is sensed. The sensed override is
@@ -220,13 +238,14 @@ Investigating, Attacking, and Hunting all have a concrete world-space goal. V6's
 
 Per tick, in order:
 
-1. **Reached** (flat + height) → melee/look.
+1. **Reached** (flat + height) → look for fixed investigation goals. Combat stops only when the melee
+   range and obstruction check passes, so a thin wall inside the stopping radius cannot park a zombie.
 2. **Active climb continues.** Surface climbs (terrain registry) keep their landing logic; wall climbs run cap/crest/stall checks (below). The navigator stays cleared during climbs.
 3. **Navigator update** (`SetDynamicDestination`/`SetDestination` + `Tick`). A one-tick path-loss transient (the navigator drops its path when a midpoint chain's last corner is consumed) is bridged by a single forced repath so it cannot masquerade as "cannot get closer".
 4. **Terrain shortcut surfaces** (generated registry — deterministic data, kept verbatim from earlier versions; the one mechanism that has never failed). Ledge shortcut climbs and drop-downs, exactly as before.
 5. **Path mode** — pathfinding can get closer (a usable steering corner exists): walk the corners. NavMesh routes are preferred over climbing by contract. One exception: the **near-goal vault** — within `VaultTriggerMaxDistance` (6 m) of the goal, a LOW obstacle blocking the direct line (wall ray hits at chest height, a parallel ray at vault height misses) is hopped instead of pathed around: the car or fence between the zombie and the survivor.
 6. **Direct mode** — pathfinding cannot get closer, derived purely from existing navigator signals (zero new NavMesh queries): destination unreachable, no path (off-mesh start, or arrived at the nearest navigable point short of the goal), or flat-arrived at a steering corner that 3D corner advancement can never consume while genuinely off the mesh (standing on a prop above one's own path). Walk straight at the goal; on wall contact → **wall climb**.
-7. **Jam reflex** — the sole never-still safety net, applied to every move input: a nonzero move input producing ~zero real velocity for `JamTimeout` (0.75 s) means the body is physically blocked → random sidestep for 1–2.5 s, then resume. Raw physics, deliberately goal-agnostic, never reset by goal/state changes (anything reset by the route-clear path is silently capped at the 1 s attack-retarget cadence).
+7. **Jam reflex** — the sole never-still safety net, applied to every move input: a nonzero move input producing ~zero real velocity for `JamTimeout` (0.75 s) means the body is physically blocked → random sidestep for 1–2.5 s, then resume. Raw physics, deliberately goal-agnostic, never reset by goal/state changes.
 
 ### Wall climbs
 
@@ -269,9 +288,14 @@ Once `BuildExplicitGoalMoveInput` commits to a registered climb surface, or a re
 - **Surface climbs** aim at the registry landing point: the direct-route contact point projected to the surface top and inset onto the landing side. Once the zombie is within `ClimbMantleMaxSnapHeight` vertically and `ClimbMantleMaxHorizontalSnapDistance` horizontally, it mantles directly onto that point. **Wall climbs** have no landing in advance — they end by cap, crest probe + mantle, stall, or duration (see Explicit-Goal Routing).
 - `ZombieCharacter.MantleTo` spreads the hoist over `MantleAnimationDuration` (default `0.25s`, ease-out cubic) so the body visibly clambers up instead of teleporting. `MantleAnimationDuration = 0` reverts to the instant `KCC.SetPosition` behaviour.
 - A short commit timer (`ClimbCommitDuration`) keeps the climb impulse from flickering off across a state transition that happens mid-climb (Investigating -> Attacking when the zombie crests the ledge and finally sees the survivor, for example). Resetting it on the state change would drop the zombie back below the ledge and loop.
-- **An active climb survives goal movement while the goal stays above the zombie.** Attack retargeting re-fires `StartAttack` for the *same* survivor at its new position every `AttackRetargetInterval`, and sight loss hands off to `StartInvestigation` — both clear the explicit-goal route. `ShouldPreserveActiveClimbForTarget` keeps the climb whenever the new goal is still more than a step above the zombie (a target strolling along the ledge top used to drop climbers off the wall mid-ascent, who then fell, re-approached, and climbed the same face again). Only a goal that moved *below* the zombie falls back to the old landing-proximity rule and cancels the ascent.
+- **Observations of the same attack target do not restart a climb.** Actual target changes and the handoff
+  to investigation still use `ShouldPreserveActiveClimbForTarget`: preserve a climb toward an elevated goal;
+  surface climbs also allow nearby landing goals. Ordinary refreshes leave completion to the existing
+  cap, crest, and stall checks, including same-level vaults.
 - While actively climbing, investigation stimuli from shots/noise do not clear the current climb. The zombie finishes the ledge commitment first, then resumes normal target evaluation.
-- While Attacking or Hunting, a zombie already inside `ZombieStats.AttackRange` holds position and faces the target during attack cooldown instead of pushing forward, so a packed crowd does not try to scale the wall behind a survivor it can already hit. This hold is skipped for a target above the zombie that still requires climbing. A zombie actively climbing can melee a survivor directly above it (capped by the larger of attack range and `ClimbMantleMaxSnapHeight`) without canceling the climb, so a survivor on the ledge lip cannot make it hang helplessly below.
+- While Attacking or Hunting, a zombie in melee reach **with a clear attack line** holds position during
+  cooldown. A blocked attack keeps moving. This hold is skipped for an elevated target that still requires
+  climbing. Climbing melee retains the extended vertical reach, subject to the same obstruction check.
 
 A full terrain step is `HeightLevelWorldUnits` tall; the zombie scales most of it by sustained climb impulse against the cliff face, then mantles the last part onto the surface landing point.
 
@@ -289,6 +313,10 @@ UseTerrainShortcutClimbs: true
 UseWallClimbs: true              (was UseClimbPursuit / UseRescueClimbs; FormerlySerializedAs migrates)
 ClimbSpeedMultiplier: 0.45       (climb rises at MoveSpeed x this; raise for a faster climb)
 ClimbMantleMaxSnapHeight: 1.75
+UseWaypointWander: true          (idle wander candidates snap to authored PatrolWaypoints)
+WanderWaypointSnapRadius: 6      (candidate-to-waypoint XZ snap distance)
+WaypointCrowdRadius: 10          (XZ occupancy radius, roughly a building footprint)
+MaxZombiesNearWaypoint: 4        (at/above this count a waypoint stops attracting and starts expelling)
 LogTraversalDebug: false         (debug: logs this zombie's routing gates — climb kind/cap, cooldown, jam,
                                   navigator signals — twice a second while it has an explicit goal)
 
@@ -393,6 +421,10 @@ First-pass attacks are simple melee:
 - Apply damage on state authority after cooldown.
 - Keep animation events visual-only for now.
 - Normal melee uses full 3D distance from the zombie's transform to the survivor's transform.
+- Both normal and climbing melee require a clear chest-to-chest ray (each transform position + 1 m up)
+  in the runner's physics scene. `Default`, `Navigable`, and `MapNonVisible` geometry blocks attacks;
+  triggers and character layers do not. The mask is cached on spawn. `TryAttack` returns reachability
+  separately from whether damage was dealt, so cooldown holds and blocked-target movement share one check.
 - While actively climbing, allow the same horizontal melee range against a survivor directly above the zombie. The vertical allowance is capped by the larger of normal attack range and `ClimbMantleMaxSnapHeight`. This prevents a survivor standing on the ledge lip from making the zombie hang helplessly below them.
 
 Suggested tunables:

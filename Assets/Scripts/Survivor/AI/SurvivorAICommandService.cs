@@ -45,6 +45,11 @@ namespace SimpleFPS
 		// on exactly the same point. Applied per extra survivor beyond the first selected/ordered survivor.
 		public float MoveStoppingDistanceIncreasePerExtraSurvivor = 0.2f;
 		public float MoveStoppingDistanceMax = 3f;
+		// A map move order whose destination cannot be directly resolved (the top-down map click hit a roof or
+		// another disconnected surface) is shifted to the nearest PatrolWaypoint within this XZ radius — height is
+		// ignored on purpose, since a building's stacked floor waypoints all mean "go into this building". 0
+		// disables the fallback. Tune down if orders near buildings get pulled inside too eagerly.
+		public float MoveOrderWaypointSnapRadius = 12f;
 	}
 
 	public readonly struct SurvivorAICommand

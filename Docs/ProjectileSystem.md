@@ -147,6 +147,10 @@ Do NOT call `ApplyDamage()` here. Do NOT call any raycast here.
 
 ### Stepping active projectiles (FixedUpdateNetwork, state authority)
 
+The current implementation is `Weapons.StepActiveProjectiles`. The final interval is clamped to the
+projectile lifetime and raycast before removal, including lifetimes shorter than one tick or ending
+exactly on a tick boundary. This preserves the full configured range without tracing beyond it.
+
 Add this block to `FixedUpdateNetwork()`, after the existing fire/reload logic:
 
 ```csharp
@@ -169,28 +173,26 @@ if (HasStateAuthority)
         float tPrev = (currentTick - 1 - proj.SpawnTick) * dt;
         float tCurr = (currentTick     - proj.SpawnTick) * dt;
 
-        // Bullet has exceeded its maximum range — treat as miss and discard.
+        // Discard only when no untested travel remains.
         float maxLifetime = MaxHitDistance / BulletSpeed;
-        if (tCurr >= maxLifetime)
+        if (tPrev >= maxLifetime)
         {
             _activeProjectiles.RemoveAt(i);
             continue;
         }
 
+        tCurr = Mathf.Min(tCurr, maxLifetime);
         Vector3 prevPos = EvaluateTrajectory(proj, tPrev);
         Vector3 currPos = EvaluateTrajectory(proj, tCurr);
         Vector3 delta   = currPos - prevPos;
         float   stepLen = delta.magnitude;
-
-        if (stepLen < 0.001f)
-            continue;
 
         // See "Lag Compensation: Possessed vs AI-Fired Shots" for why the player and flags
         // are per projectile instead of a fixed Object.InputAuthority query.
         var hitOptions = proj.LagCompPlayer.IsRealPlayer
             ? HitOptions.IncludePhysX | HitOptions.IgnoreInputAuthority
             : HitOptions.IncludePhysX;
-        if (Runner.LagCompensation.Raycast(prevPos, delta / stepLen, stepLen,
+        if (stepLen > 0f && Runner.LagCompensation.Raycast(prevPos, delta / stepLen, stepLen,
             proj.LagCompPlayer, out var hit, HitMask, hitOptions))
         {
             // Record hit for all clients.
@@ -207,6 +209,10 @@ if (HasStateAuthority)
             if (hit.Hitbox != null)
                 ApplyDamage(hit.Hitbox, hit.Point, proj.Direction);
 
+            _activeProjectiles.RemoveAt(i);
+        }
+        else if (tCurr >= maxLifetime)
+        {
             _activeProjectiles.RemoveAt(i);
         }
     }

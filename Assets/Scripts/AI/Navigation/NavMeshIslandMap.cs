@@ -64,10 +64,18 @@ namespace SimpleFPS
 
 		public static int IslandCount { get; private set; }
 
+		/// <summary>
+		/// Id of the largest island — the connected street network on a generated city. -1 while unbuilt. Lets
+		/// callers ask the cheapest of all connectivity questions: "is this point on ordinary walkable ground?"
+		/// (map move orders use it to detect roof clicks).
+		/// </summary>
+		public static int MainIslandId { get; private set; } = -1;
+
 		/// <summary>Call whenever the NavMesh is (re)baked. The next query rebuilds the map.</summary>
 		public static void Invalidate()
 		{
 			_built = false;
+			MainIslandId = -1;
 		}
 
 #if UNITY_EDITOR
@@ -432,11 +440,16 @@ namespace SimpleFPS
 			// islands are the only ones whose large-vs-large negatives degrade to real path queries.
 			int largeIslands = 0;
 			float largestArea = 0f;
+			MainIslandId = -1;
 			for (int i = 0; i < _islandAreas.Length; i++)
 			{
 				if (_islandAreas[i] > SmallIslandMaxArea)
 					largeIslands++;
-				largestArea = Mathf.Max(largestArea, _islandAreas[i]);
+				if (_islandAreas[i] > largestArea)
+				{
+					largestArea = _islandAreas[i];
+					MainIslandId = i;
+				}
 			}
 
 			Debug.Log($"{nameof(NavMeshIslandMap)}: built {IslandCount} island(s) from {triangleCount} NavMesh triangles — " +

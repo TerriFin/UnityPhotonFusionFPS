@@ -131733,7 +131733,7 @@ MonoBehaviour:
   GameDuration: 450
   DoubleDamageDuration: 0
   StartingCharacterCount: 20
-  RaidMode: 1
+  RaidMode: 0
   RaidModeClientStartingCharacterCount: 5
   SpawnClusterRadius: 1
   TeamColorPalette: {fileID: 11400000, guid: 32a93ca88ef4bbb4281ef7963c103b7c, type: 2}
@@ -131755,6 +131755,7 @@ MonoBehaviour:
     ValidateLaneOffsetPath: 1
     MoveStoppingDistanceIncreasePerExtraSurvivor: 0.2
     MoveStoppingDistanceMax: 3
+    MoveOrderWaypointSnapRadius: 12
   EnableAreaOfInterest: 1
   PossessedInterestRadius: 150
   SquadmateInterestRadius: 50

@@ -58,6 +58,7 @@ namespace SimpleFPS
 
 		private TickTimer _despawnTimer;
 		private float _nextAttackTime;
+		private int _meleeBlockerMask;
 		private bool _corpseSettled;
 
 		public CharacterSensor Sensor { get; private set; }
@@ -77,6 +78,7 @@ namespace SimpleFPS
 
 		public override void Spawned()
 		{
+			_meleeBlockerMask = LayerMask.GetMask("Default", "Navigable", "MapNonVisible");
 			if (KCC == null)
 				KCC = GetComponent<SimpleKCC>();
 			if (Health == null)
@@ -203,9 +205,10 @@ namespace SimpleFPS
 			AI?.ReceiveInvestigationStimulus(target, stimulusTick, true);
 		}
 
-		public bool TryAttack(NetworkObject target)
+		public bool TryAttack(NetworkObject target, out bool canReachTarget)
 		{
-			if (target == null || Time.timeSinceLevelLoad < _nextAttackTime)
+			canReachTarget = false;
+			if (target == null || target.IsValid == false)
 				return false;
 
 			var survivor = Survivor.GetFrom(target);
@@ -215,6 +218,16 @@ namespace SimpleFPS
 			Vector3 toTarget = survivor.transform.position - transform.position;
 			float range = Mathf.Max(0.1f, Stats.AttackRange);
 			if (toTarget.sqrMagnitude > range * range && CanReachTargetWhileClimbing(toTarget, range) == false)
+				return false;
+
+			// Chest-to-chest world check also tells the AI whether it can hold position during cooldown.
+			var physicsScene = Runner != null ? Runner.GetPhysicsScene() : Physics.defaultPhysicsScene;
+			if (physicsScene.Raycast(transform.position + Vector3.up, toTarget.normalized, out _, toTarget.magnitude,
+				_meleeBlockerMask, QueryTriggerInteraction.Ignore))
+				return false;
+
+			canReachTarget = true;
+			if (Time.timeSinceLevelLoad < _nextAttackTime)
 				return false;
 
 			Vector3 flatDirection = toTarget;
