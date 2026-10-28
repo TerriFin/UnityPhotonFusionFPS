@@ -15,7 +15,7 @@ Configured hosted matches may override the scene's `BuildingPlacementSettings` r
 - Place buildings only in cells that are not roads.
 - Never place buildings on ledge cells or height-change road cells.
 - Keep first-version building footprints on a single flat height level.
-- Support `1x1`, `1x2`, `2x1`, and `2x2` footprints for the first version.
+- Support rectangular footprints from the configured building definitions, including larger plots such as `5x5`.
 - Place complex buildings near roads.
 - Place simple blocking buildings at map edges and in leftover/backfill spaces.
 - Let building definitions declare which footprint sides require road adjacency.
@@ -212,13 +212,14 @@ Building definitions are prefab components, not separate ScriptableObject assets
 
 `FootprintSize` is in grid cells.
 
-For the first version:
+Common examples (not a fixed size limit):
 
 ```text
 1x1
 1x2
 2x1
 2x2
+5x5
 ```
 
 The generator creates placement candidates for all four cardinal rotations from the same `BuildingDefinition`: `0`, `90`, `180`, and `270` degrees.
@@ -455,14 +456,15 @@ The first implementation can approximate this by scanning for candidate footprin
 Sort complex building candidates by footprint area:
 
 ```text
-2x2 first
+Largest configured footprint first (e.g. 5x5)
+2x2 next
 1x2 / 2x1 next
 1x1 last
 ```
 
 Use `LargeBuildingPreference` to decide how hard to favor each size.
 
-Suggested first implementation:
+Current placement order:
 
 1. Compute the number of empty buildable cells after edge blockers.
 2. Estimate a large-building target:
@@ -471,8 +473,8 @@ Suggested first implementation:
 targetLargeCells = emptyBuildableCells * LargeBuildingPreference
 ```
 
-3. Try to place `2x2` buildings until the target is reached or no valid `2x2` candidates remain.
-4. Try `1x2` and `2x1` buildings.
+3. Collect distinct Complex footprint areas from the BuildingSet and sort largest first.
+4. Try each area greater than one until the target is reached or no valid candidates remain. The blocker backfill pass also derives its descending area list from the configured blockers.
 5. Finish with `1x1` buildings.
 
 At `LargeBuildingPreference = 1.0`, the placer should try every larger footprint before smaller ones.
@@ -716,11 +718,9 @@ Later, special districts can provide different building sets:
 
 The building placer should filter definitions by the environment of the footprint cells. A future building can require all footprint cells to share the same environment, or allow mixed edges if needed.
 
-## Future Larger Buildings
+## Larger Buildings
 
-The first version supports max `2x2`.
-
-Future expansion should only require adding larger `FootprintSize` values:
+Placement derives available footprint areas from the BuildingSet. Add definitions with larger `FootprintSize` values; the standalone generator supports 1–20 tiles per side. For example:
 
 ```text
 2x3
@@ -785,7 +785,7 @@ Simple blocking buildings should normally remain non-enterable and act as solid 
 - Road cells are never overwritten.
 - Edge empty cells are filled with simple blockers.
 - Complex buildings can require roads on specific sides.
-- Supports `1x1`, `1x2`, `2x1`, and `2x2` footprints.
+- Supports configured rectangular footprints, including `1x1`, `1x2`, `2x1`, `2x2`, and larger structures.
 - Larger buildings are preferred based on `LargeBuildingPreference`.
 - Complex building definitions do not repeat within `RepeatCooldownDistance`; if none fit, placement moves down to smaller footprints.
 - Simple blockers may relax repeat cooldown only as a fill-the-map fallback.

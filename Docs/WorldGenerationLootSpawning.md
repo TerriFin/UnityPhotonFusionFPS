@@ -61,6 +61,8 @@ Med cabinet marker:
 
 Markers are not networked. They are just authored hints inside static generated prefabs.
 
+The standalone building generator can author Weapon/Health marker groups using independent density sliders and rerolls, calibrated against Ashford Police Station. Its version-2 export is imported with these same `PickupSpawnPoint` categories. See `Docs/BuildingGenerator.md` for placement checks and the authoring workflow. This changes available marker locations/counts; `PickupPointUsage`, pickup pools and host spawning still determine actual loot.
+
 ## Loot Settings
 
 Use a settings asset for pickup pools and density:

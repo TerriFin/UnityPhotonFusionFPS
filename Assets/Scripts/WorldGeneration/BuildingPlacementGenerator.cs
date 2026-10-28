@@ -228,8 +228,9 @@ namespace SimpleFPS
 
 			if (Settings.LargeBuildingPreference > 0f)
 			{
-				largeCellsPlaced += PlaceComplexBuildingsByArea(grid, placements, random, 4, largeCellTarget, largeCellsPlaced);
-				largeCellsPlaced += PlaceComplexBuildingsByArea(grid, placements, random, 2, largeCellTarget, largeCellsPlaced);
+				foreach (int area in GetFootprintAreas(BuildingCategory.Complex))
+					if (area > 1)
+						largeCellsPlaced += PlaceComplexBuildingsByArea(grid, placements, random, area, largeCellTarget, largeCellsPlaced);
 			}
 
 			PlaceComplexBuildingsByArea(grid, placements, random, 1, int.MaxValue, 0);
@@ -724,15 +725,30 @@ namespace SimpleFPS
 
 		private void FillRemainingBlockers(BuildingCell[,] grid, List<PlacedBuilding> placements, System.Random random)
 		{
-			int[] areas = { 4, 2, 1 };
-			for (int i = 0; i < areas.Length; i++)
+			foreach (int area in GetFootprintAreas(BuildingCategory.SimpleBlocking))
 			{
 				int guard = grid.GetLength(0) * grid.GetLength(1);
-				while (guard > 0 && TryPlaceBestBuilding(grid, placements, BuildingCategory.SimpleBlocking, false, false, false, true, random, areas[i]))
+				while (guard > 0 && TryPlaceBestBuilding(grid, placements, BuildingCategory.SimpleBlocking, false, false, false, true, random, area))
 				{
 					guard--;
 				}
 			}
+		}
+
+		private List<int> GetFootprintAreas(BuildingCategory category)
+		{
+			var areas = new HashSet<int>();
+			var buildings = Settings.BuildingSet != null ? Settings.BuildingSet.Buildings : null;
+			if (buildings != null)
+				foreach (var building in buildings)
+					if (building != null && building.Category == category)
+					{
+						Vector2Int size = building.GetRotatedFootprintSize(0);
+						areas.Add(size.x * size.y);
+					}
+			var result = new List<int>(areas);
+			result.Sort((a, b) => b.CompareTo(a));
+			return result;
 		}
 
 		private bool TryPlaceBestBuilding(
