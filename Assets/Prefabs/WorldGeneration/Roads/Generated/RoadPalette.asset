@@ -1,0 +1,50 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!28 &2800000
+Texture2D:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: RoadPalette
+  m_ImageContentsHash:
+    serializedVersion: 2
+    Hash: 00000000000000000000000000000000
+  m_ForcedFallbackFormat: 4
+  m_DownscaleFallback: 0
+  m_IsAlphaChannelOptional: 0
+  serializedVersion: 2
+  m_Width: 57
+  m_Height: 1
+  m_CompleteImageSize: 228
+  m_MipsStripped: 0
+  m_TextureFormat: 4
+  m_MipCount: 1
+  m_IsReadable: 1
+  m_IsPreProcessed: 0
+  m_IgnoreMipmapLimit: 0
+  m_MipmapLimitGroupName: 
+  m_StreamingMipmaps: 0
+  m_StreamingMipmapsPriority: 0
+  m_VTOnly: 0
+  m_AlphaIsTransparency: 0
+  m_ImageCount: 1
+  m_TextureDimension: 2
+  m_TextureSettings:
+    serializedVersion: 2
+    m_FilterMode: 0
+    m_Aniso: 1
+    m_MipBias: 0
+    m_WrapU: 1
+    m_WrapV: 1
+    m_WrapW: 1
+  m_LightmapFormat: 0
+  m_ColorSpace: 1
+  m_PlatformBlob: 
+  image data: 228
+  _typelessdata: 5b6249ff4a4d50ff56595bff5e4a38ffb4b0a6ff4e7a4cff3d3632ff6f7458ffa0835cff4d5e7aff8e4a42ffd2702fffb8b7b2ff33383bff8e8b84ff7a6a55ff45684fff3c5b45ff33383bff66747affe2dcc0ffb03a30ffe2dcc0ff4e5b60ff6e5622ff2c5236ff6e2a24ffd8d5cbff9c9b95ff3e4245ffcfc6b0ff353739ffd1be98ff4d6b88ff58744bff85888affc1973dffa2483aff3f6e6affd9d4c7ff7a4e36ffa39573ffa4a4a4ff85888affb03a30ffe0ddd3ffd2a83eff5a4a3aff6a4e3cff9a3a30ff4a7a96ff2a2c2eff34453aff2e3236ffc9c5b8ff26282aff92734fff
+  m_StreamData:
+    serializedVersion: 2
+    offset: 0
+    size: 0
+    path: 

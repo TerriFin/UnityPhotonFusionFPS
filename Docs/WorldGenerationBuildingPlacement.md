@@ -178,12 +178,12 @@ public enum BuildingSideRequirement
 
 Building-neighbor requirements use the building category stored in the adjacent occupancy cell:
 
-- `RequiresComplexBuilding`: every cell along this side must touch an already placed `Complex` building.
+- `RequiresComplexBuilding`: every cell along this side must touch an already placed `Complex` building. On a `SimpleBlocking` building this side is a back alley and is judged as a whole: every cell along it must touch a complex building, a ledge (up or down, but not a height-change ramp) or an already placed blocker, and at least one must be a complex building or a ledge, so the alley opens onto something. A side facing only blockers does not qualify.
 - `RequiresNoComplexBuilding`: no cell along this side may touch a `Complex` building.
 - `RequiresBlockingBuilding`: every cell along this side must touch an already placed `SimpleBlocking` building.
 - `RequiresNoBlockingBuilding`: no cell along this side may touch a `SimpleBlocking` building.
 
-Positive requirements fail at the map boundary or beside roads, ledges, and empty cells because no building of the requested category exists there. Negative requirements allow those cells because they only forbid the named building category.
+Positive requirements fail at the map boundary or beside roads, ledges (except a blocker's alley side), and empty cells because no building of the requested category exists there. Negative requirements allow those cells because they only forbid the named building category.
 
 These checks use the live placement grid. They can only see buildings placed earlier in the pipeline. For example, a complex building can require an edge blocker or a previously placed complex building, but it cannot require a remaining-space filler blocker that has not been generated yet.
 
@@ -203,12 +203,16 @@ BuildingDefinition
     BuildingSideRequirement South;
     BuildingSideRequirement West;
 
+    string BuildingType;
     int Weight;
     int RepeatCooldownDistance;
+    int MaxCount; // 0: unlimited
 }
 ```
 
 Building definitions are prefab components, not separate ScriptableObject assets. The generator instantiates the `BuildingDefinition.gameObject`.
+
+`BuildingType` groups buildings that should count as one kind for weight and repeat cooldown, for example `Hospital`, `Park` or `FireStation`. It is matched ignoring case and surrounding spaces. Empty means the building is its own type. See "Building Types, Weight And Cooldown" below. `MaxCount` is per building, not per type; see "Max Count" below.
 
 `FootprintSize` is in grid cells.
 
@@ -251,11 +255,20 @@ Prefab authoring convention: a building prefab's default rotation must match the
 ```csharp
 BuildingSet
 {
+    string[] Folders;                 // project folders, e.g. "Assets/Prefabs/WorldGeneration/Buildings"
     BuildingDefinition[] Buildings;
 }
 ```
 
-The set can contain both complex and simple blocking building definition components. Drag the `BuildingDefinition` component from the prefab root into the set.
+The set can contain both complex and simple blocking building definition components. Placement only reads `Buildings`.
+
+With `Folders` set, the editor fills `Buildings` itself (`BuildingSetFolders.Refresh` in `Assets/Editor/BuildingSetEditor.cs`): every generated `.building` and every prefab with a `BuildingDefinition` on its root in those folders and their subfolders, sorted by path. Saving a building from the generator into one of the folders is enough to use it; deleting or moving it out removes it.
+
+- A prefab replaces the `.building` it was made from, so hand edits (moved patrol points, extra spawn markers) win. "Made from" means the prefab is a variant of that `.building`, which is what the importer's **Create editable prefab…** saves; failing that, a prefab with the same file name in the same folder. Any other prefab is simply added.
+- A draft `.building` (failed checks) imports no prefab and is skipped.
+- `BuildingSetFolderWatcher` (an `AssetPostprocessor`) refreshes every folder-filled set after a `.building`, prefab or the set itself is imported, deleted or moved under its folders; opening the set's inspector and its **Refresh now** button refresh it too. The set is saved only when the list changed.
+- In the inspector, folders are picked by dragging a project folder into a slot; `Buildings` is shown read-only. Without folders the set works as before and `Buildings` is edited by hand.
+- `BuildingTiles` uses `Assets/Prefabs/WorldGeneration/Buildings`.
 
 ### BuildingPlacementSettings
 
@@ -402,7 +415,7 @@ Rules:
 - Use only `SimpleBlocking` definitions.
 - Prefer the largest fitting blockers.
 - Do not overwrite road exits.
-- Do not require road adjacency for edge blockers, if selected blocker has road adjacency, it is made specifically for being an edge blocker and should be rotated so that the side faces the road. Since map edges are the only place where blocker buildings are placed directly next to a road, this is the only place where they can be placed.
+- Fill in two passes. The first pass uses only blockers with a `RequiresRoad` side, rotated so that side faces the road, so every edge cell beside a road gets a street facade instead of a plain wall. The second pass seals the edge cells where no road blocker fits (no adjacent road, or no road blocker for that environment) with any blocker that fits there. Since map edges are the only place where blocker buildings are placed directly next to a road, road blockers are placed only here.
 
 ### 3. Place Complex Buildings Near Roads
 
@@ -417,8 +430,9 @@ For each candidate origin and building definition:
 5. Expand all four rotations into placement candidates.
 6. Rotate the effective footprint and side requirements for that candidate.
 7. Check side requirements.
-8. Check repeat cooldown distance against the source `BuildingDefinition`.
+8. Check repeat cooldown distance against every placed building of the same type (or the same `BuildingDefinition` when it has no type).
 9. If valid, add it to the candidate pool.
+10. Choose from the pool by type, not by candidate: see "Building Types, Weight And Cooldown".
 
 Side requirements are evaluated along the whole side of the footprint.
 
@@ -491,7 +505,8 @@ Rules:
 
 - Prefer the largest fitting simple blocker.
 - Fall back to `1x1`.
-- Ignore road-side entrance rules.
+- Check side requirements, so an alley blocker (a side set to `RequiresComplexBuilding`, whose solid is set back with alley clutter) only goes where that side qualifies as an alley (complex buildings, ledges and blockers, with at least one complex building or ledge; see the building-neighbor requirements above). Blockers without side requirements are unaffected. A blocker needing both a road and an alley side can only be placed on the map edge with its alley facing a ledge: road-side blockers belong to the map-edge pass, which runs before complex buildings exist.
+- Prefer alley blockers that match their surroundings. For each footprint (position and rotated size), count the sides that would qualify as an alley but that the blocker does not mark `RequiresComplexBuilding`, and keep only the blockers with the lowest count at that footprint. The weighted pick then chooses among them. So a spot with complex buildings or ledges on two sides gets a blocker with alleys on both of those sides when the set has one in that size, and otherwise the closest match. A side partly lined by a blocker still counts when the rest is complex buildings or ledges; a side touching a road or an empty cell does not. The same preference applies in the map-edge pass, where only ledges can count because complex buildings are not placed yet. The preference applies within each footprint size; the largest-first order is unchanged.
 - Keep simple blockers with any `RequiresRoad` side on map edges only.
 - Still respect repeat cooldown when there are alternatives.
 - If no prefab exists, create a debug placeholder or log a warning.
@@ -539,7 +554,7 @@ If both down-side neighbors are sealed by simple blocking buildings or boundary 
 **Phase 3 - boundary ledges.** Iterate the remaining boundary ledges after phase 2 has updated the grid. Mark a boundary ledge only when it has exactly one out-of-bounds cardinal side and the other three cardinal neighbors are sealed by `SimpleBlocking` buildings. Boundary ledges are map-edge sealing pieces, not tunnel candidates, so this phase ignores `PreserveBuriedLedgeTunnels` and `MaxDeadEndBuriedLedgeLength`: a sealed boundary ledge candidate is always replaced. Running this pass last lets edge ledges see blockers created by pit-corner cleanup.
 
 When a ledge is flagged for replacement, the generator:
-1. Picks a `1x1` simple blocker from `BuildingSet` (preferring one without a `RequiresRoad` side, since the replacement is interior fill, not an edge facade).
+1. Picks a `1x1` simple blocker from `BuildingSet` (preferring one with no side requirements at all, since the replacement is placed unrotated without checking them; a facade or alley side would face the wrong way).
 2. Replaces the ledge cell with that blocker: clears `IsLedge`, sets `Building`/`BuildingOrigin`, and adds a new `PlacedBuilding` to the placement list.
 3. Calls `HeightMapGenerator.SuppressLedgeAt(position)` so the previously instantiated ledge prefab is destroyed before the navmesh rebuild.
 
@@ -577,11 +592,32 @@ Complex buildings use the generated footprint-center world position directly.
 
 Simple blocking buildings keep their authored prefab Y position. Their X/Z position comes from the generated footprint center, but their Y is not snapped to the road grid. This allows blockout wall/building prefabs with centered pivots to remain vertically aligned as authored instead of being half-buried in the ground.
 
+## Building Types, Weight And Cooldown
+
+Implemented in `BuildingSet.GetTypeSettings` and `BuildingPlacementGenerator.ChooseByBuildingType` / `IsRepeatCooldownMet`.
+
+A *type* is either a non-empty `BuildingType` shared by several definitions, or a single untyped definition on its own. All members of a type share one weight and one repeat cooldown: the largest `Weight` and the largest `RepeatCooldownDistance` among the type's members in the `BuildingSet`. When members disagree, the `BuildingSet` inspector shows a warning listing each member's weight/cooldown, and generation logs the same warning once per run.
+
+Choosing a complex building (each roll inside a footprint-area pass, after the exact-fit filter):
+
+1. Group the valid candidates (every origin and rotation) by type.
+2. Roll among the types using their weights. Each type with at least one valid candidate counts once, however many spots or rotations it fits, so a building that fits one rotation in one spot has the same chance as one that fits everywhere.
+3. Pick one of the type's buildings that has a valid candidate, uniformly.
+4. Pick one of that building's valid candidates, uniformly.
+
+Consequences:
+
+- Weight only competes between buildings of the same footprint area, because the area passes run largest first (see "Place Larger Buildings According To Preference"). A 5x2 is always tried before any 1x1, whatever their weights.
+- A type with members of several areas is rolled in each of those passes, so a different-sized variant makes the type more common overall; a same-sized variant does not. Cooldown limits both.
+- Generic buildings that fit many spots no longer get a hidden bonus for it; give them a higher weight than rare special buildings.
+
+Simple blockers keep the older per-candidate weighted roll (`ChooseWeighted`): every valid origin and rotation is one ticket times the definition's weight. Blockers are filler and all use weight 1.
+
 ## Repeat Cooldown
 
-`RepeatCooldownDistance` prevents the same building definition from being placed too close to itself.
+`RepeatCooldownDistance` prevents the same building type from being placed too close to itself.
 
-Rotated candidates still count as the same building. The cooldown key is the source `BuildingDefinition`, not the rotated placement candidate.
+Rotated candidates still count as the same building. The cooldown key is the building's type: its `BuildingType` when set, otherwise the source `BuildingDefinition`. A clinic and a hospital both typed `Hospital` keep the type's cooldown from each other, measured between their full footprints. The distance used is the larger of the type's cooldown and the settings-wide `BuildingPlacementSettings.RepeatCooldownDistance`.
 
 Default:
 
@@ -592,7 +628,7 @@ Default:
 Suggested rule:
 
 ```text
-Reject candidate if the minimum Manhattan distance between the candidate footprint cells and any already placed footprint cells using the same BuildingDefinition is <= RepeatCooldownDistance.
+Reject candidate if the minimum Manhattan distance between the candidate footprint cells and any already placed footprint cells of the same type is <= RepeatCooldownDistance.
 ```
 
 Example:
@@ -607,6 +643,15 @@ The check must use full footprints, not only origin cells. This matters for larg
 If no alternative exists, simple blockers may relax this rule as a fallback. It is better to fill the map with a repeated blocker than leave holes.
 
 Complex buildings always respect repeat cooldown. If no valid complex building of the current footprint size can be placed without violating cooldown, the generator stops trying that size and moves down to the next smaller footprint. This prevents rare or loot-heavy feature buildings from repeating too close together.
+
+## Max Count
+
+`BuildingDefinition.MaxCount` caps how many copies of one building a map gets; 0 means unlimited. Implemented in `BuildingPlacementGenerator.IsAtMaxCount`, checked in `CollectCandidates`.
+
+- It counts placements of that exact `BuildingDefinition`, not its type. Its type still shares weight and cooldown, so when a capped member is used up, the type's later rolls go to its other members.
+- Typical use: several parks typed `Park`, the large one set to `1`. Large footprints are placed first, so without a cap the large park would take every park slot; with the cap the smaller parks fill the rest.
+- It is relaxed together with the repeat cooldown: complex buildings never exceed it, while simple blockers may in the fill-the-map fallback, so capped blockers never leave holes. Ledge replacement ignores it for the same reason.
+- Set in the building generator's City placement panel ("Max count per map") and carried in the `.building` export as `maxCount`; the importer inspector shows it read-only.
 
 ## Road Requirement Details
 
@@ -787,7 +832,8 @@ Simple blocking buildings should normally remain non-enterable and act as solid 
 - Complex buildings can require roads on specific sides.
 - Supports configured rectangular footprints, including `1x1`, `1x2`, `2x1`, `2x2`, and larger structures.
 - Larger buildings are preferred based on `LargeBuildingPreference`.
-- Complex building definitions do not repeat within `RepeatCooldownDistance`; if none fit, placement moves down to smaller footprints.
+- Complex building types do not repeat within `RepeatCooldownDistance`; if none fit, placement moves down to smaller footprints.
+- Complex buildings are chosen by type weight, independent of how many spots or rotations they fit.
 - Simple blockers may relax repeat cooldown only as a fill-the-map fallback.
 - Remaining empty cells are filled with simple blockers.
 - Placeholder cube/block prefabs are enough for validation.

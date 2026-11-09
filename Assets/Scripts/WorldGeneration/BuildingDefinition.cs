@@ -11,10 +11,18 @@ namespace SimpleFPS
 		public BuildingSideRequirement East;
 		public BuildingSideRequirement South;
 		public BuildingSideRequirement West;
+		[Tooltip("Buildings with the same type (case-insensitive) share one weight and repeat cooldown, using the largest values among them. Empty: this building is its own type.")]
+		public string BuildingType;
 		[Min(1)]
 		public int Weight = 1;
 		[Min(0)]
 		public int RepeatCooldownDistance;
+		[Tooltip("Most copies of this building on one map. Applies to this building alone, not its whole type. 0: unlimited.")]
+		[Min(0)]
+		public int MaxCount;
+
+		/// <summary>Normalized BuildingType, or null when the building is its own type.</summary>
+		public string TypeKey => string.IsNullOrWhiteSpace(BuildingType) ? null : BuildingType.Trim().ToLowerInvariant();
 
 		public Vector2Int GetRotatedFootprintSize(int rotationSteps)
 		{

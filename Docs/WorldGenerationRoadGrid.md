@@ -289,7 +289,7 @@ This is the first WFC/collapse point: the road graph determines the required soc
 
 ## Unity Setup Workflow
 
-1. Create road prefabs from the Blender tiles.
+1. Create road prefabs from the Blender tiles. (Generated road tiles are built from code instead and added to the set automatically: see `Docs/WorldGenerationRoadTiles.md`.)
 2. Add `RoadTileDefinition` to the empty root object of each road prefab.
 3. For each prefab's definition component, assign:
 

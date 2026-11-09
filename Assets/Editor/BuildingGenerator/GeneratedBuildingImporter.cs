@@ -12,9 +12,10 @@ namespace SimpleFPS.EditorTools
 {
     // A self-contained export: meshes, colors, collision geometry, and placement metadata.
     // No generated code or external paths are evaluated during import.
-    [ScriptedImporter(3, "building")]
+    [ScriptedImporter(4, "building")]
     public sealed class GeneratedBuildingImporter : ScriptedImporter
     {
+        // Only for exports before version 3; newer files carry type, weight and cooldown from the generator.
         [SerializeField, Min(1)] private int weight = 1;
         [SerializeField, Min(0)] private int repeatCooldownDistance = 10;
 
@@ -24,6 +25,9 @@ namespace SimpleFPS.EditorTools
             public int version;
             public bool draft; // The generator also embeds its editable plan as "source"; JsonUtility skips it.
             public string name, kind, description;
+            public string buildingType; // Version 3+.
+            public int weight, repeatCooldownDistance; // Version 3+.
+            public int maxCount; // Added within version 3; missing in older exports, which reads as 0 (unlimited).
             public int width, depth;
             public float tileSize, agentRadius, agentHeight;
             public string north, east, south, west;
@@ -76,8 +80,11 @@ namespace SimpleFPS.EditorTools
                 definition.FootprintSize = new Vector2Int(data.width, data.depth);
                 definition.North = Side(data.north); definition.East = Side(data.east);
                 definition.South = Side(data.south); definition.West = Side(data.west);
-                definition.Weight = Mathf.Max(1, weight);
-                definition.RepeatCooldownDistance = Mathf.Max(0, repeatCooldownDistance);
+                bool placementInFile = data.version >= 3;
+                definition.BuildingType = placementInFile ? data.buildingType?.Trim() ?? "" : "";
+                definition.Weight = placementInFile ? data.weight : Mathf.Max(1, weight);
+                definition.RepeatCooldownDistance = placementInFile ? data.repeatCooldownDistance : Mathf.Max(0, repeatCooldownDistance);
+                definition.MaxCount = placementInFile ? data.maxCount : 0;
 
                 var palette = new Dictionary<string, Material>();
                 foreach (var source in data.materials)
@@ -171,8 +178,11 @@ namespace SimpleFPS.EditorTools
 
         private static void Validate(BuildingData data)
         {
-            Require(data != null && (data.version == 1 || data.version == 2), "Unsupported or empty building format.");
+            Require(data != null && data.version >= 1 && data.version <= 3, "Unsupported or empty building format.");
             Require(!data.draft, "This is an unfinished draft. Open it in the building generator, fix the failing checks and save again.");
+            Require(data.version < 3 || (data.weight >= 1 && data.weight <= 1000 && data.repeatCooldownDistance >= 0 && data.repeatCooldownDistance <= 100 &&
+                data.maxCount >= 0 && data.maxCount <= 1000 && (data.buildingType == null || data.buildingType.Length <= 64)),
+                "Invalid building type, weight, repeat cooldown or max count.");
             Require(!string.IsNullOrWhiteSpace(data.name) && data.name.Length <= 100, "Invalid building name.");
             Require(data.kind == "Complex" || data.kind == "SimpleBlocking", "Unknown building kind.");
             Require(data.width >= 1 && data.width <= 20 && data.depth >= 1 && data.depth <= 20, "Footprint must be 1–20 tiles per side.");
@@ -225,21 +235,47 @@ namespace SimpleFPS.EditorTools
     public sealed class GeneratedBuildingImporterEditor : ScriptedImporterEditor
     {
         private BuildingSet buildingSet;
+        private bool legacyExport;
+
+        [Serializable]
+        private sealed class VersionData { public int version; }
+
+        public override void OnEnable()
+        {
+            base.OnEnable();
+            try { legacyExport = JsonUtility.FromJson<VersionData>(File.ReadAllText(((GeneratedBuildingImporter)target).assetPath)).version < 3; }
+            catch (Exception) { legacyExport = false; }
+        }
 
         public override void OnInspectorGUI()
         {
             serializedObject.Update();
-            EditorGUILayout.PropertyField(serializedObject.FindProperty("weight"));
-            EditorGUILayout.PropertyField(serializedObject.FindProperty("repeatCooldownDistance"));
-            ApplyRevertGUI();
             var importer = (GeneratedBuildingImporter)target;
             var root = AssetDatabase.LoadAssetAtPath<GameObject>(importer.assetPath);
+            var imported = root != null ? root.GetComponent<BuildingDefinition>() : null;
+            if (legacyExport)
+            {
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("weight"));
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("repeatCooldownDistance"));
+                EditorGUILayout.HelpBox("Exported before building types. Save it again from the building generator to set its type, weight and cooldown there.", MessageType.Info);
+            }
+            else if (imported != null)
+            {
+                EditorGUILayout.LabelField("Building type", string.IsNullOrEmpty(imported.BuildingType) ? "(none: its own type)" : imported.BuildingType);
+                EditorGUILayout.LabelField("Weight", imported.Weight.ToString());
+                EditorGUILayout.LabelField("Repeat cooldown distance", imported.RepeatCooldownDistance.ToString());
+                EditorGUILayout.LabelField("Max count", imported.MaxCount == 0 ? "unlimited" : imported.MaxCount.ToString());
+                EditorGUILayout.HelpBox("Set in the building generator. Change them there and save the building again.", MessageType.None);
+            }
+            ApplyRevertGUI();
             if (root == null) return;
             EditorGUILayout.Space();
             EditorGUILayout.HelpBox("This is a generated prefab asset. Drag it into a scene, or create an editable prefab to add spawn markers. World generation needs it in a BuildingSet. The scene's NavMesh is baked after placement.", MessageType.Info);
             if (GUILayout.Button("Create editable prefab…"))
             {
-                string path = EditorUtility.SaveFilePanelInProject("Create editable building prefab", root.name, "prefab", "Choose where to save the editable prefab.");
+                // Beside the .building, so a folder-filled BuildingSet swaps the building for this prefab.
+                string path = EditorUtility.SaveFilePanelInProject("Create editable building prefab", root.name, "prefab", "Choose where to save the editable prefab.",
+                    Path.GetDirectoryName(importer.assetPath).Replace('\\', '/'));
                 if (!string.IsNullOrEmpty(path))
                 {
                     var previewScene = EditorSceneManager.NewPreviewScene();
@@ -254,7 +290,10 @@ namespace SimpleFPS.EditorTools
                 }
             }
             buildingSet = (BuildingSet)EditorGUILayout.ObjectField("Building set", buildingSet, typeof(BuildingSet), false);
-            using (new EditorGUI.DisabledScope(buildingSet == null))
+            bool folderSet = buildingSet != null && BuildingSetFolders.HasFolders(buildingSet);
+            if (folderSet)
+                EditorGUILayout.HelpBox("This set fills itself from its folders. Save the building into one of them instead.", MessageType.Info);
+            using (new EditorGUI.DisabledScope(buildingSet == null || folderSet))
             {
                 if (GUILayout.Button("Add generated building to set"))
                 {

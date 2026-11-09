@@ -38,6 +38,9 @@ namespace SimpleFPS
 		public Color ComplexBuildingGizmoColor = new Color(0.35f, 0.9f, 0.45f, 0.45f);
 		public Color SimpleBlockingGizmoColor = new Color(0.9f, 0.75f, 0.25f, 0.45f);
 
+		// Per-generation BuildingType lookups; definitions without a type are absent from _typeKeys.
+		private readonly Dictionary<BuildingDefinition, string> _typeKeys = new();
+		private Dictionary<string, BuildingSet.TypeSettings> _typeSettings = new();
 		private BuildingCell[,] _lastGrid;
 		private readonly List<PlacedBuilding> _lastPlacements = new();
 		private Transform _generatedRoot;
@@ -143,6 +146,7 @@ namespace SimpleFPS
 			grid = CreateBuildingGrid(roadGrid);
 			placements = new List<PlacedBuilding>();
 			var random = new System.Random(GetSeed());
+			CacheBuildingTypes();
 
 			if (Settings.FillMapEdgesWithBlockingBuildings)
 				FillEdgeBlockers(grid, placements, random);
@@ -155,6 +159,25 @@ namespace SimpleFPS
 			ReplaceLedgesAdjacentToBlockers(grid, placements);
 
 			Debug.Log($"{nameof(BuildingPlacementGenerator)} placed {placements.Count} buildings.", this);
+		}
+
+		private void CacheBuildingTypes()
+		{
+			_typeKeys.Clear();
+			_typeSettings = new Dictionary<string, BuildingSet.TypeSettings>();
+			BuildingSet buildingSet = Settings.BuildingSet;
+			if (buildingSet == null || buildingSet.Buildings == null)
+				return;
+
+			_typeSettings = buildingSet.GetTypeSettings();
+			foreach (BuildingDefinition definition in buildingSet.Buildings)
+			{
+				if (definition != null && definition.TypeKey != null)
+					_typeKeys[definition] = definition.TypeKey;
+			}
+
+			foreach (string mismatch in buildingSet.GetTypeMismatches())
+				Debug.LogWarning($"{nameof(BuildingPlacementGenerator)}: building type {mismatch}", buildingSet);
 		}
 
 		private int GetSeed()
@@ -210,13 +233,18 @@ namespace SimpleFPS
 
 		private void FillEdgeBlockers(BuildingCell[,] grid, List<PlacedBuilding> placements, System.Random random)
 		{
-			int guard = grid.GetLength(0) * grid.GetLength(1);
-			while (HasEmptyEdgeCell(grid) && guard > 0)
+			// Road-facing blockers first, so every edge cell beside a road gets a facade; any blocker
+			// then seals the edge cells where none fits.
+			for (int pass = 0; pass < 2; pass++)
 			{
-				if (TryPlaceBestBuilding(grid, placements, BuildingCategory.SimpleBlocking, true, false, true, true, random) == false)
-					break;
+				int guard = grid.GetLength(0) * grid.GetLength(1);
+				while (HasEmptyEdgeCell(grid) && guard > 0)
+				{
+					if (TryPlaceBestBuilding(grid, placements, BuildingCategory.SimpleBlocking, true, false, true, true, random, 0, pass == 0) == false)
+						break;
 
-				guard--;
+					guard--;
+				}
 			}
 		}
 
@@ -713,7 +741,8 @@ namespace SimpleFPS
 					continue;
 
 				Vector2Int size = definition.GetRotatedFootprintSize(0);
-				if (size.x == 1 && size.y == 1 && HasRoadRequirement(definition) == false)
+				// Unrotated and unchecked, so prefer a blocker without facade or alley sides.
+				if (size.x == 1 && size.y == 1 && HasSideRequirement(definition) == false)
 					return definition;
 
 				if (fallback == null && size.x == 1 && size.y == 1)
@@ -728,7 +757,8 @@ namespace SimpleFPS
 			foreach (int area in GetFootprintAreas(BuildingCategory.SimpleBlocking))
 			{
 				int guard = grid.GetLength(0) * grid.GetLength(1);
-				while (guard > 0 && TryPlaceBestBuilding(grid, placements, BuildingCategory.SimpleBlocking, false, false, false, true, random, area))
+				// Side requirements are checked so an alley blocker (RequiresComplexBuilding) faces its complex neighbour.
+				while (guard > 0 && TryPlaceBestBuilding(grid, placements, BuildingCategory.SimpleBlocking, false, false, true, true, random, area))
 				{
 					guard--;
 				}
@@ -760,11 +790,12 @@ namespace SimpleFPS
 			bool checkSideRequirements,
 			bool allowCooldownFallback,
 			System.Random random,
-			int requiredArea = 0)
+			int requiredArea = 0,
+			bool requireRoadSide = false)
 		{
-			List<BuildingPlacementCandidate> candidates = CollectCandidates(grid, placements, category, requireEdgeCell, requireAdjacentRoad, checkSideRequirements, true, requiredArea);
+			List<BuildingPlacementCandidate> candidates = CollectCandidates(grid, placements, category, requireEdgeCell, requireAdjacentRoad, checkSideRequirements, true, requiredArea, requireRoadSide);
 			if (candidates.Count == 0 && allowCooldownFallback)
-				candidates = CollectCandidates(grid, placements, category, requireEdgeCell, requireAdjacentRoad, checkSideRequirements, false, requiredArea);
+				candidates = CollectCandidates(grid, placements, category, requireEdgeCell, requireAdjacentRoad, checkSideRequirements, false, requiredArea, requireRoadSide);
 
 			if (candidates.Count == 0)
 				return false;
@@ -773,7 +804,12 @@ namespace SimpleFPS
 			if (exactFitCandidates.Count > 0)
 				candidates = exactFitCandidates;
 
-			BuildingPlacementCandidate candidate = ChooseWeighted(candidates, random);
+			if (category == BuildingCategory.SimpleBlocking)
+				candidates = FilterBestAlleyMatches(grid, candidates);
+
+			BuildingPlacementCandidate candidate = category == BuildingCategory.Complex
+				? ChooseByBuildingType(candidates, random)
+				: ChooseWeighted(candidates, random);
 			PlaceBuilding(grid, placements, candidate);
 			return true;
 		}
@@ -786,7 +822,8 @@ namespace SimpleFPS
 			bool requireAdjacentRoad,
 			bool checkSideRequirements,
 			bool respectCooldown,
-			int requiredArea)
+			int requiredArea,
+			bool requireRoadSide)
 		{
 			var candidates = new List<BuildingPlacementCandidate>();
 			BuildingSet buildingSet = Settings.BuildingSet;
@@ -797,6 +834,13 @@ namespace SimpleFPS
 			{
 				BuildingDefinition definition = buildingSet.Buildings[i];
 				if (definition == null || definition.Category != category)
+					continue;
+
+				if (requireRoadSide && HasRoadRequirement(definition) == false)
+					continue;
+
+				// Relaxed together with the cooldown, so blockers still seal the map when only capped ones fit.
+				if (respectCooldown && IsAtMaxCount(definition, placements))
 					continue;
 
 				for (int rotationSteps = 0; rotationSteps < 4; rotationSteps++)
@@ -830,6 +874,65 @@ namespace SimpleFPS
 			}
 
 			return exact;
+		}
+
+		// At each footprint, keep only the blockers that leave the fewest alley-worthy sides without an alley,
+		// so a spot between complex buildings gets a blocker with alleys on all those sides when the set has one.
+		private List<BuildingPlacementCandidate> FilterBestAlleyMatches(BuildingCell[,] grid, List<BuildingPlacementCandidate> candidates)
+		{
+			var missed = new int[candidates.Count];
+			var best = new Dictionary<(Vector2Int, Vector2Int), int>();
+			for (int i = 0; i < candidates.Count; i++)
+			{
+				missed[i] = CountMissedAlleys(grid, candidates[i]);
+				var footprint = (candidates[i].Origin, candidates[i].Size);
+				if (best.TryGetValue(footprint, out int fewest) == false || missed[i] < fewest)
+					best[footprint] = missed[i];
+			}
+
+			var filtered = new List<BuildingPlacementCandidate>();
+			for (int i = 0; i < candidates.Count; i++)
+			{
+				if (missed[i] == best[(candidates[i].Origin, candidates[i].Size)])
+					filtered.Add(candidates[i]);
+			}
+
+			return filtered;
+		}
+
+		// Sides that would qualify as alleys (see IsAlleySide) but the blocker does not mark RequiresComplexBuilding.
+		private int CountMissedAlleys(BuildingCell[,] grid, BuildingPlacementCandidate candidate)
+		{
+			int missed = 0;
+			foreach (RoadDirection direction in new[] { RoadDirection.North, RoadDirection.East, RoadDirection.South, RoadDirection.West })
+			{
+				if (candidate.Definition.GetRotatedRequirement(direction, candidate.RotationSteps) == BuildingSideRequirement.RequiresComplexBuilding)
+					continue;
+
+				if (IsAlleySide(grid, GetSideNeighborCells(candidate, direction)))
+					missed++;
+			}
+
+			return missed;
+		}
+
+		// A blocker's RequiresComplexBuilding (alley) side: every cell faces a complex building, a ledge going up
+		// or down (not a height-change ramp, which is a road) or another blocker, and at least one is not a blocker,
+		// so the alley opens onto something.
+		private bool IsAlleySide(BuildingCell[,] grid, List<Vector2Int> sideCells)
+		{
+			bool open = false;
+			for (int i = 0; i < sideCells.Count; i++)
+			{
+				Vector2Int position = sideCells[i];
+				if (IsBuildingCategory(grid, position, BuildingCategory.Complex)
+					|| (IsInBounds(grid, position) && grid[position.x, position.y].IsLedge && grid[position.x, position.y].IsHeightChangeRoad == false))
+					open = true;
+				else if (IsBuildingCategory(grid, position, BuildingCategory.SimpleBlocking) == false)
+					return false;
+			}
+
+			return open;
 		}
 
 		private bool IsCandidateValid(
@@ -881,6 +984,14 @@ namespace SimpleFPS
 				|| definition.East == BuildingSideRequirement.RequiresRoad
 				|| definition.South == BuildingSideRequirement.RequiresRoad
 				|| definition.West == BuildingSideRequirement.RequiresRoad;
+		}
+
+		private bool HasSideRequirement(BuildingDefinition definition)
+		{
+			return definition.North != BuildingSideRequirement.Any
+				|| definition.East != BuildingSideRequirement.Any
+				|| definition.South != BuildingSideRequirement.Any
+				|| definition.West != BuildingSideRequirement.Any;
 		}
 
 		private bool IsFootprintEmpty(BuildingCell[,] grid, BuildingPlacementCandidate candidate)
@@ -975,6 +1086,10 @@ namespace SimpleFPS
 				return true;
 
 			List<Vector2Int> sideCells = GetSideNeighborCells(candidate, direction);
+			// A blocker's alley side is judged as a whole; a complex building's still needs complex neighbours.
+			if (requirement == BuildingSideRequirement.RequiresComplexBuilding && candidate.Definition.Category == BuildingCategory.SimpleBlocking)
+				return IsAlleySide(grid, sideCells);
+
 			int heightLevel = grid[candidate.Origin.x, candidate.Origin.y].HeightLevel;
 			for (int i = 0; i < sideCells.Count; i++)
 			{
@@ -1056,14 +1171,14 @@ namespace SimpleFPS
 
 		private bool IsRepeatCooldownMet(BuildingPlacementCandidate candidate, List<PlacedBuilding> placements)
 		{
-			int cooldown = Mathf.Max(Settings.RepeatCooldownDistance, candidate.Definition.RepeatCooldownDistance);
+			int cooldown = Mathf.Max(Settings.RepeatCooldownDistance, GetRepeatCooldownDistance(candidate.Definition));
 			if (cooldown <= 0)
 				return true;
 
 			for (int i = 0; i < placements.Count; i++)
 			{
 				PlacedBuilding placed = placements[i];
-				if (placed.Definition != candidate.Definition)
+				if (IsSameBuildingType(placed.Definition, candidate.Definition) == false)
 					continue;
 
 				if (GetFootprintDistance(candidate.Origin, candidate.Size, placed.Origin, placed.Size) <= cooldown)
@@ -1071,6 +1186,22 @@ namespace SimpleFPS
 			}
 
 			return true;
+		}
+
+		// MaxCount is per building, not shared by its type. 0: unlimited.
+		private bool IsAtMaxCount(BuildingDefinition definition, List<PlacedBuilding> placements)
+		{
+			if (definition.MaxCount <= 0)
+				return false;
+
+			int count = 0;
+			for (int i = 0; i < placements.Count; i++)
+			{
+				if (placements[i].Definition == definition)
+					count++;
+			}
+
+			return count >= definition.MaxCount;
 		}
 
 		private int GetFootprintDistance(Vector2Int aOrigin, Vector2Int aSize, Vector2Int bOrigin, Vector2Int bSize)
@@ -1110,6 +1241,78 @@ namespace SimpleFPS
 			}
 
 			return visited.Count;
+		}
+
+		private bool IsSameBuildingType(BuildingDefinition a, BuildingDefinition b)
+		{
+			if (a == b)
+				return true;
+
+			return _typeKeys.TryGetValue(a, out string aKey) && _typeKeys.TryGetValue(b, out string bKey) && aKey == bKey;
+		}
+
+		private int GetWeight(BuildingDefinition definition)
+		{
+			return _typeKeys.TryGetValue(definition, out string key) ? _typeSettings[key].Weight : Mathf.Max(1, definition.Weight);
+		}
+
+		private int GetRepeatCooldownDistance(BuildingDefinition definition)
+		{
+			return _typeKeys.TryGetValue(definition, out string key) ? _typeSettings[key].RepeatCooldownDistance : definition.RepeatCooldownDistance;
+		}
+
+		// Every building type with at least one valid spot gets its weight once, however many spots
+		// and rotations it fits. Then one of its buildings, then one of that building's spots.
+		private BuildingPlacementCandidate ChooseByBuildingType(List<BuildingPlacementCandidate> candidates, System.Random random)
+		{
+			var groups = new List<List<BuildingPlacementCandidate>>();
+			var groupIndex = new Dictionary<object, int>();
+			for (int i = 0; i < candidates.Count; i++)
+			{
+				BuildingDefinition definition = candidates[i].Definition;
+				object key = _typeKeys.TryGetValue(definition, out string typeKey) ? typeKey : definition;
+				if (groupIndex.TryGetValue(key, out int index) == false)
+				{
+					index = groups.Count;
+					groupIndex.Add(key, index);
+					groups.Add(new List<BuildingPlacementCandidate>());
+				}
+
+				groups[index].Add(candidates[i]);
+			}
+
+			int totalWeight = 0;
+			for (int i = 0; i < groups.Count; i++)
+				totalWeight += GetWeight(groups[i][0].Definition);
+
+			List<BuildingPlacementCandidate> group = groups[groups.Count - 1];
+			int roll = random.Next(totalWeight);
+			for (int i = 0; i < groups.Count; i++)
+			{
+				roll -= GetWeight(groups[i][0].Definition);
+				if (roll < 0)
+				{
+					group = groups[i];
+					break;
+				}
+			}
+
+			var definitions = new List<BuildingDefinition>();
+			for (int i = 0; i < group.Count; i++)
+			{
+				if (definitions.Contains(group[i].Definition) == false)
+					definitions.Add(group[i].Definition);
+			}
+
+			BuildingDefinition chosen = definitions[random.Next(definitions.Count)];
+			var spots = new List<BuildingPlacementCandidate>();
+			for (int i = 0; i < group.Count; i++)
+			{
+				if (group[i].Definition == chosen)
+					spots.Add(group[i]);
+			}
+
+			return spots[random.Next(spots.Count)];
 		}
 
 		private BuildingPlacementCandidate ChooseWeighted(List<BuildingPlacementCandidate> candidates, System.Random random)
